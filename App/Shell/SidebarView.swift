@@ -50,7 +50,7 @@ struct SidebarView: View {
                     Button("Open Folder…") { model.folderImporterVisible = true }
                 } label: { Image(systemName: "plus") }
                 .fixedSize()
-            } else { Button { model.editHost() } label: { Image(systemName: "plus") }.help("Add SSH Host") }
+            } else { Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.help("SSH Command") }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -115,7 +115,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .contextMenu {
                 Button("Connect") { model.connect(host) }
-                Button("Edit…") { model.editHost(host) }
+                Button("Advanced…") { model.editHost(host) }
                 Button("Remove Host…", role: .destructive) { removeHost = host }
             }
             .listRowBackground(Color.clear)
@@ -123,7 +123,7 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .safeAreaInset(edge: .bottom) {
-            Text(model.hosts.isEmpty ? "Add an SSH host with +. Each host has its own files and terminal sessions." : "Credentials are stored in Keychain. Right-click or long-press a host to edit it.")
+            Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Advanced settings are optional.")
                 .font(.system(size: 11))
                 .foregroundStyle(CrowTheme.textDim)
                 .padding(12)

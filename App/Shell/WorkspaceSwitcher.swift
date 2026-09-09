@@ -19,7 +19,7 @@ struct WorkspaceSwitcher: View {
             Spacer(minLength: 0)
             Menu {
                 Button("Open Folder…") { model.folderImporterVisible = true }
-                Button("Add SSH Host…") { model.editHost() }
+                Button("SSH Command…") { model.sshCommandVisible = true }
                 Button("Settings…") { model.settingsVisible = true }
             } label: { Image(systemName: "plus") }
                 .menuStyle(.borderlessButton)

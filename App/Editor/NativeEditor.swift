@@ -14,6 +14,8 @@ struct NativeEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
+        scroll.borderType = .noBorder
+        scroll.clipsToBounds = true
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         let editor = CodeTextView()
@@ -104,8 +106,11 @@ final class CodeTextView: NSTextView {
 final class LineNumberRuler: NSRulerView {
     override init(scrollView: NSScrollView?, orientation: NSRulerView.Orientation) {
         super.init(scrollView: scrollView, orientation: orientation); ruleThickness = 48
+        clipsToBounds = true
     }
     required init(coder: NSCoder) { super.init(coder: coder); ruleThickness = 48 }
+    // Draw only the gutter labels, not NSRulerView's default baseline.
+    override func draw(_ dirtyRect: NSRect) { drawHashMarksAndLabels(in: dirtyRect) }
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let editor = scrollView?.documentView as? NSTextView,
               let layout = editor.layoutManager, let container = editor.textContainer else { return }

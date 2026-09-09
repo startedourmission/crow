@@ -1,0 +1,143 @@
+#if os(macOS)
+import Foundation
+import CrowCore
+
+struct SystemSSHSpec: Sendable {
+    let host: SSHHost
+    let socket: String
+    let arguments: [String]
+    let directory: String
+    var multiplexArguments: [String] {
+        // Never fall back to a new connection if the authenticated master exits.
+        ["-F", "/dev/null", "-S", socket, "-o", "ControlMaster=no", "-o", "BatchMode=yes",
+         "-o", "ProxyCommand=false", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
+         "-p", String(host.port), host.userAtHost]
+    }
+    var initialArguments: [String] {
+        ["-o", "ControlMaster=auto", "-o", "ControlPersist=60", "-o", "ControlPath=\(socket)"] + arguments
+    }
+}
+
+/// Private, per-app shell integration. No keystroke logging and no shell rc edits.
+@MainActor final class SystemSSHBridge {
+    let root: URL
+    private var task: Task<Void, Never>?
+    private var seen: Set<String> = []
+    private var owned: [SystemSSHSpec] = []
+    var onConnection: ((SystemSSHSpec) -> Void)?
+
+    init() throws {
+        root = URL(fileURLWithPath: "/tmp/crw-" + String(UUID().uuidString.prefix(12)))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        let original = ProcessInfo.processInfo.environment["ZDOTDIR"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        for file in [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"] {
+            var text = "export ZDOTDIR=\(Self.quote(original))\n[[ -r \(Self.quote(original + "/" + file)) ]] && source \(Self.quote(original + "/" + file))\n"
+            if file == ".zshrc" {
+                text += """
+                function ssh() {
+                  local crow_request crow_option
+                  for crow_option in "$@"; do
+                    case "$crow_option" in
+                      -N|-f|-fN|-Nf|-G|-V|-T|-s|-M|-O*|-S*|-W*|-Q*|*ControlPath=*|*ControlMaster=*|*ControlPersist=*)
+                        command /usr/bin/ssh "$@"; return $? ;;
+                    esac
+                  done
+                  crow_request=$(/usr/bin/mktemp -d \(Self.quote(root.path + "/r.XXXXXXXX"))) || { command /usr/bin/ssh "$@"; return $?; }
+                  (umask 077; builtin printf '%s\\0' "$@" > "$crow_request/args"; builtin printf '%s' "$PWD" > "$crow_request/cwd")
+                  command /usr/bin/ssh -o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$crow_request/s" "$@"
+                }
+
+                """
+            }
+            // Keep startup routing in our private directory even if user rc files set ZDOTDIR.
+            text += "export ZDOTDIR=\(Self.quote(root.path))\n"
+            try Data(text.utf8).write(to: root.appendingPathComponent(file))
+        }
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                await self?.poll()
+            }
+        }
+    }
+
+    var environment: [String] {
+        var env = ProcessInfo.processInfo.environment
+        env["ZDOTDIR"] = root.path; env["TERM"] = "xterm-256color"
+        env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
+        return env.map { "\($0.key)=\($0.value)" }
+    }
+
+    func prepare(_ arguments: [String], directory: String) async throws -> SystemSSHSpec {
+        guard SSHCommand.isInteractive(arguments) else { throw CommandError("Use an interactive ssh connection; run tunnels or remote commands in the local terminal.") }
+        let host = try await Self.resolve(arguments, directory: directory)
+        let request = root.appendingPathComponent("q-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: request, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        var savedHost = host; savedHost.commandArguments = arguments; savedHost.commandDirectory = directory
+        let spec = SystemSSHSpec(host: savedHost, socket: request.appendingPathComponent("s").path, arguments: arguments, directory: directory)
+        owned.append(spec)
+        return spec
+    }
+
+    private func poll() async {
+        guard let requests = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey]) else { return }
+        for request in requests where request.lastPathComponent.hasPrefix("r.") && !seen.contains(request.path) {
+            guard (try? request.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == false,
+                  FileManager.default.fileExists(atPath: request.appendingPathComponent("s").path) else { continue }
+            seen.insert(request.path)
+            guard let data = try? Data(contentsOf: request.appendingPathComponent("args")), data.count < 131_072,
+                  let directory = try? String(contentsOf: request.appendingPathComponent("cwd"), encoding: .utf8) else { continue }
+            let arguments = data.split(separator: 0, omittingEmptySubsequences: false).dropLast().map { String(decoding: $0, as: UTF8.self) }
+            guard SSHCommand.isInteractive(arguments) else { continue }
+            do {
+                var host = try await Self.resolve(arguments, directory: directory)
+                host.commandArguments = arguments; host.commandDirectory = directory
+                let spec = SystemSSHSpec(host: host, socket: request.appendingPathComponent("s").path, arguments: arguments, directory: directory)
+                owned.append(spec); onConnection?(spec)
+            } catch { /* A terminal-only command must keep working even if import fails. */ }
+        }
+    }
+
+    nonisolated static func resolve(_ arguments: [String], directory: String) async throws -> SSHHost {
+        try await Task.detached {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = ["-G"] + arguments
+            process.currentDirectoryURL = URL(fileURLWithPath: directory)
+            process.standardOutput = output; process.standardError = FileHandle.nullDevice
+            try process.run()
+            let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: timeout)
+            defer { timeout.cancel() }
+            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            guard process.terminationStatus == 0 else { throw CommandError("OpenSSH could not resolve this command. Check the host and options.") }
+            var config: [String: String] = [:]
+            for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+                let pair = line.split(separator: " ", maxSplits: 1)
+                if pair.count == 2 { config[String(pair[0])] = String(pair[1]) }
+            }
+            guard let hostname = config["hostname"], let username = config["user"], let port = config["port"].flatMap(Int.init) else {
+                throw CommandError("OpenSSH did not return a hostname, username and port.")
+            }
+            return SSHHost(name: config["host"] ?? hostname, hostname: hostname, port: port, username: username)
+        }.value
+    }
+
+    func stop() {
+        task?.cancel(); task = nil
+        let specs = owned, directory = root
+        Task.detached {
+            for spec in specs where FileManager.default.fileExists(atPath: spec.socket) {
+                let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+                process.arguments = ["-O", "exit"] + spec.multiplexArguments
+                process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+                try? process.run(); if process.isRunning { process.waitUntilExit() }
+            }
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+    nonisolated static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+}
+#endif

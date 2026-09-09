@@ -13,6 +13,9 @@ final class WorkspaceState: Identifiable {
     @ObservationIgnored var accessURL: URL?
     @ObservationIgnored var refreshGeneration = UUID()
     @ObservationIgnored var connectionTask: Task<Void, Never>?
+    #if os(macOS)
+    @ObservationIgnored var systemSSH: SystemSSHSpec?
+    #endif
     init(_ snapshot: WorkspaceSnapshot) { self.snapshot = snapshot; id = snapshot.workspace.id }
     func stopTerminals() {
         terminals.values.forEach { $0.stop() }

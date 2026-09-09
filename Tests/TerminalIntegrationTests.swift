@@ -36,7 +36,9 @@ final class TerminalIntegrationTests: XCTestCase {
         let dimensions = view.getTerminal().getDims()
         type("printf '__SIZE__'; stty size\n")
         try await waitUntil { self.screen(view).contains("__SIZE__\(dimensions.rows) \(dimensions.cols)") }
-        model.selectWorkspace(model.workspaces.first { $0.kind == .imeLab }!.id)
+        let other = WorkspaceState(.init(workspace: Workspace(name: "Other", kind: .local, connection: .local), rootPath: model.vaultURL.path))
+        model.states.append(other)
+        model.selectWorkspace(other.id)
         model.selectWorkspace(workspaceID)
         XCTAssertTrue(model.terminal(terminalID, in: model.current) === session)
         type("sleep 20\n")
@@ -49,10 +51,9 @@ final class TerminalIntegrationTests: XCTestCase {
         XCTAssertFalse(second === session)
     }
 
-    @MainActor func testIMECommitAndEchoDeletion() {
-        let workspace = Workspace(name: "IME", kind: .imeLab, connection: .local)
+    @MainActor func testIMECommitOnlySendsCommittedBytes() {
+        let workspace = Workspace(name: "Local", kind: .local, connection: .local)
         let session = TerminalSession(id: UUID(), workspace: workspace, directory: "/tmp", remote: nil, fontSize: 16)
-        session.start()
         var sent: [UInt8] = []
         session.onBytes = { sent += $0 }
         session.view.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -60,7 +61,7 @@ final class TerminalIntegrationTests: XCTestCase {
         session.view.insertText("한", replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertEqual(sent, Array("한".utf8))
         session.view.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
-        XCTAssertFalse(screen(session.view).contains("한"))
+        XCTAssertEqual(sent, Array("한".utf8) + [0x7f])
     }
 
     @MainActor private func screen(_ view: TerminalView) -> String {

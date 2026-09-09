@@ -26,8 +26,9 @@ final class CrowAppTests: XCTestCase {
         let local = model.selectedWorkspaceID
         let id = model.selectedBufferID!
         model.updateBufferText(id, "unsaved 한국어")
-        let lab = model.workspaces.first { $0.kind == .imeLab }!
-        model.selectWorkspace(lab.id)
+        let other = WorkspaceState(.init(workspace: Workspace(name: "Other", kind: .local, connection: .local), rootPath: model.vaultURL.path))
+        model.states.append(other)
+        model.selectWorkspace(other.id)
         XCTAssertTrue(model.buffers.isEmpty)
         model.selectWorkspace(local)
         XCTAssertEqual(model.selectedBuffer?.text, "unsaved 한국어")
@@ -153,5 +154,19 @@ final class CrowAppTests: XCTestCase {
         XCTAssertEqual(restored.selectedBuffer?.text, "draft survives container move")
         XCTAssertTrue(restored.selectedBuffer!.isDirty)
         XCTAssertFalse(restored.files.isEmpty)
+    }
+
+    @MainActor func testLegacyLabIsRemovedAndDraftsArePreservedInVault() throws {
+        let model = fixture()
+        XCTAssertFalse(model.workspaces.contains { $0.kind == .imeLab })
+        var legacy = WorkspaceSnapshot(workspace: Workspace(name: "IME Lab", kind: .imeLab, connection: .local), rootPath: model.vaultURL.path)
+        legacy.buffers = [OpenBuffer(title: "draft.txt", path: model.vaultURL.appendingPathComponent("draft.txt").path,
+            text: "keep this draft", language: .plain, isRemote: false, isDirty: true)]
+        model.states.append(WorkspaceState(legacy)); model.selectedWorkspaceID = legacy.workspace.id
+        model.persist()
+        let restored = AppModel(vaultURL: model.vaultURL)
+        defer { restored.shutdown() }
+        XCTAssertFalse(restored.workspaces.contains { $0.kind == .imeLab })
+        XCTAssertTrue(restored.buffers.contains { $0.text == "keep this draft" && $0.isDirty })
     }
 }

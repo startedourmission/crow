@@ -30,15 +30,18 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     private let directory: String
     private let remote: RemoteConnection?
     private var started = false
-    private var echoCoordinator: TerminalCoordinator?
+    #if os(macOS)
+    var systemSSH: SystemSSHSpec?
+    var shellEnvironment: [String]?
+    #endif
     private var shellTask: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
     private var writer: RemoteWriter?
 
-    init(id: UUID, workspace: Workspace, directory: String, remote: RemoteConnection?, fontSize: Double) {
+    init(id: UUID, workspace: Workspace, directory: String, remote: RemoteConnection?, fontSize: Double, useSystemSSH: Bool = false) {
         self.id = id; self.workspace = workspace; self.directory = directory; self.remote = remote
         #if os(macOS)
-        if case .local = workspace.kind {
+        if workspace.kind == .local || useSystemSSH {
             view = CrowLocalTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 300))
         } else { view = SwiftTerm.TerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 300)) }
         #else
@@ -64,14 +67,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         view.caretColor = UIColor(CrowTheme.accent)
         view.selectedTextBackgroundColor = UIColor(CrowTheme.bg3)
         #endif
-        if case .imeLab = workspace.kind {
-            let coordinator = TerminalCoordinator()
-            coordinator.onBytes = { [weak self] in self?.onBytes?($0) }
-            view.terminalDelegate = coordinator
-            coordinator.reset(on: view, workspace: workspace)
-            echoCoordinator = coordinator
-            title = "IME Lab"
-        } else { view.terminalDelegate = self }
+        view.terminalDelegate = self
     }
 
     func setFontSize(_ size: Double) {
@@ -84,15 +80,30 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
 
     func start() {
         guard !started else { return }; started = true
+        #if os(macOS)
+        if let systemSSH, let local = view as? CrowLocalTerminalView {
+            let args = FileManager.default.fileExists(atPath: systemSSH.socket)
+                ? systemSSH.multiplexArguments : systemSSH.initialArguments
+            // SwiftTerm's default environment drops SSH_AUTH_SOCK and PATH.
+            // Preserve the app's inherited agent/proxy environment for OpenSSH.
+            var environment = ProcessInfo.processInfo.environment
+            environment["TERM"] = "xterm-256color"
+            environment["LANG"] = environment["LANG"] ?? "en_US.UTF-8"
+            local.startProcess(executable: "/usr/bin/ssh", args: args,
+                environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: systemSSH.directory)
+            running = local.process.running; title = systemSSH.host.name; status = "SSH · authenticate in terminal"
+            return
+        }
+        #endif
         switch workspace.kind {
-        case .imeLab: status = "Echo · committed UTF-8"
+        case .imeLab: break // Legacy snapshots are migrated before creating terminals.
         case .local:
             #if os(macOS)
             guard let local = view as? CrowLocalTerminalView else { return }
-            local.startProcess(executable: "/bin/zsh", args: ["-l"], currentDirectory: directory)
+            local.startProcess(executable: "/bin/zsh", args: ["-l"], environment: shellEnvironment, currentDirectory: directory)
             running = local.process.running; title = "zsh"; status = running ? "Running" : "Could not start shell"
             #else
-            status = "Local shells are available on Mac. Add an SSH host to use a terminal here."
+            status = "Connect with ssh user@host using the SSH command button."
             view.feed(text: status + "\r\n")
             #endif
         case .remote:

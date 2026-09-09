@@ -22,6 +22,14 @@ struct CrowRootView: View {
         }
         .sheet(isPresented: Bindable(model).hostEditorVisible) { HostEditorView(host: model.editingHost).environment(model) }
         .sheet(isPresented: Bindable(model).settingsVisible) { CrowSettingsView().environment(model) }
+        .sheet(isPresented: Bindable(model).sshCommandVisible, onDismiss: {
+            if let pending = model.pendingCredentialRequest { model.pendingCredentialRequest = nil; model.credentialRequest = pending }
+            #if os(macOS)
+            if model.selectedWorkspace.isRemote, let id = model.current.snapshot.selectedTerminalID,
+               let session = model.current.terminals[id] { session.view.window?.makeFirstResponder(session.view) }
+            #endif
+        }) { SSHCommandView().environment(model) }
+        .sheet(item: Bindable(model).credentialRequest) { host in SSHPasswordView(host: host).environment(model) }
         .alert("Crow", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(model.errorMessage ?? "") }

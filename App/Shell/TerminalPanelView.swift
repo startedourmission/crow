@@ -22,9 +22,6 @@ struct TerminalPanelView: View {
                 Button("New Terminal") { model.newTerminal() }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if case .imeLab = model.selectedWorkspace.kind {
-                IMEInspectorBar(probe: model.imeProbe)
-            }
         }
         .background(CrowTheme.bg0)
         .alert("Close this terminal?", isPresented: Binding(get: { closeTerminalID != nil }, set: { if !$0 { closeTerminalID = nil } }), presenting: closeTerminalID) { id in
@@ -59,6 +56,7 @@ struct TerminalPanelView: View {
                 }
             }
             Spacer()
+            Button { model.sshCommandVisible = true } label: { Image(systemName: "network.badge.shield.half.filled") }.help("SSH Command")
             if model.selectedWorkspace.isRemote {
                 Menu {
                     Button("Reconnect") { model.reconnectCurrent() }
@@ -83,35 +81,6 @@ struct TerminalPanelView: View {
 
 }
 
-struct IMEInspectorBar: View {
-    let probe: IMEProbe
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(probe.isHealthyCommit ? "IME OK" : "JAMO LEAK")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(probe.isHealthyCommit ? CrowTheme.ok : CrowTheme.danger)
-            Text(probe.lastUTF8.isEmpty ? "—" : probe.lastUTF8)
-                .font(.system(size: 12))
-                .foregroundStyle(CrowTheme.text)
-                .lineLimit(1)
-            Spacer()
-            Text("cols \(probe.columns)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(CrowTheme.textDim)
-            Text(probe.lastHex.isEmpty ? "" : probe.lastHex)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(CrowTheme.textDim)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 26)
-        .background(CrowTheme.bg1)
-        .overlay(alignment: .top) {
-            Rectangle().fill(CrowTheme.border).frame(height: 1)
-        }
-    }
-}
 
 struct StatusBarView: View {
     @Environment(AppModel.self) private var model

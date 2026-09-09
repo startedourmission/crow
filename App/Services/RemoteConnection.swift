@@ -95,6 +95,16 @@ private final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unc
 final class RemoteConnection {
     private(set) var client: SSHClient?
     private var sftp: SFTPClient?
+    #if os(macOS)
+    private var system: SystemSFTP?
+    func attach(_ spec: SystemSSHSpec) throws { system = try SystemSFTP(spec: spec) }
+    #endif
+    var isConnected: Bool {
+        #if os(macOS)
+        if let system { return system.isConnected }
+        #endif
+        return client?.isConnected ?? false
+    }
 
     func connect(_ host: SSHHost, credential: HostCredential) async throws {
         let keyAccount = "host-key:\(host.hostname.lowercased()):\(host.port)"
@@ -121,6 +131,9 @@ final class RemoteConnection {
     }
 
     func disconnect() async {
+        #if os(macOS)
+        system?.close(); system = nil
+        #endif
         let old = client
         client = nil
         sftp = nil
@@ -136,6 +149,9 @@ final class RemoteConnection {
     }
 
     func realPath(_ path: String) async throws -> String {
+        #if os(macOS)
+        if let system { return try await system.realPath(path) }
+        #endif
         let sftp = try await files()
         let home = try await sftp.getRealPath(atPath: ".")
         let requested = path == "~" ? home : path.hasPrefix("~/") ? home + "/" + path.dropFirst(2) : path
@@ -143,6 +159,9 @@ final class RemoteConnection {
     }
 
     func list(_ path: String) async throws -> [FileEntry] {
+        #if os(macOS)
+        if let system { return try await system.list(path) }
+        #endif
         let sftp = try await files()
         let messages = try await sftp.listDirectory(atPath: path)
         var entries: [FileEntry] = []
@@ -160,6 +179,9 @@ final class RemoteConnection {
     }
 
     func read(_ path: String) async throws -> String {
+        #if os(macOS)
+        if let system { return try await system.read(path) }
+        #endif
         let sftp = try await files()
         let attributes = try await sftp.getAttributes(at: path)
         guard (attributes.size ?? 0) <= TextFiles.sizeLimit else { throw FileFailure.tooLarge }
@@ -177,6 +199,9 @@ final class RemoteConnection {
     }
 
     func write(_ text: String, path: String, expected: String?, overwrite: Bool = false) async throws {
+        #if os(macOS)
+        if let system { try await system.write(text, path: path, expected: expected, overwrite: overwrite); return }
+        #endif
         if !overwrite, let expected, try await read(path) != expected { throw FileFailure.conflict }
         let sftp = try await files()
         // Upload to a sibling first. A failed upload never truncates the original.
@@ -213,12 +238,18 @@ final class RemoteConnection {
     }
 
     func create(_ path: String, directory: Bool) async throws {
+        #if os(macOS)
+        if let system { try await system.create(path, directory: directory); return }
+        #endif
         let sftp = try await files()
         if directory { try await sftp.createDirectory(atPath: path) }
         else { try await sftp.withFile(filePath: path, flags: [.write, .create, .forceCreate]) { _ in } }
     }
 
     func rename(_ source: String, to destination: String) async throws {
+        #if os(macOS)
+        if let system { try await system.rename(source, to: destination); return }
+        #endif
         try await files().rename(at: source, to: destination)
     }
 

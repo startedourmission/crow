@@ -11,7 +11,6 @@ final class AppModel {
     var settings = EditorSettings() { didSet { schedulePersist() } }
     var sidebarPane: SidebarPane = .files
     var compactSurface: CompactSurface = .editor
-    var imeProbe: IMEProbe = .empty
     var statusMessage = "Ready"
     var errorMessage: String?
     var closeRequest: BufferID?
@@ -22,6 +21,12 @@ final class AppModel {
     var hostEditorVisible = false
     var editingHost: SSHHost?
     var settingsVisible = false
+    var sshCommandVisible = false
+    var credentialRequest: SSHHost?
+    var pendingCredentialRequest: SSHHost?
+    #if os(macOS)
+    @ObservationIgnored private var sshBridge: SystemSSHBridge?
+    #endif
     let vaultURL: URL
     let sessionURL: URL
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
@@ -67,6 +72,18 @@ final class AppModel {
                     }
                     return WorkspaceState(restored)
                 }
+                let labBuffers = states.filter { $0.snapshot.workspace.kind == .imeLab }.flatMap(\.snapshot.buffers)
+                states.removeAll { $0.snapshot.workspace.kind == .imeLab }
+                if states.isEmpty { states = [WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path))] }
+                if !labBuffers.isEmpty {
+                    if !states.contains(where: { !$0.snapshot.workspace.isRemote }) {
+                        states.append(WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path)))
+                    }
+                    let destination = states.first { !$0.snapshot.workspace.isRemote }!
+                    for buffer in labBuffers where !destination.snapshot.buffers.contains(where: { $0.id == buffer.id }) {
+                        destination.snapshot.buffers.append(buffer)
+                    }
+                }
                 selectedWorkspaceID = states.contains(where: { $0.id == saved.selectedWorkspaceID }) ? saved.selectedWorkspaceID : states[0].id
                 for state in states { restoreAccess(state) }
             }
@@ -81,8 +98,7 @@ final class AppModel {
             }
         }
         if states.isEmpty {
-            states = [WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path)),
-                WorkspaceState(.init(workspace: Workspace(name: "IME Lab", kind: .imeLab, connection: .local), rootPath: self.vaultURL.path))]
+            states = [WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path))]
             let readme = self.vaultURL.appendingPathComponent("README.md")
             if let text = try? TextFiles.read(readme) { addBuffer(path: readme.path, text: text, to: states[0]) }
         }
@@ -112,7 +128,6 @@ final class AppModel {
 
     func selectWorkspace(_ id: WorkspaceID) {
         selectedWorkspaceID = id; refreshFiles()
-        if case .imeLab = selectedWorkspace.kind { compactSurface = .terminal; terminalVisible = true }
         statusMessage = workspaceTitle; schedulePersist()
     }
 
@@ -329,6 +344,85 @@ final class AppModel {
     }
 
     func editHost(_ host: SSHHost? = nil) { editingHost = host; hostEditorVisible = true }
+    func connectCommand(_ line: String, password: String = "") async throws {
+        let command = try SSHCommand(line)
+        #if os(macOS)
+        let directory = current.snapshot.workspace.isRemote ? vaultURL.path : current.snapshot.directoryPath
+        let spec = try await bridge().prepare(command.arguments, directory: directory)
+        beginSystemSSH(spec, imported: false)
+        #else
+        let (parsed, identity) = try command.portableHost(defaultUsername: "")
+        var host = hosts.first { $0.hostname == parsed.hostname && $0.port == parsed.port && $0.username == parsed.username } ?? parsed
+        if identity != nil { throw CommandError("Private keys on iPhone/iPad must be imported from Files using Advanced settings. Mac reads -i paths directly.") }
+        host.commandArguments = command.arguments
+        let saved = try SecureStore.credential(host)
+        if saved.password.isEmpty && password.isEmpty {
+            if sshCommandVisible { pendingCredentialRequest = host } else { credentialRequest = host }
+            return
+        }
+        try storeHost(host, credential: password.isEmpty ? saved : HostCredential(password: password))
+        connect(host)
+        #endif
+    }
+
+    #if os(macOS)
+    private func bridge() throws -> SystemSSHBridge {
+        if let sshBridge { return sshBridge }
+        let value = try SystemSSHBridge()
+        value.onConnection = { [weak self] spec in self?.beginSystemSSH(spec, imported: true) }
+        sshBridge = value; return value
+    }
+
+    private func beginSystemSSH(_ proposed: SystemSSHSpec, imported: Bool) {
+        var host = proposed.host
+        if let saved = hosts.first(where: { $0.hostname == host.hostname && $0.port == host.port && $0.username == host.username }) { host.id = saved.id }
+        let spec = SystemSSHSpec(host: host, socket: proposed.socket, arguments: proposed.arguments, directory: proposed.directory)
+        if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host } else { hosts.append(host) }
+        let state: WorkspaceState
+        if let existing = states.first(where: { if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false }) {
+            if existing.remote?.isConnected == true {
+                if !imported { selectWorkspace(existing.id); terminalVisible = true; compactSurface = .terminal }
+                return
+            }
+            state = existing; disconnect(state)
+        } else {
+            state = WorkspaceState(.init(workspace: Workspace(name: host.name, kind: .remote(hostID: host.id, path: "~"), connection: .connecting), rootPath: "~"))
+            states.append(state)
+        }
+        state.systemSSH = spec; state.snapshot.workspace.name = host.name
+        state.snapshot.workspace.connection = .connecting
+        if !imported {
+            selectWorkspace(state.id); terminalVisible = true; compactSurface = .terminal
+            if state.snapshot.selectedTerminalID == nil { let id = UUID(); state.snapshot.terminalIDs.append(id); state.snapshot.selectedTerminalID = id }
+            terminal(state.snapshot.selectedTerminalID!, in: state).start()
+        }
+        state.connectionTask = Task { [weak self, weak state] in
+            guard let self, let state else { return }
+            do {
+                for _ in 0..<1200 {
+                    try Task.checkCancellation()
+                    if FileManager.default.fileExists(atPath: spec.socket) { break }
+                    if !imported, !state.terminals.values.contains(where: \.running) { throw CommandError("SSH exited before connecting. Run the command again to retry.") }
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+                let connection = RemoteConnection(); try connection.attach(spec)
+                state.remote = connection
+                let root = try await connection.realPath("~")
+                try Task.checkCancellation()
+                state.snapshot.rootPath = root; state.snapshot.directoryPath = root
+                state.snapshot.workspace.connection = .connected
+                if selectedWorkspaceID == state.id { refreshFiles() }
+                statusMessage = "SSH workspace added: \(host.userAtHost)"; schedulePersist()
+            } catch {
+                if !Task.isCancelled {
+                    state.snapshot.workspace.connection = .failed(error.localizedDescription)
+                    statusMessage = error.localizedDescription
+                }
+            }
+        }
+        schedulePersist()
+    }
+    #endif
     func storeHost(_ host: SSHHost, credential: HostCredential) throws {
         guard !host.hostname.trimmingCharacters(in: .whitespaces).isEmpty, !host.username.isEmpty, (1...65535).contains(host.port) else {
             throw NSError(domain: "Crow", code: 1, userInfo: [NSLocalizedDescriptionKey: "Enter a host, username and port between 1 and 65535."])
@@ -347,6 +441,15 @@ final class AppModel {
         } catch { report(error) }
     }
     func connect(_ host: SSHHost) {
+        #if os(macOS)
+        if let arguments = host.commandArguments {
+            Task {
+                do { let spec = try await bridge().prepare(arguments, directory: host.commandDirectory ?? vaultURL.path); beginSystemSSH(spec, imported: false) }
+                catch { report(error) }
+            }
+            return
+        }
+        #endif
         let state: WorkspaceState
         if let existing = states.first(where: {
             if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false
@@ -404,9 +507,19 @@ final class AppModel {
     }
     func terminal(_ id: UUID, in state: WorkspaceState) -> TerminalSession {
         if let existing = state.terminals[id] { return existing }
+        var useSystemSSH = false
+        #if os(macOS)
+        useSystemSSH = state.systemSSH != nil
+        #endif
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: state.snapshot.rootPath,
-            remote: state.remote, fontSize: settings.terminalFontSize)
-        session.onBytes = { [weak self] bytes in self?.recordPTY(bytes[...]) }; state.terminals[id] = session
+            remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
+        #if os(macOS)
+        session.systemSSH = state.systemSSH
+        if state.snapshot.workspace.kind == .local {
+            do { session.shellEnvironment = try bridge().environment } catch { report(error) }
+        }
+        #endif
+        state.terminals[id] = session
         return session
     }
     func newTerminal() {
@@ -418,7 +531,6 @@ final class AppModel {
         if current.snapshot.selectedTerminalID == id { current.snapshot.selectedTerminalID = current.snapshot.terminalIDs.last }
         schedulePersist()
     }
-    func recordPTY(_ bytes: ArraySlice<UInt8>) { imeProbe = IMEProbe.from(bytes: bytes) }
     func schedulePersist() {
         persistenceTask?.cancel()
         persistenceTask = Task { [weak self] in
@@ -436,10 +548,13 @@ final class AppModel {
     func resume() {
         refreshFiles()
         for state in states where state.snapshot.workspace.isRemote {
-            if state.remote?.client?.isConnected == false { disconnect(state) }
+            if state.remote?.isConnected == false { disconnect(state) }
         }
     }
     func shutdown() {
+        #if os(macOS)
+        sshBridge?.stop(); sshBridge = nil
+        #endif
         persistenceTask?.cancel()
         persist()
         for state in states {

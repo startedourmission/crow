@@ -23,6 +23,8 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
     public var username: String
     public var remotePath: String
     public var authentication: SSHAuthenticationKind = .password
+    public var commandArguments: [String]?
+    public var commandDirectory: String?
 
     public init(
         id: HostID = HostID(),
@@ -47,7 +49,7 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
 
 public enum WorkspaceKind: Hashable, Codable, Sendable {
     case local
-    case imeLab
+    case imeLab // Decode legacy sessions only; never create this workspace in the app.
     case remote(hostID: HostID, path: String)
 }
 

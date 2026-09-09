@@ -114,6 +114,89 @@ final class SSHIntegrationTests: XCTestCase {
             try await RemoteConnection().connect(host, credential: credential)
             XCTFail("Changed host keys must be rejected")
         } catch let challenge as HostKeyChallenge { XCTAssertTrue(challenge.changed) }
+
+        // Type the ordinary OpenSSH command into a real zsh. Config/key/known-host
+        // files belong to this fixture only, not the user's ~/.ssh directory.
+        let knownHosts = root.appendingPathComponent("known_hosts")
+        let publicKey = try String(contentsOfFile: hostKey + ".pub", encoding: .utf8)
+        try Data("[127.0.0.1]:\(port) \(publicKey)".utf8).write(to: knownHosts)
+        let clientConfig = root.appendingPathComponent("client_config")
+        try Data("""
+        Host crow-fixture
+          HostName 127.0.0.1
+          Port \(port)
+          User \(NSUserName())
+          IdentityFile \(userKey)
+          IdentitiesOnly yes
+          UserKnownHostsFile \(knownHosts.path)
+          StrictHostKeyChecking yes
+          BatchMode yes
+
+        """.utf8).write(to: clientConfig)
+        let model = AppModel(vaultURL: root.appendingPathComponent("vault"))
+        defer { model.shutdown() }
+        let localID = model.selectedWorkspaceID
+        let localTerminal = model.terminal(model.current.snapshot.selectedTerminalID!, in: model.current)
+        localTerminal.start()
+        func type(_ text: String, in view: TerminalView) {
+            view.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+        func wait(_ condition: @escaping @MainActor () -> Bool) async throws {
+            for _ in 0..<200 {
+                if condition() { return }; try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTFail("SSH workspace did not become ready: \(model.statusMessage)")
+        }
+        type("echo 'ssh not-a-connection@example.invalid'\n", in: localTerminal.view)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(model.workspaces.contains(where: \.isRemote), "Output text is never treated as a command")
+        let command = "ssh -F \(SystemSSHBridge.quote(clientConfig.path)) crow-fixture"
+        type(command + "\n", in: localTerminal.view)
+        try await wait { model.states.contains { $0.snapshot.workspace.connection == .connected } }
+        let imported = try XCTUnwrap(model.states.first { $0.snapshot.workspace.isRemote })
+        XCTAssertEqual(model.selectedWorkspaceID, localID, "Import must not steal focus from the shell/password prompt")
+        XCTAssertEqual(model.hosts.first?.hostname, "127.0.0.1")
+        XCTAssertEqual(model.hosts.first?.port, port)
+        XCTAssertFalse(model.hostEditorVisible)
+        let native = try XCTUnwrap(imported.remote)
+        let nativePath = root.appendingPathComponent("native sftp.txt").path
+        try await native.create(nativePath, directory: false)
+        try await native.write(largeText, path: nativePath, expected: "")
+        let nativeText = try await native.read(nativePath)
+        XCTAssertEqual(nativeText, largeText)
+        do {
+            try await native.write("wrong", path: nativePath, expected: "stale")
+            XCTFail("Native SFTP must reject stale writes")
+        } catch FileFailure.conflict {}
+        let nativeFiles = try await native.list(root.path)
+        XCTAssertTrue(nativeFiles.contains { $0.name == "native sftp.txt" })
+        let nativeRenamed = root.appendingPathComponent("renamed native.txt").path
+        try await native.rename(nativePath, to: nativeRenamed)
+        let nativeTrash = try await native.trash(.init(name: "renamed native.txt", path: nativeRenamed, isDirectory: false))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: nativeTrash))
+        try await model.connectCommand(command)
+        XCTAssertEqual(model.selectedWorkspaceID, imported.id)
+        XCTAssertEqual(model.hosts.count, 1, "The one-line UI should reuse the imported host")
+        let nativeTerminal = model.terminal(imported.snapshot.selectedTerminalID!, in: imported)
+        nativeTerminal.start()
+        type("printf '__MUX_%s__\\n' WORKS\n", in: nativeTerminal.view)
+        try await wait {
+            let terminal = nativeTerminal.view.getTerminal()
+            return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined().contains("__MUX_WORKS__")
+        }
+        nativeTerminal.stop()
+
+        let quickModel = AppModel(vaultURL: root.appendingPathComponent("quick-vault"))
+        defer { quickModel.shutdown() }
+        try await quickModel.connectCommand(command)
+        for _ in 0..<200 {
+            if quickModel.current.snapshot.workspace.connection == .connected { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(quickModel.current.snapshot.workspace.connection, .connected, quickModel.statusMessage)
+        XCTAssertTrue(quickModel.current.terminals.values.contains(where: \.running))
+        XCTAssertFalse(quickModel.hostEditorVisible)
+        XCTAssertNil(quickModel.credentialRequest, "Mac authentication stays inside OpenSSH, not an app password form")
     }
 }
 #endif
