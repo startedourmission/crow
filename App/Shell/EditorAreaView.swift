@@ -3,13 +3,20 @@ import SwiftUI
 
 struct EditorAreaView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         VStack(spacing: 0) {
             tabStrip
             CrowDivider()
             if let buffer = model.selectedBuffer {
-                CrowEditorView(buffer: buffer)
+                HStack(spacing: 1) {
+                    CrowEditorView(buffer: buffer).id(buffer.id)
+                    if sizeClass != .compact, let splitID = model.current.snapshot.splitBufferID,
+                       let split = model.buffers.first(where: { $0.id == splitID }) {
+                        CrowEditorView(buffer: split).id("split-\(split.id.rawValue)")
+                    }
+                }
             } else {
                 emptyState
             }
@@ -50,6 +57,11 @@ struct EditorAreaView: View {
                 .foregroundStyle(selected ? CrowTheme.text : CrowTheme.textDim)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                if sizeClass != .compact {
+                    Button("Open in Split") { model.current.snapshot.splitBufferID = buffer.id; model.schedulePersist() }
+                }
+            }
 
             Button {
                 model.closeBuffer(buffer.id)
@@ -89,8 +101,10 @@ struct EditorAreaView: View {
 
 struct CrowEditorView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var sizeClass
     let buffer: OpenBuffer
     @State private var previewMarkdown = false
+    @State private var findRequest = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -107,11 +121,14 @@ struct CrowEditorView: View {
                         .foregroundStyle(CrowTheme.textDim)
                 }
                 Spacer()
-                Button("Save") { model.saveSelectedBuffer() }
+                Button { findRequest += 1 } label: { Image(systemName: "magnifyingglass") }.help("Find and Replace")
+                if sizeClass != .compact {
+                    Button { model.toggleSplit() } label: { Image(systemName: "rectangle.split.2x1") }.help("Split Editor")
+                }
+                Button("Save") { Task { await model.saveBuffer(buffer.id) } }
                     .font(.system(size: 11, weight: .semibold))
                     .buttonStyle(.plain)
                     .foregroundStyle(CrowTheme.accent)
-                    .keyboardShortcut("s", modifiers: .command)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -125,11 +142,9 @@ struct CrowEditorView: View {
                         .textSelection(.enabled)
                 }
             } else {
-                TextEditor(text: textBinding)
-                    .font(CrowTheme.editorFont(size: 16, monospace: buffer.language.usesMonospace))
-                    .scrollContentBackground(.hidden)
-                    .foregroundStyle(CrowTheme.text)
-                    .padding(8)
+                NativeEditor(text: textBinding, fontSize: model.settings.fontSize,
+                    indentWidth: model.settings.indentWidth, lineNumbers: model.settings.lineNumbers, findRequest: findRequest,
+                    onSave: { Task { await model.saveBuffer(buffer.id) } })
             }
         }
     }

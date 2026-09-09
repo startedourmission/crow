@@ -22,6 +22,7 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
     public var port: Int
     public var username: String
     public var remotePath: String
+    public var authentication: SSHAuthenticationKind = .password
 
     public init(
         id: HostID = HostID(),
@@ -165,7 +166,7 @@ public struct FileEntry: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct OpenBuffer: Identifiable, Hashable, Sendable {
+public struct OpenBuffer: Identifiable, Hashable, Codable, Sendable {
     public var id: BufferID
     public var title: String
     public var path: String
@@ -173,6 +174,7 @@ public struct OpenBuffer: Identifiable, Hashable, Sendable {
     public var language: LanguageMode
     public var isRemote: Bool
     public var isDirty: Bool
+    public var savedText: String? = nil
 
     public init(
         id: BufferID = BufferID(),

@@ -3,6 +3,11 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @State private var naming = false
+    @State private var entryName = ""
+    @State private var renameEntry: FileEntry?
+    @State private var createDirectory = false
+    @State private var removeHost: SSHHost?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -16,6 +21,18 @@ struct SidebarView: View {
         }
         .background(CrowTheme.bg1)
         .foregroundStyle(CrowTheme.text)
+        .alert(renameEntry == nil ? (createDirectory ? "New Folder" : "New File") : "Rename", isPresented: $naming) {
+            TextField("Name", text: $entryName)
+            Button("Save") {
+                if let entry = renameEntry { model.rename(entry, to: entryName) }
+                else { model.createEntry(name: entryName, directory: createDirectory) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Remove SSH host?", isPresented: Binding(get: { removeHost != nil }, set: { if !$0 { removeHost = nil } }), presenting: removeHost) { host in
+            Button("Remove", role: .destructive) { model.removeHost(host) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in Text("The saved credentials will be removed from this device. Server files will not be changed.") }
     }
 
     private var header: some View {
@@ -26,21 +43,27 @@ struct SidebarView: View {
                 .foregroundStyle(CrowTheme.textDim)
             Spacer()
             if model.sidebarPane == .files {
-                Button {
-                    model.newUntitledBuffer()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(CrowTheme.textDim)
-                }
-                .buttonStyle(.plain)
-            }
+                Button { model.refreshFiles() } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
+                Menu {
+                    Button("New File…") { renameEntry = nil; createDirectory = false; entryName = ""; naming = true }
+                    Button("New Folder…") { renameEntry = nil; createDirectory = true; entryName = ""; naming = true }
+                    Button("Open Folder…") { model.folderImporterVisible = true }
+                } label: { Image(systemName: "plus") }
+                .fixedSize()
+            } else { Button { model.editHost() } label: { Image(systemName: "plus") }.help("Add SSH Host") }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
     private var filesList: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { model.navigateUp() } label: { Image(systemName: "arrow.up") }
+                    .disabled(model.current.snapshot.directoryPath == model.current.snapshot.rootPath)
+                Text(model.current.snapshot.directoryPath).font(.system(size: 10)).lineLimit(1).truncationMode(.head)
+                if model.current.isLoading { ProgressView().controlSize(.small) }
+            }.padding(8)
         List(model.files, selection: Binding(
             get: { model.selectedBuffer?.path },
             set: { path in
@@ -63,10 +86,15 @@ struct SidebarView: View {
                 }
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button("Rename…") { renameEntry = entry; entryName = entry.name; naming = true }
+                Button("Move to Recovery Folder…", role: .destructive) { model.deleteRequest = entry }
+            }
             .listRowBackground(Color.clear)
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
+        }
     }
 
     private var hostsList: some View {
@@ -85,12 +113,17 @@ struct SidebarView: View {
                 .padding(.vertical, 4)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button("Connect") { model.connect(host) }
+                Button("Edit…") { model.editHost(host) }
+                Button("Remove Host…", role: .destructive) { removeHost = host }
+            }
             .listRowBackground(Color.clear)
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .safeAreaInset(edge: .bottom) {
-            Text("호스트를 열면 워크스페이스가 갈라집니다. SSH 전송은 다음 슬라이스입니다.")
+            Text(model.hosts.isEmpty ? "Add an SSH host with +. Each host has its own files and terminal sessions." : "Credentials are stored in Keychain. Right-click or long-press a host to edit it.")
                 .font(.system(size: 11))
                 .foregroundStyle(CrowTheme.textDim)
                 .padding(12)

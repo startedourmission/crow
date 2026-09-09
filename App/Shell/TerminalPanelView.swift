@@ -4,18 +4,44 @@ import SwiftUI
 struct TerminalPanelView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var closeTerminalID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
             header
             CrowDivider()
-            TerminalViewHost(workspace: model.selectedWorkspace)
-                .background(CrowTheme.bg0)
+            if let id = model.current.snapshot.selectedTerminalID {
+                HStack(spacing: 1) {
+                    terminal(id)
+                    if model.current.snapshot.terminalSplit, sizeClass != .compact,
+                       let other = model.current.snapshot.terminalIDs.first(where: { $0 != id }) {
+                        terminal(other)
+                    }
+                }
+            } else {
+                Button("New Terminal") { model.newTerminal() }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             if case .imeLab = model.selectedWorkspace.kind {
                 IMEInspectorBar(probe: model.imeProbe)
             }
         }
         .background(CrowTheme.bg0)
+        .alert("Close this terminal?", isPresented: Binding(get: { closeTerminalID != nil }, set: { if !$0 { closeTerminalID = nil } }), presenting: closeTerminalID) { id in
+            Button("Close Terminal", role: .destructive) { model.closeTerminal(id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in Text("The shell and its running commands will be terminated.") }
+    }
+
+    private func terminal(_ id: UUID) -> some View {
+        let session = model.terminal(id, in: model.current)
+        return VStack(spacing: 0) {
+            TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
+                .id(session.instanceID)
+                .onAppear { session.start() }
+            Text(session.status).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
+        }
     }
 
     private var header: some View {
@@ -23,29 +49,38 @@ struct TerminalPanelView: View {
             Image(systemName: "terminal")
                 .font(.system(size: 11))
                 .foregroundStyle(CrowTheme.textDim)
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(CrowTheme.text)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
+                        Button("\(index + 1)") { model.current.snapshot.selectedTerminalID = id; model.schedulePersist() }
+                            .foregroundStyle(id == model.current.snapshot.selectedTerminalID ? CrowTheme.accent : CrowTheme.textDim)
+                            .contextMenu { Button("Close Terminal…", role: .destructive) { closeTerminalID = id } }
+                    }
+                }
+            }
             Spacer()
-            Text("\(Int(CrowTheme.terminalFontSize(compact: sizeClass == .compact)))pt")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(CrowTheme.textDim)
+            if model.selectedWorkspace.isRemote {
+                Menu {
+                    Button("Reconnect") { model.reconnectCurrent() }
+                    Button("Disconnect") { model.disconnectCurrent() }
+                } label: { Image(systemName: "network") }.fixedSize()
+            }
+            if sizeClass != .compact {
+                Button {
+                    if model.current.snapshot.terminalIDs.count < 2 { model.newTerminal() }
+                    model.current.snapshot.terminalSplit.toggle(); model.schedulePersist()
+                }
+                    label: { Image(systemName: "rectangle.split.2x1") }.help("Split Terminal")
+            }
+            Button { model.newTerminal() } label: { Image(systemName: "plus") }.help("New Terminal")
+            Button { closeTerminalID = model.current.snapshot.selectedTerminalID } label: { Image(systemName: "xmark") }
+                .help("Close Terminal")
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
         .background(CrowTheme.bg1)
     }
 
-    private var title: String {
-        switch model.selectedWorkspace.kind {
-        case .imeLab:
-            return "IME Lab · echo"
-        case .local:
-            return "local · echo"
-        case .remote:
-            return "\(model.selectedWorkspace.name) · echo until SSH"
-        }
-    }
 }
 
 struct IMEInspectorBar: View {

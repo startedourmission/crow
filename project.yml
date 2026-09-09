@@ -21,6 +21,9 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: 1.20.0
+  Citadel:
+    url: https://github.com/orlandos-nl/Citadel
+    exactVersion: 0.12.1
 
 targetTemplates:
   CrowApp:
@@ -35,7 +38,7 @@ targetTemplates:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Crow
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
-        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        INFOPLIST_KEY_UIUserInterfaceStyle: Light
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     dependencies:
@@ -43,6 +46,8 @@ targetTemplates:
         product: CrowCore
       - package: SwiftTerm
         product: SwiftTerm
+      - package: Citadel
+        product: Citadel
 
 targets:
   Crow-iOS:
@@ -57,7 +62,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
+        INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleDarkContent
         CODE_SIGN_ENTITLEMENTS: App/Crow-iOS.entitlements
     scheme:
       testTargets:
@@ -66,7 +71,9 @@ targets:
     templates:
       - CrowApp
     platform: macOS
-    scheme: {}
+    scheme:
+      testTargets:
+        - CrowMacTests
     settings:
       base:
         COMBINE_HIDPI_IMAGES: YES
@@ -78,7 +85,9 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - Tests
+      - path: Tests
+        excludes:
+          - macOS
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chajinwoo.crow.tests
@@ -87,3 +96,18 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
     dependencies:
       - target: Crow-iOS
+  CrowMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+        excludes:
+          - macOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chajinwoo.crow.mac-tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Crow.app/Contents/MacOS/Crow"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: Crow-macOS

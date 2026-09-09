@@ -6,11 +6,6 @@ struct WorkspaceSwitcher: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("Crow")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(CrowTheme.accent)
-                .padding(.leading, 12)
-
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
                     ForEach(model.workspaces) { workspace in
@@ -18,9 +13,17 @@ struct WorkspaceSwitcher: View {
                     }
                 }
                 .padding(.vertical, 6)
+                .padding(.leading, 12)
             }
 
             Spacer(minLength: 0)
+            Menu {
+                Button("Open Folder…") { model.folderImporterVisible = true }
+                Button("Add SSH Host…") { model.editHost() }
+                Button("Settings…") { model.settingsVisible = true }
+            } label: { Image(systemName: "plus") }
+                .menuStyle(.borderlessButton)
+                .fixedSize().padding(.trailing, 12)
         }
         .frame(height: 40)
         .background(CrowTheme.bg1)

@@ -9,30 +9,53 @@
 /* Begin PBXBuildFile section */
 		02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
 		038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 797792777CAD6CD2D456EBF8 /* SwiftTerm */; };
+		0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
 		109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
 		14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
 		196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
+		229AD114289C014C78DDE79A /* TerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */; };
+		26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
 		2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
 		315E43CF31430E0E18AA565C /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
+		360C0A7D789693230AC287A7 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
 		36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
 		3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
 		4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
+		48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3281820F331A8C3742CC86D3 /* RemoteConnection.swift */; };
+		5BF82CF74F73CF09F2B2A893 /* TerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */; };
+		62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
+		6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
 		6AEE338C0C08B197480FE40C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E3E72F32FB75DFF106C081F5 /* SwiftTerm */; };
+		6C4ED3E62627C2BD483550B7 /* WorkspaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */; };
 		6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
 		73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
 		767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
 		7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = CC5D04CB9ACC760C88D98F53 /* CrowCore */; };
+		8AC360405C5CEAF39BD15D74 /* CrowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */; };
 		8B146E0D24489865E8F69A92 /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
 		8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
+		9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
+		A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
 		A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
 		AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
+		AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
+		AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
+		AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */; };
 		B09A2B69C85652902D15946E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
+		B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
 		B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
 		BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2095F40A89154572BBF0B9AA /* CrowCore */; };
+		C4453DC4CAB73D14F3EC557F /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA822D65A1861321E1F582 /* TerminalSession.swift */; };
+		C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3281820F331A8C3742CC86D3 /* RemoteConnection.swift */; };
 		CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
+		D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
 		D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
+		DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = DE53485A258DA8FF8E438A1C /* Citadel */; };
+		DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 22349BC58B8FD19F9A28CF2B /* Citadel */; };
 		E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
+		E37F3C5FF7993AB42B933D31 /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA822D65A1861321E1F582 /* TerminalSession.swift */; };
 		E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */; };
+		EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
 		F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
 /* End PBXBuildFile section */
 
@@ -44,20 +67,38 @@
 			remoteGlobalIDString = FC0321C587152591263AC989;
 			remoteInfo = "Crow-iOS";
 		};
+		F482969ED48AD902E121A0F1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B7BA9CDB1952F5FD7709BBAC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E4AE45982E13F2167A1BB283;
+			remoteInfo = "Crow-macOS";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHIntegrationTests.swift; sourceTree = "<group>"; };
+		0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CrowMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0AA32B4589742FCAABE76F6B /* Crow-iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "Crow-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalTests.swift; sourceTree = "<group>"; };
+		3281820F331A8C3742CC86D3 /* RemoteConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConnection.swift; sourceTree = "<group>"; };
+		37FA822D65A1861321E1F582 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
+		3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostEditorView.swift; sourceTree = "<group>"; };
 		6F615327A09249D69F58FB1F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		75FF130C71180BF8D69923FE /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
 		81CDA3E505278504B945809C /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceState.swift; sourceTree = "<group>"; };
 		97A032C53156473E97D0B162 /* Crow-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-macOS.entitlements"; sourceTree = "<group>"; };
 		9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAreaView.swift; sourceTree = "<group>"; };
 		9D32992D5A11A39787F52729 /* CrowRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowRootView.swift; sourceTree = "<group>"; };
+		9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorIntegrationTests.swift; sourceTree = "<group>"; };
 		9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowApp.swift; sourceTree = "<group>"; };
 		A572F4E00B3F5144359E22C0 /* CrowCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CrowCore; path = Packages/CrowCore; sourceTree = SOURCE_ROOT; };
 		A9F91460E98231B14EB73C47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLifecycle.swift; sourceTree = "<group>"; };
+		C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeEditor.swift; sourceTree = "<group>"; };
 		CB9788339A1AB51301E2DF81 /* CrowTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CrowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegrationTests.swift; sourceTree = "<group>"; };
 		D8A85DB8385B70D7E310D980 /* Crow-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-iOS.entitlements"; sourceTree = "<group>"; };
 		DC6FE655559409CAEE08CABB /* CrowTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowTheme.swift; sourceTree = "<group>"; };
 		E659A052178F6AD11B43C616 /* TerminalViewHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewHost.swift; sourceTree = "<group>"; };
@@ -74,6 +115,7 @@
 			files = (
 				7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */,
 				038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */,
+				DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -83,6 +125,7 @@
 			files = (
 				BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */,
 				6AEE338C0C08B197480FE40C /* SwiftTerm in Frameworks */,
+				DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -95,11 +138,20 @@
 				75FF130C71180BF8D69923FE /* ActivityBar.swift */,
 				9D32992D5A11A39787F52729 /* CrowRootView.swift */,
 				9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */,
+				3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */,
 				81CDA3E505278504B945809C /* SidebarView.swift */,
 				F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */,
 				E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */,
 			);
 			path = Shell;
+			sourceTree = "<group>";
+		};
+		0FEEE4A3561B20E2D72EF908 /* Editor */ = {
+			isa = PBXGroup;
+			children = (
+				C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */,
+			);
+			path = Editor;
 			sourceTree = "<group>";
 		};
 		19496BAFC18CA285F1D341DB = {
@@ -116,6 +168,10 @@
 			isa = PBXGroup;
 			children = (
 				F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */,
+				2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */,
+				9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */,
+				04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */,
+				D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -131,6 +187,8 @@
 		731BB62EF6BA3ABD2B5E0A7B /* App */ = {
 			isa = PBXGroup;
 			children = (
+				0FEEE4A3561B20E2D72EF908 /* Editor */,
+				91C366062BEB5F0931B98A25 /* Services */,
 				0A17A5C19A8387CDCFC32492 /* Shell */,
 				D67619DC9395E8FEEB0213E8 /* Terminal */,
 				5EC67DB62F6842F4157D36CA /* Theme */,
@@ -139,6 +197,7 @@
 				D8A85DB8385B70D7E310D980 /* Crow-iOS.entitlements */,
 				97A032C53156473E97D0B162 /* Crow-macOS.entitlements */,
 				9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */,
+				8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -148,9 +207,19 @@
 			children = (
 				0AA32B4589742FCAABE76F6B /* Crow-iOS.app */,
 				F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */,
+				0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */,
 				CB9788339A1AB51301E2DF81 /* CrowTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		91C366062BEB5F0931B98A25 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */,
+				3281820F331A8C3742CC86D3 /* RemoteConnection.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 		9318993AA5D14FAD4678BCE4 /* Packages */ = {
@@ -164,6 +233,7 @@
 		D67619DC9395E8FEEB0213E8 /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				37FA822D65A1861321E1F582 /* TerminalSession.swift */,
 				E659A052178F6AD11B43C616 /* TerminalViewHost.swift */,
 			);
 			path = Terminal;
@@ -190,6 +260,24 @@
 			productReference = CB9788339A1AB51301E2DF81 /* CrowTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		C6A075305EC1D15A8B5C9465 /* CrowMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 884EB073874607105FDCD39E /* Build configuration list for PBXNativeTarget "CrowMacTests" */;
+			buildPhases = (
+				AFB2B98EE238BB05C5E82574 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3C0C1B0682B18C8A4D62629C /* PBXTargetDependency */,
+			);
+			name = CrowMacTests;
+			packageProductDependencies = (
+			);
+			productName = CrowMacTests;
+			productReference = 0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		E4AE45982E13F2167A1BB283 /* Crow-macOS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = AF805B96C9091B15A7AE05F4 /* Build configuration list for PBXNativeTarget "Crow-macOS" */;
@@ -206,6 +294,7 @@
 			packageProductDependencies = (
 				CC5D04CB9ACC760C88D98F53 /* CrowCore */,
 				797792777CAD6CD2D456EBF8 /* SwiftTerm */,
+				22349BC58B8FD19F9A28CF2B /* Citadel */,
 			);
 			productName = "Crow-macOS";
 			productReference = F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */;
@@ -227,6 +316,7 @@
 			packageProductDependencies = (
 				2095F40A89154572BBF0B9AA /* CrowCore */,
 				E3E72F32FB75DFF106C081F5 /* SwiftTerm */,
+				DE53485A258DA8FF8E438A1C /* Citadel */,
 			);
 			productName = "Crow-iOS";
 			productReference = 0AA32B4589742FCAABE76F6B /* Crow-iOS.app */;
@@ -253,6 +343,7 @@
 			mainGroup = 19496BAFC18CA285F1D341DB;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */,
 				DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				77199E7D2A1A142471EDB4BE /* XCLocalSwiftPackageReference "Packages/CrowCore" */,
 			);
@@ -264,6 +355,7 @@
 				FC0321C587152591263AC989 /* Crow-iOS */,
 				E4AE45982E13F2167A1BB283 /* Crow-macOS */,
 				804087E3CEF521E892D6E2B4 /* CrowTests */,
+				C6A075305EC1D15A8B5C9465 /* CrowMacTests */,
 			);
 		};
 /* End PBXProject section */
@@ -298,10 +390,28 @@
 				14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */,
 				767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */,
 				3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */,
+				B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */,
+				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
+				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
+				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
 				CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */,
 				2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */,
+				C4453DC4CAB73D14F3EC557F /* TerminalSession.swift in Sources */,
 				02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */,
+				AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */,
 				36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB2B98EE238BB05C5E82574 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8AC360405C5CEAF39BD15D74 /* CrowAppTests.swift in Sources */,
+				EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */,
+				360C0A7D789693230AC287A7 /* EditorIntegrationTests.swift in Sources */,
+				A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */,
+				229AD114289C014C78DDE79A /* TerminalIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -315,9 +425,15 @@
 				4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */,
 				6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */,
 				E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */,
+				26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */,
+				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
+				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
+				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
 				F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */,
 				109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */,
+				E37F3C5FF7993AB42B933D31 /* TerminalSession.swift in Sources */,
 				196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */,
+				6C4ED3E62627C2BD483550B7 /* WorkspaceState.swift in Sources */,
 				A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -327,6 +443,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */,
+				0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */,
+				D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */,
+				6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */,
+				5BF82CF74F73CF09F2B2A893 /* TerminalIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -337,6 +457,11 @@
 			isa = PBXTargetDependency;
 			target = FC0321C587152591263AC989 /* Crow-iOS */;
 			targetProxy = EE77B756C299A15188DB49F4 /* PBXContainerItemProxy */;
+		};
+		3C0C1B0682B18C8A4D62629C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E4AE45982E13F2167A1BB283 /* Crow-macOS */;
+			targetProxy = F482969ED48AD902E121A0F1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -352,10 +477,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDarkContent;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -367,6 +492,23 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		678E986543840271A4BB7572 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.chajinwoo.crow.mac-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Crow.app/Contents/MacOS/Crow";
 			};
 			name = Release;
 		};
@@ -449,7 +591,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHighResolutionCapable = YES;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -472,10 +614,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDarkContent;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -503,7 +645,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHighResolutionCapable = YES;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -608,6 +750,23 @@
 			};
 			name = Release;
 		};
+		FFBF69D13D1EC5E83CA098A0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.chajinwoo.crow.mac-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Crow.app/Contents/MacOS/Crow";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -616,6 +775,15 @@
 			buildConfigurations = (
 				CC4C89E710D4DC2207EAC3E3 /* Debug */,
 				E4B6F10E26513B3F9F3DB9D1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		884EB073874607105FDCD39E /* Build configuration list for PBXNativeTarget "CrowMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FFBF69D13D1EC5E83CA098A0 /* Debug */,
+				678E986543840271A4BB7572 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -657,6 +825,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orlandos-nl/Citadel";
+			requirement = {
+				kind = exactVersion;
+				version = 0.12.1;
+			};
+		};
 		DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
@@ -672,6 +848,11 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = CrowCore;
 		};
+		22349BC58B8FD19F9A28CF2B /* Citadel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */;
+			productName = Citadel;
+		};
 		797792777CAD6CD2D456EBF8 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */;
@@ -680,6 +861,11 @@
 		CC5D04CB9ACC760C88D98F53 /* CrowCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CrowCore;
+		};
+		DE53485A258DA8FF8E438A1C /* Citadel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */;
+			productName = Citadel;
 		};
 		E3E72F32FB75DFF106C081F5 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;

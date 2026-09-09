@@ -11,81 +11,34 @@ private typealias PlatformTerminalViewRepresentable = NSViewRepresentable
 #endif
 
 struct TerminalViewHost: PlatformTerminalViewRepresentable {
-    @Environment(AppModel.self) private var model
-    let workspace: Workspace
-
-    func makeCoordinator() -> TerminalCoordinator {
-        TerminalCoordinator()
-    }
-
+    let session: TerminalSession
+    let fontSize: Double
     #if os(iOS)
     func makeUIView(context: Context) -> SwiftTerm.TerminalView {
-        let font = UIFont.monospacedSystemFont(
-            ofSize: CrowTheme.terminalFontSize(compact: true),
-            weight: .regular
-        )
-        let view = SwiftTerm.TerminalView(frame: .zero, font: font)
-        configure(view, context: context)
-        return view
+        session.view
     }
-
     func updateUIView(_ view: SwiftTerm.TerminalView, context: Context) {
-        update(view, context: context)
+        session.setFontSize(fontSize)
     }
     #else
     func makeNSView(context: Context) -> SwiftTerm.TerminalView {
-        let font = NSFont.monospacedSystemFont(
-            ofSize: CrowTheme.terminalFontSize(compact: false),
-            weight: .regular
-        )
-        let view = SwiftTerm.TerminalView(frame: .zero)
-        view.font = font
-        configure(view, context: context)
-        return view
+        session.view
     }
-
     func updateNSView(_ view: SwiftTerm.TerminalView, context: Context) {
-        update(view, context: context)
+        session.setFontSize(fontSize)
     }
     #endif
-
-    private func configure(_ view: SwiftTerm.TerminalView, context: Context) {
-        view.terminalDelegate = context.coordinator
-        view.optionAsMetaKey = false
-        #if os(iOS)
-        view.backgroundColor = UIColor(CrowTheme.bg0)
-        view.nativeForegroundColor = UIColor(CrowTheme.text)
-        view.nativeBackgroundColor = UIColor(CrowTheme.bg0)
-        #else
-        view.nativeForegroundColor = NSColor(CrowTheme.text)
-        view.nativeBackgroundColor = NSColor(CrowTheme.bg0)
-        #endif
-        context.coordinator.onBytes = { bytes in
-            Task { @MainActor in
-                model.recordPTY(bytes[...])
-            }
-        }
-        context.coordinator.reset(on: view, workspace: workspace)
-    }
-
-    private func update(_ view: SwiftTerm.TerminalView, context: Context) {
-        context.coordinator.onBytes = { bytes in
-            Task { @MainActor in
-                model.recordPTY(bytes[...])
-            }
-        }
-        if context.coordinator.workspaceID != workspace.id {
-            context.coordinator.reset(on: view, workspace: workspace)
-        }
-    }
 }
 
-final class TerminalCoordinator: NSObject, TerminalViewDelegate {
+@MainActor
+final class TerminalCoordinator: NSObject, @preconcurrency TerminalViewDelegate {
     var workspaceID: WorkspaceID?
     var onBytes: (([UInt8]) -> Void)?
+    private var echo = LocalEcho()
 
     func reset(on view: SwiftTerm.TerminalView, workspace: Workspace) {
         workspaceID = workspace.id
+        echo = LocalEcho()
         view.feed(text: "\u{001b}[2J\u{001b}[H" + Self.bannerText(workspace))
     }
 
@@ -95,7 +48,39 @@ final class TerminalCoordinator: NSObject, TerminalViewDelegate {
 
     func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
         onBytes?(Array(data))
-        source.feed(byteArray: data)
+        for action in echo.receive(data) {
+            switch action {
+            case .write(let text):
+                source.feed(text: text)
+            case .erase(let columns):
+                erase(columns: columns, on: source)
+            }
+        }
+    }
+
+    private func erase(columns: Int, on view: SwiftTerm.TerminalView) {
+        let terminal = view.getTerminal()
+        var cursor = terminal.getCursorLocation()
+        // Use absolute positions: BS alone neither erases nor crosses a wrapped row.
+        // SwiftTerm may report x == cols while a right-margin wrap is pending.
+        for _ in 0..<columns {
+            if cursor.x > 0 {
+                cursor.x -= 1
+            } else if cursor.y > 0 {
+                cursor.y -= 1
+                cursor.x = terminal.cols - 1
+            } else {
+                break
+            }
+            view.feed(text: "\u{001b}[\(cursor.y + 1);\(cursor.x + 1)H\u{001b}[X")
+        }
+        // A two-cell glyph wraps early if only one cell remained. Return to that
+        // unused cell after deleting it, so the next keystroke does not leave a gap.
+        if cursor.x == 0, cursor.y > 0,
+           let lastCell = terminal.getCharData(col: terminal.cols - 1, row: cursor.y - 1),
+           lastCell.width == 1, terminal.getCharacter(for: lastCell) == "\0" {
+            view.feed(text: "\u{001b}[\(cursor.y);\(terminal.cols)H")
+        }
     }
 
     func scrolled(source: SwiftTerm.TerminalView, position: Double) {}
@@ -126,7 +111,7 @@ final class TerminalCoordinator: NSObject, TerminalViewDelegate {
         case .local:
             return "Crow · local echo\r\n\r\n$ "
         case .remote:
-            return "Crow · \(workspace.name)\r\nThis workspace is bound to the host. Transport is next.\r\n\r\n$ "
+            return "\(workspace.name) · input echo\r\n\r\n$ "
         }
     }
 }

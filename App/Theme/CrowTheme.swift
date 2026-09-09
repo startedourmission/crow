@@ -1,16 +1,16 @@
 import SwiftUI
 
 enum CrowTheme {
-    static let bg0 = Color(red: 0.09, green: 0.09, blue: 0.095)
-    static let bg1 = Color(red: 0.125, green: 0.125, blue: 0.13)
-    static let bg2 = Color(red: 0.16, green: 0.16, blue: 0.165)
-    static let bg3 = Color(red: 0.20, green: 0.20, blue: 0.205)
-    static let border = Color.white.opacity(0.08)
-    static let accent = Color(red: 0.90, green: 0.62, blue: 0.28)
-    static let text = Color(red: 0.93, green: 0.92, blue: 0.90)
-    static let textDim = Color(red: 0.58, green: 0.57, blue: 0.55)
-    static let danger = Color(red: 0.86, green: 0.38, blue: 0.32)
-    static let ok = Color(red: 0.45, green: 0.72, blue: 0.48)
+    static let bg0 = Color.white
+    static let bg1 = Color(red: 0.97, green: 0.975, blue: 0.985)
+    static let bg2 = Color(red: 0.94, green: 0.95, blue: 0.965)
+    static let bg3 = Color(red: 0.89, green: 0.915, blue: 0.945)
+    static let accent = Color(red: 0.075, green: 0.13, blue: 0.22)
+    static let border = accent.opacity(0.12)
+    static let text = Color(red: 0.10, green: 0.13, blue: 0.18)
+    static let textDim = Color(red: 0.40, green: 0.44, blue: 0.50)
+    static let danger = Color(red: 0.72, green: 0.20, blue: 0.18)
+    static let ok = Color(red: 0.18, green: 0.44, blue: 0.30)
 
     static let activityWidth: CGFloat = 48
     static let sidebarWidth: CGFloat = 260
