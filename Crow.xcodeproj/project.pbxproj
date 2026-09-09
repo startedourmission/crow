@@ -1,0 +1,692 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
+		038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 797792777CAD6CD2D456EBF8 /* SwiftTerm */; };
+		109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
+		14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
+		196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
+		2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
+		315E43CF31430E0E18AA565C /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
+		36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
+		3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
+		4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
+		6AEE338C0C08B197480FE40C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E3E72F32FB75DFF106C081F5 /* SwiftTerm */; };
+		6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
+		73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
+		767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
+		7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = CC5D04CB9ACC760C88D98F53 /* CrowCore */; };
+		8B146E0D24489865E8F69A92 /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
+		8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
+		A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
+		AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
+		B09A2B69C85652902D15946E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
+		B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
+		BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2095F40A89154572BBF0B9AA /* CrowCore */; };
+		CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
+		D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
+		E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
+		E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */; };
+		F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		EE77B756C299A15188DB49F4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B7BA9CDB1952F5FD7709BBAC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FC0321C587152591263AC989;
+			remoteInfo = "Crow-iOS";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0AA32B4589742FCAABE76F6B /* Crow-iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "Crow-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6F615327A09249D69F58FB1F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		75FF130C71180BF8D69923FE /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
+		81CDA3E505278504B945809C /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		97A032C53156473E97D0B162 /* Crow-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-macOS.entitlements"; sourceTree = "<group>"; };
+		9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAreaView.swift; sourceTree = "<group>"; };
+		9D32992D5A11A39787F52729 /* CrowRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowRootView.swift; sourceTree = "<group>"; };
+		9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowApp.swift; sourceTree = "<group>"; };
+		A572F4E00B3F5144359E22C0 /* CrowCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CrowCore; path = Packages/CrowCore; sourceTree = SOURCE_ROOT; };
+		A9F91460E98231B14EB73C47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CB9788339A1AB51301E2DF81 /* CrowTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CrowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8A85DB8385B70D7E310D980 /* Crow-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-iOS.entitlements"; sourceTree = "<group>"; };
+		DC6FE655559409CAEE08CABB /* CrowTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowTheme.swift; sourceTree = "<group>"; };
+		E659A052178F6AD11B43C616 /* TerminalViewHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewHost.swift; sourceTree = "<group>"; };
+		E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSwitcher.swift; sourceTree = "<group>"; };
+		F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowAppTests.swift; sourceTree = "<group>"; };
+		F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
+		F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Crow-macOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1899DA095E2BDAB21162C679 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */,
+				038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		872A15048A9BEE9BD1C180DD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */,
+				6AEE338C0C08B197480FE40C /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0A17A5C19A8387CDCFC32492 /* Shell */ = {
+			isa = PBXGroup;
+			children = (
+				75FF130C71180BF8D69923FE /* ActivityBar.swift */,
+				9D32992D5A11A39787F52729 /* CrowRootView.swift */,
+				9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */,
+				81CDA3E505278504B945809C /* SidebarView.swift */,
+				F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */,
+				E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */,
+			);
+			path = Shell;
+			sourceTree = "<group>";
+		};
+		19496BAFC18CA285F1D341DB = {
+			isa = PBXGroup;
+			children = (
+				731BB62EF6BA3ABD2B5E0A7B /* App */,
+				9318993AA5D14FAD4678BCE4 /* Packages */,
+				1A1C9CA78960D194555619D3 /* Tests */,
+				7A6C0BA32DD62D2969069501 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A1C9CA78960D194555619D3 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		5EC67DB62F6842F4157D36CA /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				DC6FE655559409CAEE08CABB /* CrowTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		731BB62EF6BA3ABD2B5E0A7B /* App */ = {
+			isa = PBXGroup;
+			children = (
+				0A17A5C19A8387CDCFC32492 /* Shell */,
+				D67619DC9395E8FEEB0213E8 /* Terminal */,
+				5EC67DB62F6842F4157D36CA /* Theme */,
+				6F615327A09249D69F58FB1F /* AppModel.swift */,
+				A9F91460E98231B14EB73C47 /* Assets.xcassets */,
+				D8A85DB8385B70D7E310D980 /* Crow-iOS.entitlements */,
+				97A032C53156473E97D0B162 /* Crow-macOS.entitlements */,
+				9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7A6C0BA32DD62D2969069501 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0AA32B4589742FCAABE76F6B /* Crow-iOS.app */,
+				F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */,
+				CB9788339A1AB51301E2DF81 /* CrowTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9318993AA5D14FAD4678BCE4 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				A572F4E00B3F5144359E22C0 /* CrowCore */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		D67619DC9395E8FEEB0213E8 /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				E659A052178F6AD11B43C616 /* TerminalViewHost.swift */,
+			);
+			path = Terminal;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		804087E3CEF521E892D6E2B4 /* CrowTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 18946346D5F0BAA8EC53036B /* Build configuration list for PBXNativeTarget "CrowTests" */;
+			buildPhases = (
+				F5C6BCA420B72FDDB3DDBF5F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				344410A856CD4AB6DE0E37D4 /* PBXTargetDependency */,
+			);
+			name = CrowTests;
+			packageProductDependencies = (
+			);
+			productName = CrowTests;
+			productReference = CB9788339A1AB51301E2DF81 /* CrowTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		E4AE45982E13F2167A1BB283 /* Crow-macOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AF805B96C9091B15A7AE05F4 /* Build configuration list for PBXNativeTarget "Crow-macOS" */;
+			buildPhases = (
+				2DB449F52FDA4EAD45D6BCDB /* Sources */,
+				43905972200D72706E01FB34 /* Resources */,
+				1899DA095E2BDAB21162C679 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Crow-macOS";
+			packageProductDependencies = (
+				CC5D04CB9ACC760C88D98F53 /* CrowCore */,
+				797792777CAD6CD2D456EBF8 /* SwiftTerm */,
+			);
+			productName = "Crow-macOS";
+			productReference = F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		FC0321C587152591263AC989 /* Crow-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C54EE9B53D1F85005F97DE5F /* Build configuration list for PBXNativeTarget "Crow-iOS" */;
+			buildPhases = (
+				BEA32935D0EB05AFCD13F7E8 /* Sources */,
+				B30BE0D1AFE4EF81AF605A4E /* Resources */,
+				872A15048A9BEE9BD1C180DD /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Crow-iOS";
+			packageProductDependencies = (
+				2095F40A89154572BBF0B9AA /* CrowCore */,
+				E3E72F32FB75DFF106C081F5 /* SwiftTerm */,
+			);
+			productName = "Crow-iOS";
+			productReference = 0AA32B4589742FCAABE76F6B /* Crow-iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B7BA9CDB1952F5FD7709BBAC /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = B682C1620F6EAE7A1E66AC71 /* Build configuration list for PBXProject "Crow" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 19496BAFC18CA285F1D341DB;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				77199E7D2A1A142471EDB4BE /* XCLocalSwiftPackageReference "Packages/CrowCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7A6C0BA32DD62D2969069501 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FC0321C587152591263AC989 /* Crow-iOS */,
+				E4AE45982E13F2167A1BB283 /* Crow-macOS */,
+				804087E3CEF521E892D6E2B4 /* CrowTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		43905972200D72706E01FB34 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B30BE0D1AFE4EF81AF605A4E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B09A2B69C85652902D15946E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2DB449F52FDA4EAD45D6BCDB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */,
+				8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */,
+				315E43CF31430E0E18AA565C /* CrowApp.swift in Sources */,
+				14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */,
+				767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */,
+				3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */,
+				CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */,
+				2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */,
+				02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */,
+				36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEA32935D0EB05AFCD13F7E8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */,
+				B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */,
+				8B146E0D24489865E8F69A92 /* CrowApp.swift in Sources */,
+				4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */,
+				6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */,
+				E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */,
+				F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */,
+				109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */,
+				196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */,
+				A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F5C6BCA420B72FDDB3DDBF5F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		344410A856CD4AB6DE0E37D4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FC0321C587152591263AC989 /* Crow-iOS */;
+			targetProxy = EE77B756C299A15188DB49F4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		433041E546F6738EC185BB75 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "App/Crow-iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Crow;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.chajinwoo.crow;
+				PRODUCT_MODULE_NAME = Crow;
+				PRODUCT_NAME = Crow;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6CD2EC3749CC916EDD5507AB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		71DB5A3FA5C607F1A754638C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "App/Crow-macOS.entitlements";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Crow;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.chajinwoo.crow;
+				PRODUCT_MODULE_NAME = Crow;
+				PRODUCT_NAME = Crow;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		73D0B4CB9F37A10E51523944 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "App/Crow-iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Crow;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.chajinwoo.crow;
+				PRODUCT_MODULE_NAME = Crow;
+				PRODUCT_NAME = Crow;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7B6DF2244A76FA63AC62978B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "App/Crow-macOS.entitlements";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Crow;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.chajinwoo.crow;
+				PRODUCT_MODULE_NAME = Crow;
+				PRODUCT_NAME = Crow;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		A9A91870D1D5A4F545557E8A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		CC4C89E710D4DC2207EAC3E3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.chajinwoo.crow.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Crow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Crow";
+			};
+			name = Debug;
+		};
+		E4B6F10E26513B3F9F3DB9D1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.chajinwoo.crow.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Crow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Crow";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		18946346D5F0BAA8EC53036B /* Build configuration list for PBXNativeTarget "CrowTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC4C89E710D4DC2207EAC3E3 /* Debug */,
+				E4B6F10E26513B3F9F3DB9D1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AF805B96C9091B15A7AE05F4 /* Build configuration list for PBXNativeTarget "Crow-macOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				71DB5A3FA5C607F1A754638C /* Debug */,
+				7B6DF2244A76FA63AC62978B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B682C1620F6EAE7A1E66AC71 /* Build configuration list for PBXProject "Crow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6CD2EC3749CC916EDD5507AB /* Debug */,
+				A9A91870D1D5A4F545557E8A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C54EE9B53D1F85005F97DE5F /* Build configuration list for PBXNativeTarget "Crow-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				73D0B4CB9F37A10E51523944 /* Debug */,
+				433041E546F6738EC185BB75 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		77199E7D2A1A142471EDB4BE /* XCLocalSwiftPackageReference "Packages/CrowCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/CrowCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.20.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2095F40A89154572BBF0B9AA /* CrowCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CrowCore;
+		};
+		797792777CAD6CD2D456EBF8 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+		CC5D04CB9ACC760C88D98F53 /* CrowCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CrowCore;
+		};
+		E3E72F32FB75DFF106C081F5 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B7BA9CDB1952F5FD7709BBAC /* Project object */;
+}
