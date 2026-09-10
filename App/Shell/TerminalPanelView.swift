@@ -36,7 +36,7 @@ struct TerminalPanelView: View {
             TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
                 .id(session.instanceID)
                 .onAppear { session.start() }
-            Text(session.status).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+            Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
         }
     }
@@ -45,12 +45,12 @@ struct TerminalPanelView: View {
         HStack(spacing: 8) {
             Image(systemName: "terminal")
                 .font(.system(size: 11))
-                .foregroundStyle(CrowTheme.textDim)
+                .crowForeground(CrowTheme.textDim)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
                         Button("\(index + 1)") { model.current.snapshot.selectedTerminalID = id; model.schedulePersist() }
-                            .foregroundStyle(id == model.current.snapshot.selectedTerminalID ? CrowTheme.accent : CrowTheme.textDim)
+                            .crowForeground(id == model.current.snapshot.selectedTerminalID ? CrowTheme.accent : CrowTheme.textDim)
                             .contextMenu { Button("Close Terminal…", role: .destructive) { closeTerminalID = id } }
                     }
                 }
@@ -61,7 +61,7 @@ struct TerminalPanelView: View {
                 Menu {
                     Button("Reconnect") { model.reconnectCurrent() }
                     Button("Disconnect") { model.disconnectCurrent() }
-                } label: { Image(systemName: "network") }.fixedSize()
+                } label: { Image(systemName: "network") }.fixedSize().crowMenuHover()
             }
             if sizeClass != .compact {
                 Button {
@@ -77,6 +77,7 @@ struct TerminalPanelView: View {
         .padding(.horizontal, 10)
         .frame(height: 28)
         .background(CrowTheme.bg1)
+        .buttonStyle(CrowButtonStyle())
     }
 
 }
@@ -91,19 +92,29 @@ struct StatusBarView: View {
                 .font(.system(size: 11, weight: .medium))
             if let buffer = model.selectedBuffer {
                 Text(buffer.language.label)
-                    .foregroundStyle(CrowTheme.textDim)
+                    .crowForeground(CrowTheme.textDim)
                 if buffer.isDirty {
                     Text("•")
-                        .foregroundStyle(CrowTheme.accent)
+                        .crowForeground(CrowTheme.accent)
                 }
             }
             Spacer()
             Text(model.statusMessage)
-                .foregroundStyle(CrowTheme.textDim)
+                .crowForeground(CrowTheme.textDim)
                 .lineLimit(1)
+            #if os(macOS)
+            if model.current.snapshot.layout?.panes.isEmpty != false && !model.inspectorVisible {
+            Button { model.inspectorVisible.toggle() } label: {
+                Image(systemName: "sidebar.right").frame(width: 20, height: 20)
+            }
+            .buttonStyle(CrowButtonStyle()).help("Toggle Right Sidebar")
+            .accessibilityLabel("Toggle Right Sidebar").accessibilityIdentifier("crow.inspector-toggle")
+            .windowDragExcluded()
+            }
+            #endif
         }
         .font(.system(size: 11))
-        .foregroundStyle(CrowTheme.text)
+        .crowForeground(CrowTheme.text)
         .padding(.horizontal, 10)
         .frame(height: 24)
         .background(CrowTheme.bg1)

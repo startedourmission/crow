@@ -13,6 +13,7 @@ swiftc -parse-as-library -target arm64-apple-macos15 -I "$crow_build" -L "$crow_
   "$crow_root/App/Services/WindowDragRegion.swift" "$crow_root/App/Editor/MarkdownEditor.swift" \
   "$crow_root/App/Editor/NativeEditor.swift" "$crow_root/App/Theme/CrowTheme.swift" \
   "$crow_root/App/Services/SystemSFTP.swift" "$crow_root/App/Services/SystemSSH.swift" \
+  "$crow_root/App/Services/GitRepository.swift" \
   "$crow_root/Tools/NativeSmoke/Smoke.swift" "$crow_root/Tools/NativeSmoke/SFTPSmoke.swift" -o "$crow_app/MacOS/Smoke"
 cp "$crow_root/Tools/NativeSmoke/Info.plist" "$crow_app/Info.plist"
 cp "$crow_root/App/Editor/markdown-editor.js" "$crow_app/Resources/markdown-editor.js"

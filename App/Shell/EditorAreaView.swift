@@ -52,12 +52,12 @@ struct EditorAreaView: View {
                     if buffer.isRemote {
                         Image(systemName: "network")
                             .font(.system(size: 9))
-                            .foregroundStyle(CrowTheme.textDim)
+                            .crowForeground(CrowTheme.textDim)
                     }
                 }
-                .foregroundStyle(selected ? CrowTheme.text : CrowTheme.textDim)
+                .crowForeground(selected ? CrowTheme.text : CrowTheme.textDim)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
             .contextMenu {
                 if sizeClass != .compact {
                     Button("Open in Split") { model.current.snapshot.splitBufferID = buffer.id; model.schedulePersist() }
@@ -69,10 +69,10 @@ struct EditorAreaView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(CrowTheme.textDim)
+                    .crowForeground(CrowTheme.textDim)
                     .frame(width: 16, height: 16)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
         }
         .padding(.horizontal, 12)
         .frame(height: 36)
@@ -88,13 +88,13 @@ struct EditorAreaView: View {
         VStack(spacing: 8) {
             Image(systemName: "doc.text")
                 .font(.system(size: 28, weight: .light))
-                .foregroundStyle(CrowTheme.textDim)
+                .crowForeground(CrowTheme.textDim)
             Text("Open a file")
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(CrowTheme.text)
+                .crowForeground(CrowTheme.text)
             Text("마크다운만이 아니라 txt, json, conf도 같은 에디터입니다.")
                 .font(.system(size: 12))
-                .foregroundStyle(CrowTheme.textDim)
+                .crowForeground(CrowTheme.textDim)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -108,17 +108,19 @@ struct CrowEditorView: View {
     @State private var previewMarkdown = false
     @State private var findRequest = 0
     @State private var pendingFind = false
+    @State private var findToggleRequest = 0
+    @State private var findVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text(buffer.language.label)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CrowTheme.textDim)
+                    .crowForeground(CrowTheme.textDim)
                 Spacer()
                 if buffer.language == .markdown {
                     Button { previewMarkdown.toggle() } label: {
-                        Image(systemName: previewMarkdown ? "chevron.left.forwardslash.chevron.right" : "eye")
+                        Image(systemName: previewMarkdown ? "chevron.left.forwardslash.chevron.right" : "book")
                     }
                     .help(previewMarkdown ? "Markdown Source" : "Live Preview")
                     .accessibilityLabel(previewMarkdown ? "Markdown Source" : "Live Preview")
@@ -126,13 +128,15 @@ struct CrowEditorView: View {
                     .windowDragExcluded()
                 }
                 Button {
-                    if previewMarkdown { pendingFind = true; previewMarkdown = false }
-                    else { findRequest += 1 }
+                    if previewMarkdown { showFind() }
+                    else { findToggleRequest += 1 }
                 } label: { Image(systemName: "magnifyingglass") }
-                    .help("Find and Replace").accessibilityLabel("Find and Replace")
+                    .help(findVisible ? "Hide Find and Replace" : "Find and Replace")
+                    .accessibilityLabel(findVisible ? "Hide Find and Replace" : "Find and Replace")
+                    .accessibilityIdentifier("crow.document-find-toggle")
                     .windowDragExcluded()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(CrowTheme.bg0)
@@ -140,14 +144,23 @@ struct CrowEditorView: View {
 
             if previewMarkdown, buffer.language == .markdown {
                 MarkdownPreviewView(text: textBinding, fontSize: model.settings.fontSize,
-                    onSave: { Task { await model.saveBuffer(buffer.id) } })
+                    onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest)
             } else {
                 NativeEditor(text: textBinding, fontSize: model.settings.fontSize,
                     indentWidth: model.settings.indentWidth, lineNumbers: model.settings.lineNumbers, findRequest: findRequest,
-                    onSave: { Task { await model.saveBuffer(buffer.id) } }, focused: isActive)
+                    onSave: { Task { await model.saveBuffer(buffer.id) } }, focused: isActive, locationRequest: locationRequest,
+                    findToggleRequest: findToggleRequest, onFindVisibility: { findVisible = $0 })
                     .onAppear { if pendingFind { pendingFind = false; findRequest += 1 } }
             }
         }
+        .onChange(of: model.documentFindRequest) { _, _ in
+            if isActive { showFind() }
+        }
+    }
+
+    private func showFind() {
+        if previewMarkdown { pendingFind = true; previewMarkdown = false }
+        else { findRequest += 1 }
     }
 
     private var textBinding: Binding<String> {
@@ -155,6 +168,11 @@ struct CrowEditorView: View {
             get: { model.locate(buffer.id).map { $0.0.snapshot.buffers[$0.1].text } ?? buffer.text },
             set: { model.updateBufferText(buffer.id, $0) }
         )
+    }
+
+    private var locationRequest: EditorLocationRequest? {
+        guard isActive, model.editorLocationBufferID == buffer.id else { return nil }
+        return model.editorLocationRequest
     }
 
 }
@@ -178,7 +196,7 @@ struct WorkspaceAreaView: View {
     }
     private var empty: some View {
         VStack(spacing: 14) {
-            Text("No open tabs").foregroundStyle(CrowTheme.textDim)
+            Text("No open tabs").crowForeground(CrowTheme.textDim)
             Button("New Terminal Tab") { model.newTerminal() }.windowDragExcluded()
             Button("Open Folder…") { model.folderImporterVisible = true }.windowDragExcluded()
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -307,16 +325,35 @@ private struct WorkspacePaneView: View {
                     Button("Reconnect") { model.reconnectCurrent() }
                     Button("Disconnect") { model.disconnectCurrent() }
                 }
-            } label: { Image(systemName: "ellipsis").frame(width: 24, height: 28) }
-            .menuStyle(.borderlessButton).fixedSize().help("Pane actions")
+            } label: { PanelActionIcon(symbol: "ellipsis") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .frame(width: 28, height: 28).help("Pane actions")
+            .crowMenuHover()
+            .windowDragExcluded()
+            #if os(macOS)
+            if !model.inspectorVisible {
+            Button {
+                model.current.maximizedPaneID = nil
+                model.inspectorVisible = true
+            } label: {
+                PanelActionIcon(symbol: "sidebar.right")
+            }
+            .buttonStyle(CrowButtonStyle())
+            .help("Show Right Sidebar")
+            .accessibilityLabel("Show Right Sidebar")
+            .accessibilityIdentifier("crow.inspector-toggle")
+            .windowDragExcluded()
+            }
+            #else
             if (model.current.snapshot.layout?.panes.count ?? 0) > 1 {
                 Button {
                     model.current.maximizedPaneID = model.current.maximizedPaneID == pane.id ? nil : pane.id
                 } label: {
                     Image(systemName: model.current.maximizedPaneID == pane.id ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 11)).frame(width: 24, height: 28)
-                }.buttonStyle(.plain).help(model.current.maximizedPaneID == pane.id ? "Restore Panes" : "Maximize Pane")
+                }.buttonStyle(CrowButtonStyle()).help(model.current.maximizedPaneID == pane.id ? "Restore Panes" : "Maximize Pane")
             }
+            #endif
         }
         .padding(.trailing, 5).frame(height: 36).background(CrowTheme.bg1)
         #if !os(macOS)
@@ -347,7 +384,7 @@ private struct WorkspacePaneView: View {
                 Image(systemName: "xmark").font(.system(size: 8)).frame(width: 18, height: 24)
             }.help("Close \(title(tab))")
         }
-        .buttonStyle(.plain).foregroundStyle(selected ? CrowTheme.text : CrowTheme.textDim)
+        .buttonStyle(CrowButtonStyle()).crowForeground(selected ? CrowTheme.text : CrowTheme.textDim)
         .padding(.horizontal, 10).frame(height: 36)
         .background(selected ? CrowTheme.bg0 : CrowTheme.bg1)
         .overlay(alignment: .bottom) { if selected { CrowTheme.accent.frame(height: 1) } }
@@ -403,7 +440,7 @@ private struct WorkspacePaneView: View {
                     session.view.window?.makeFirstResponder(session.view)
                     #endif
                 }
-            Text(session.status).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+            Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
         }
     }

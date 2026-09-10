@@ -6,15 +6,16 @@ struct MarkdownPreviewView: View {
     @Binding var text: String
     let fontSize: Double
     var onSave: () -> Void = {}
+    var locationRequest: EditorLocationRequest?
     @State private var failure: String?
     var body: some View {
         VStack(spacing: 0) {
             if let failure {
                 Text("Markdown editor: \(failure)").font(.system(size: 12)).foregroundStyle(.red).padding(12)
                 NativeEditor(text: $text, fontSize: fontSize, indentWidth: 4, lineNumbers: false,
-                    findRequest: 0, onSave: onSave)
+                    findRequest: 0, onSave: onSave, locationRequest: locationRequest)
             } else {
-                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure)
+                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest)
             }
         }
     }
@@ -27,6 +28,16 @@ struct MarkdownPreviewView: View {
     var onSave: () -> Void = {}
     var failure: Binding<String?> = .constant(nil)
     var loaded = false
+    var locationRequest: EditorLocationRequest?
+    var lastLocation: UUID?
+    func navigate(_ webView: WKWebView) {
+        guard loaded, let request = locationRequest, lastLocation != request.id, let heading = request.headingIndex else { return }
+        lastLocation = request.id
+        webView.callAsyncJavaScript("return window.crowMarkdown.jumpHeading(index)", arguments: ["index": heading],
+            in: nil, in: .defaultClient) { [weak self] result in
+                if case .failure(let error) = result { self?.failure.wrappedValue = error.localizedDescription }
+            }
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loaded = true; render(webView)
     }
@@ -39,6 +50,7 @@ struct MarkdownPreviewView: View {
             arguments: ["source": value, "blocks": blocks, "fontSize": fontSize ?? 15],
             in: nil, in: .defaultClient) { [weak self] result in
                 if case .failure(let error) = result { self?.failure.wrappedValue = error.localizedDescription }
+                else { self?.navigate(webView) }
             }
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -83,6 +95,7 @@ struct MarkdownPreviewView: View {
     let fontSize: Double
     var onSave: () -> Void
     @Binding var failure: String?
+    var locationRequest: EditorLocationRequest?
     func makeCoordinator() -> MarkdownNavigation { MarkdownNavigation() }
     func makeView(_ coordinator: MarkdownNavigation) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -96,12 +109,14 @@ struct MarkdownPreviewView: View {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = coordinator
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.fontSize = fontSize; coordinator.failure = $failure
+        coordinator.locationRequest = locationRequest
         view.loadHTMLString(MarkdownPreview.document("", fontSize: fontSize), baseURL: nil)
         return view
     }
     func update(_ view: WKWebView, coordinator: MarkdownNavigation) {
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.failure = $failure
-        guard coordinator.source != text || coordinator.fontSize != fontSize else { return }
+        coordinator.locationRequest = locationRequest
+        guard coordinator.source != text || coordinator.fontSize != fontSize else { coordinator.navigate(view); return }
         coordinator.fontSize = fontSize
         coordinator.render(view)
     }

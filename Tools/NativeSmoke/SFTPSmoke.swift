@@ -88,6 +88,20 @@ import CrowCore
     for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket) { try await Task.sleep(for: .milliseconds(20)) }
     try check(master.isRunning && FileManager.default.fileExists(atPath: socket), "Authenticated fixture connection did not start")
     let spec = SystemSSHSpec(host: host, socket: socket, arguments: [], directory: root.path)
+    if shellOnly != nil || (!rejectCommands && !stallSubsystem) {
+        let gitRoot = root.appendingPathComponent("git repo's folder")
+        try FileManager.default.createDirectory(at: gitRoot, withIntermediateDirectories: true)
+        let gitInit = try process("/usr/bin/git", ["init", "-q", gitRoot.path])
+        gitInit.waitUntilExit(); try check(gitInit.terminationStatus == 0, "Fixture git init failed")
+        try Data("# Test\n".utf8).write(to: gitRoot.appendingPathComponent("한글 note.md"))
+        let localGit = try await GitRepository.read(path: gitRoot.path)
+        let remoteGit = try await GitRepository.read(path: gitRoot.path, remote: spec)
+        try check(localGit.status.changes.map(\.path) == ["한글 note.md"], "Local Git listing failed")
+        try check(remoteGit.status == localGit.status && URL(fileURLWithPath: remoteGit.root).resolvingSymlinksInPath() == gitRoot.resolvingSymlinksInPath(),
+                  "Remote Git differed from local Git: \(remoteGit.status), \(remoteGit.root); local \(localGit.status), \(gitRoot.path)")
+        try check(master.isRunning, "Git read closed the SSH master")
+        print("PASS local/remote Git status, quoted paths, shell \(shellOnly ?? "default"), SSH master preserved")
+    }
     if rejectCommands {
         let files = try SystemSFTP(spec: spec)
         defer { files.close() }
@@ -128,6 +142,13 @@ import CrowCore
     let source = String(repeating: "# Capability negotiation\n\n한글 file contents\n", count: 2000)
     try await files.write(source, path: path, expected: "", overwrite: false)
     try check(try await files.read(path) == source, "Fallback SFTP read/write failed")
+    do {
+        _ = try await files.read(path, maximumSize: 100)
+        try check(false, "Bounded SFTP content read accepted an oversized file")
+    } catch FileFailure.tooLarge {}
+    let searchable = try await files.read(path, maximumSize: 2 * 1024 * 1024)
+    try check(FileSearchQuery("contents: 한글 file").firstMatch(in: searchable)?.line == 3,
+              "Remote contents query did not recognize the matching line")
     try check(try await files.list(root.path).contains { $0.name == "fallback 한글.md" }, "Fallback SFTP directory listing failed")
     do {
         try await files.write("must not overwrite", path: path, expected: "stale", overwrite: false)

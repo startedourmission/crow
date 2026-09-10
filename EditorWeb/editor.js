@@ -161,4 +161,13 @@ function receive(value, blocks, fontSize) {
     source = value; initialized = true;
   } finally { loading = false; }
 }
-window.crowMarkdown = { receive };
+function jumpHeading(index) {
+  let current = 0, target = null;
+  editor.state.doc.descendants((node, position) => {
+    if (node.type.name === 'heading' && current++ === index) target = position + 1;
+  });
+  if (target === null) return false;
+  editor.chain().setTextSelection(target).focus().scrollIntoView().run();
+  return true;
+}
+window.crowMarkdown = { receive, jumpHeading };

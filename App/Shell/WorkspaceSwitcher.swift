@@ -26,17 +26,18 @@ struct WorkspaceSwitcher: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: model.hasWorkspace && model.selectedWorkspace.isRemote ? "network" : "folder")
-                    .foregroundStyle(CrowTheme.textDim)
+                    .crowForeground(CrowTheme.textDim)
                 Text(model.hasWorkspace ? model.selectedWorkspace.name : "Open Vault")
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 2)
             }
-            .foregroundStyle(CrowTheme.text)
+            .crowForeground(CrowTheme.text)
             .padding(.horizontal, 8).frame(height: 28).contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
         .fixedSize(horizontal: false, vertical: true)
+        .crowMenuHover()
         .windowDragExcluded()
         .padding(.horizontal, 6).frame(maxWidth: .infinity).frame(height: 40)
         .background(CrowTheme.bg1)

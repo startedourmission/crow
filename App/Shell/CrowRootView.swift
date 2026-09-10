@@ -79,6 +79,7 @@ struct CrowRootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.resume() } else { model.suspend() }
         }
+        .buttonStyle(CrowButtonStyle(kind: .filled))
     }
 }
 
@@ -87,6 +88,9 @@ struct RegularWorkspaceView: View {
     @AppStorage("crow.sidebarWidth") private var sidebarWidth = Double(CrowTheme.sidebarWidth)
     @State private var sidebarDragStart: CGFloat?
     @State private var liveSidebarWidth: CGFloat?
+    @AppStorage("crow.inspectorWidth") private var savedInspectorWidth = 260.0
+    @State private var inspectorDragStart: CGFloat?
+    @State private var liveInspectorWidth: CGFloat?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -94,6 +98,12 @@ struct RegularWorkspaceView: View {
             WorkspaceSwitcher()
             #endif
             GeometryReader { workspaceGeometry in
+              let inspectorWidth = min(max(200, liveInspectorWidth ?? savedInspectorWidth), max(200, workspaceGeometry.size.width * 0.35))
+              #if os(macOS)
+              let sidebarAvailable = workspaceGeometry.size.width - (model.inspectorVisible ? inspectorWidth + 6 : 0)
+              #else
+              let sidebarAvailable = workspaceGeometry.size.width
+              #endif
               HStack(spacing: 0) {
                 ActivityBar()
                     #if os(macOS)
@@ -101,25 +111,37 @@ struct RegularWorkspaceView: View {
                     .background(CrowTheme.bg1)
                     .windowDragBackground()
                     .overlay(alignment: .top) { WindowDragRegion().frame(height: 12) }
+                    .overlay(alignment: .top) {
+                        CrowDivider().padding(.top, 40).allowsHitTesting(false)
+                    }
                     #endif
                 if model.sidebarVisible {
                     VStack(spacing: 0) {
                         #if os(macOS)
-                        WorkspaceSwitcher().padding(.leading, 36)
-                            .background(CrowTheme.bg1)
-                            .windowDragBackground()
-                            .overlay(alignment: .top) { WindowDragRegion().frame(height: 6) }
+                        SidebarTopBar()
+                        CrowDivider()
                         #endif
                         SidebarView()
+                        #if os(macOS)
+                        CrowDivider()
+                        WorkspaceSwitcher()
+                        #endif
                     }
-                        .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: workspaceGeometry.size.width))
+                        .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: sidebarAvailable))
                         .background(CrowTheme.bg1)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(CrowTheme.border).frame(width: 1)
+                                #if os(macOS)
+                                .padding(.top, 40)
+                                #endif
+                                .allowsHitTesting(false)
+                        }
                     ResizeHandle(axis: .horizontal, label: "Resize file explorer", onDrag: { translation in
                         if sidebarDragStart == nil {
-                            sidebarDragStart = SplitSizing.sidebarWidth(sidebarWidth, available: workspaceGeometry.size.width)
+                            sidebarDragStart = SplitSizing.sidebarWidth(sidebarWidth, available: sidebarAvailable)
                         }
                         liveSidebarWidth = SplitSizing.sidebarWidth((sidebarDragStart ?? sidebarWidth) + translation,
-                            available: workspaceGeometry.size.width)
+                            available: sidebarAvailable)
                     }, onEnd: {
                         if let width = liveSidebarWidth { sidebarWidth = width }
                         sidebarDragStart = nil; liveSidebarWidth = nil
@@ -128,15 +150,25 @@ struct RegularWorkspaceView: View {
                 VStack(spacing: 0) {
                     #if os(macOS)
                     if !model.sidebarVisible {
-                        HStack {
-                            WorkspaceSwitcher().frame(maxWidth: 280)
-                            Spacer().frame(maxHeight: .infinity).overlay { WindowDragRegion() }
-                        }.frame(height: 40).padding(.leading, 36).background(CrowTheme.bg1)
+                        SidebarTopBar()
                     }
                     #endif
                     if !model.hasWorkspace { EmptyWorkspaceView() }
                     else { WorkspaceAreaView() }
                 }
+                #if os(macOS)
+                if model.inspectorVisible {
+                    ResizeHandle(axis: .horizontal, label: "Resize right sidebar", onDrag: { translation in
+                        if inspectorDragStart == nil { inspectorDragStart = inspectorWidth }
+                        liveInspectorWidth = min(max(200, (inspectorDragStart ?? inspectorWidth) - translation),
+                            max(200, workspaceGeometry.size.width * 0.35))
+                    }, onEnd: {
+                        if let width = liveInspectorWidth { savedInspectorWidth = width }
+                        inspectorDragStart = nil; liveInspectorWidth = nil
+                    })
+                    InspectorPanel().frame(width: inspectorWidth)
+                }
+                #endif
               }
               .transaction { $0.animation = nil }
             }
@@ -192,7 +224,7 @@ private struct EmptyWorkspaceView: View {
     @Environment(AppModel.self) private var model
     var body: some View {
         VStack(spacing: 16) {
-            Text("Open a folder to get started").foregroundStyle(CrowTheme.textDim)
+            Text("Open a folder to get started").crowForeground(CrowTheme.textDim)
             Button("Open Folder…") { model.folderImporterVisible = true }
             Button("SSH Command…") { model.sshCommandVisible = true }
             Button("Settings…") { model.settingsVisible = true }

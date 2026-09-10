@@ -45,11 +45,15 @@ final class FileExplorer {
     var searchVisible = false
     var query = "" { didSet { if query != oldValue { startSearch() } } }
     private(set) var results: [FileEntry] = []
+    private(set) var contentMatches: [String: FileSearchQuery.Match] = [:]
+    nonisolated static let contentSizeLimit = 2 * 1024 * 1024
     private(set) var isSearching = false
     private(set) var loading: Set<String> = []
     private(set) var errorMessage: String?
     private(set) var limitMessage: String?
     @ObservationIgnored var load: ((String) async throws -> [FileEntry])?
+    @ObservationIgnored var readContent: ((String) async throws -> String)?
+    @ObservationIgnored private var lastContentSearch = Date.distantPast
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var refreshing = false
@@ -81,6 +85,7 @@ final class FileExplorer {
     }
     func stop() {
         generation = UUID(); searchTask?.cancel()
+        lastContentSearch = .distantPast
         refreshRequested = false
         searchTask = nil; loading = []; isSearching = false; searchRunning = false
     }
@@ -195,27 +200,66 @@ final class FileExplorer {
             return .init(name: (path as NSString).lastPathComponent, path: path, isDirectory: entry.isDirectory)
         }
     }
-    func refreshSearch() {
-        if searching && !searchRunning { startSearch(clearResults: false) }
+    func refreshSearch(force: Bool = false) {
+        if searching && !searchRunning && (force || !FileSearchQuery(query).contents || Date().timeIntervalSince(lastContentSearch) >= 15) {
+            startSearch(clearResults: false)
+        }
     }
     private func startSearch(clearResults: Bool = true) {
         searchTask?.cancel()
-        if clearResults { results = []; limitMessage = nil }
+        limitMessage = nil
+        if clearResults { results = []; contentMatches = [:] }
         guard searching else { isSearching = false; searchRunning = false; return }
+        let search = FileSearchQuery(query)
+        guard !search.text.isEmpty else {
+            isSearching = false; searchRunning = false
+            limitMessage = "Type text after contents: to search file contents."; return
+        }
+        if search.contents { lastContentSearch = Date() }
         isSearching = clearResults; searchRunning = true
-        let phrase = query.trimmingCharacters(in: .whitespacesAndNewlines), token = generation
+        let token = generation
         searchTask = Task { [weak self] in
             guard let self else { return }
             do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
             var matches: [FileEntry] = []
+            var details: [String: FileSearchQuery.Match] = [:]
+            var scanned = 0, bytes = 0, skipped = 0
             await scan { _, entries in
-                matches += entries.filter { self.relativePath($0.path).localizedStandardContains(phrase) }
-                if clearResults { self.results = matches }
+                if search.contents {
+                    guard let readContent = self.readContent else {
+                        self.limitMessage = "Content search is unavailable for this connection."; return false
+                    }
+                    for entry in entries where !entry.isDirectory {
+                        guard !Task.isCancelled, token == self.generation else { return false }
+                        guard scanned < 2_000, bytes < 32 * 1024 * 1024 else {
+                            self.limitMessage = "Content search reached 2,000 files / 32 MB. Choose a smaller project folder to search further."
+                            return false
+                        }
+                        scanned += 1
+                        do {
+                            let text = try await readContent(entry.path)
+                            guard !Task.isCancelled, token == self.generation else { return false }
+                            bytes += text.utf8.count
+                            if let match = search.firstMatch(in: text) { matches.append(entry); details[entry.path] = match }
+                            await Task.yield()
+                        } catch is CancellationError { return false }
+                        catch { skipped += 1 }
+                    }
+                } else {
+                    matches += entries.filter { self.relativePath($0.path).localizedStandardContains(search.text) }
+                }
+                if clearResults, !Task.isCancelled, token == self.generation { self.results = matches; self.contentMatches = details }
+                return true
             }
-            if !Task.isCancelled, token == generation { results = matches; isSearching = false; searchRunning = false }
+            if !Task.isCancelled, token == generation {
+                results = matches; contentMatches = details; isSearching = false; searchRunning = false
+                if search.contents, skipped > 0, limitMessage == nil {
+                    limitMessage = "Skipped \(skipped) binary, unreadable, or larger-than-2-MB files."
+                }
+            }
         }
     }
-    private func scan(visit: (String, [FileEntry]) -> Void) async {
+    private func scan(visit: (String, [FileEntry]) async -> Bool) async {
         let token = generation
         var queue = [(rootPath, 0)], index = 0, count = 0
         errorMessage = nil
@@ -230,7 +274,8 @@ final class FileExplorer {
                 let all = try await read(path)
                 guard token == generation, !Task.isCancelled else { return }
                 let entries = Array(all.prefix(20_000 - count))
-                count += entries.count; visit(path, entries)
+                count += entries.count
+                guard await visit(path, entries) else { return }
                 if entries.count < all.count { limitMessage = "Showing the first 20,000 entries. Open a smaller folder to search further."; return }
                 if depth < 64 { queue += entries.filter(\.isDirectory).map { ($0.path, depth + 1) } }
                 else if entries.contains(where: \.isDirectory) { limitMessage = "Folders deeper than 64 levels are not scanned." }

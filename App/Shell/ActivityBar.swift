@@ -18,19 +18,19 @@ struct ActivityBar: View {
             } label: {
                 Image(systemName: "terminal")
                     .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(model.terminalVisible ? CrowTheme.accent : CrowTheme.textDim)
+                    .crowForeground(model.terminalVisible ? CrowTheme.accent : CrowTheme.textDim)
                     .frame(width: CrowTheme.activityWidth, height: 40)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
             .windowDragExcluded()
             .help("Terminal")
             Button { model.settingsVisible = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))
-                    .foregroundStyle(CrowTheme.textDim)
+                    .crowForeground(CrowTheme.textDim)
                     .frame(width: CrowTheme.activityWidth, height: 40)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
             .windowDragExcluded()
             .help("Settings")
         }
@@ -51,7 +51,7 @@ struct ActivityBar: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(model.sidebarPane == pane && model.sidebarVisible ? CrowTheme.accent : CrowTheme.textDim)
+                .crowForeground(model.sidebarPane == pane && model.sidebarVisible ? CrowTheme.accent : CrowTheme.textDim)
                 .frame(width: CrowTheme.activityWidth, height: 40)
                 .overlay(alignment: .leading) {
                     if model.sidebarPane == pane && model.sidebarVisible {
@@ -61,7 +61,7 @@ struct ActivityBar: View {
                     }
                 }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CrowButtonStyle())
         .windowDragExcluded()
         .help(pane == .files ? "Files" : "Hosts")
     }

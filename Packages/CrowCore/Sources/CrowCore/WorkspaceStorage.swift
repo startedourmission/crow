@@ -118,10 +118,17 @@ public enum TextFiles {
         return text
     }
 
-    public static func read(_ url: URL) throws -> String {
+    public static func read(_ url: URL, maximumSize: Int = sizeLimit) throws -> String {
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= sizeLimit else { throw FileFailure.tooLarge }
-        return try decode(Data(contentsOf: url))
+        guard size <= maximumSize else { throw FileFailure.tooLarge }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        var data = Data()
+        while let chunk = try file.read(upToCount: min(65_536, maximumSize - data.count + 1)), !chunk.isEmpty {
+            data.append(chunk)
+            guard data.count <= maximumSize else { throw FileFailure.tooLarge }
+        }
+        return try decode(data)
     }
 
     public static func write(_ text: String, to url: URL, expected: String?, overwrite: Bool = false) throws {

@@ -1,4 +1,5 @@
 import SwiftUI
+import CrowCore
 
 #if os(macOS)
 import AppKit
@@ -11,6 +12,9 @@ struct NativeEditor: NSViewRepresentable {
     let findRequest: Int
     var onSave: () -> Void = {}
     var focused = false
+    var locationRequest: EditorLocationRequest?
+    var findToggleRequest = 0
+    var onFindVisibility: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
@@ -48,12 +52,14 @@ struct NativeEditor: NSViewRepresentable {
             let selected = editor.selectedRange()
             editor.string = text
             editor.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
+            if scroll.isFindBarVisible { editor.documentFindBar.refreshMatches() }
         }
         if editor.font?.pointSize != CGFloat(fontSize) {
             editor.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         }
         editor.indentWidth = indentWidth
         editor.onSave = onSave
+        editor.documentFindBar.onVisibility = onFindVisibility
         if focused && !context.coordinator.wasFocused {
             Task { @MainActor [weak editor, weak coordinator = context.coordinator] in
                 await Task.yield()
@@ -62,27 +68,61 @@ struct NativeEditor: NSViewRepresentable {
             }
         }
         context.coordinator.wasFocused = focused
+        if let request = locationRequest, context.coordinator.lastLocation != request.id {
+            context.coordinator.lastLocation = request.id
+            Task { @MainActor [weak editor, weak coordinator = context.coordinator] in
+                await Task.yield()
+                guard coordinator?.parent.locationRequest?.id == request.id, let editor else { return }
+                editor.unmarkText()
+                let range = NSRange(location: max(0, min(request.offset, (editor.string as NSString).length)), length: 0)
+                editor.setSelectedRange(range)
+                editor.scrollRangeToVisible(range)
+                editor.window?.makeFirstResponder(editor)
+            }
+        }
         if scroll.rulersVisible != lineNumbers { scroll.rulersVisible = lineNumbers }
         scroll.verticalRulerView?.needsDisplay = true
         if context.coordinator.lastFind != findRequest {
             context.coordinator.lastFind = findRequest
-            let item = NSMenuItem(); item.tag = NSTextFinder.Action.showFindInterface.rawValue
-            editor.performTextFinderAction(item)
+            let request = findRequest
+            Task { @MainActor [weak editor, weak coordinator = context.coordinator] in
+                await Task.yield()
+                guard coordinator?.parent.findRequest == request, let editor else { return }
+                editor.documentFindBar.show()
+            }
+        }
+        if context.coordinator.lastToggle != findToggleRequest {
+            context.coordinator.lastToggle = findToggleRequest
+            Task { @MainActor [weak editor] in
+                await Task.yield()
+                editor?.documentFindBar.toggle()
+            }
         }
     }
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeEditor
         var lastFind: Int
         var wasFocused = false
-        init(_ parent: NativeEditor) { self.parent = parent; lastFind = parent.findRequest }
+        var lastLocation: UUID?
+        var lastToggle: Int
+        init(_ parent: NativeEditor) { self.parent = parent; lastFind = parent.findRequest; lastToggle = parent.findToggleRequest }
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
             parent.text = editor.string; editor.enclosingScrollView?.verticalRulerView?.needsDisplay = true
+            if editor.enclosingScrollView?.isFindBarVisible == true {
+                (editor as? CodeTextView)?.documentFindBar.refreshMatches()
+            }
+        }
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let editor = notification.object as? CodeTextView,
+                  editor.enclosingScrollView?.isFindBarVisible == true else { return }
+            editor.documentFindBar.refreshPosition()
         }
     }
 }
 
 final class CodeTextView: NSTextView {
+    lazy var documentFindBar = DocumentFindBar(editor: self)
     var indentWidth = 4
     var onSave: (() -> Void)?
     @objc func saveDocument(_ sender: Any?) { onSave?() }
@@ -112,6 +152,168 @@ final class CodeTextView: NSTextView {
         let line = source.substring(with: source.lineRange(for: NSRange(location: selectedRange().location, length: 0)))
         let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
         insertText("\n" + indent, replacementRange: selectedRange())
+    }
+}
+
+/// Per-editor find/replace controls: no global find pasteboard or private AppKit UI.
+final class DocumentFindBar: NSView, NSSearchFieldDelegate {
+    weak var editor: CodeTextView?
+    let searchField = NSSearchField()
+    let replacementField = NSTextField()
+    let matchCase = CrowFindButton(checkboxWithTitle: "Match Case", target: nil, action: nil)
+    let countLabel = NSTextField(labelWithString: "0/0")
+    private var ranges: [NSRange] = []
+    private var truncated = false
+    private var previousButton: NSButton!
+    private var nextButton: NSButton!
+    private var replaceButton: NSButton!
+    private var allButton: NSButton!
+    var onVisibility: (Bool) -> Void = { _ in }
+
+    init(editor: CodeTextView) {
+        self.editor = editor
+        super.init(frame: NSRect(x: 0, y: 0, width: 400, height: 96))
+        searchField.placeholderString = "Find in document"
+        replacementField.placeholderString = "Replace with"
+        searchField.setAccessibilityIdentifier("crow.document-find")
+        replacementField.setAccessibilityIdentifier("crow.document-replacement")
+        matchCase.setAccessibilityIdentifier("crow.document-match-case")
+        searchField.delegate = self; replacementField.delegate = self
+        searchField.sendsSearchStringImmediately = true
+        (searchField.cell as? NSSearchFieldCell)?.cancelButtonCell = nil
+        for field in [searchField as NSTextField, replacementField] {
+            field.font = .systemFont(ofSize: 12)
+            field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        func button(_ title: String, _ action: Selector, symbol: String? = nil) -> NSButton {
+            let button = CrowFindButton(title: title, target: self, action: action)
+            button.controlSize = .small; button.isBordered = false; button.font = .systemFont(ofSize: 11)
+            if let symbol {
+                button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+                button.imagePosition = .imageOnly
+            }
+            button.toolTip = title
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
+            button.updateTint()
+            return button
+        }
+        previousButton = button("Previous Match", #selector(previousMatch), symbol: "chevron.up")
+        nextButton = button("Next Match", #selector(nextMatch), symbol: "chevron.down")
+        replaceButton = button("Replace", #selector(replaceOne))
+        allButton = button("All", #selector(replaceAll)); allButton.toolTip = "Replace All"
+        matchCase.target = self; matchCase.action = #selector(caseChanged)
+        matchCase.controlSize = .small; matchCase.font = .systemFont(ofSize: 11)
+        matchCase.updateTint()
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = NSColor(CrowTheme.textDim)
+        countLabel.setAccessibilityIdentifier("crow.document-match-position")
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
+        func row(_ views: [NSView]) -> NSStackView {
+            let row = NSStackView(views: views); row.orientation = .horizontal; row.spacing = 4; row.alignment = .centerY
+            return row
+        }
+        let rows = [row([searchField, countLabel, previousButton, nextButton]),
+                    row([replacementField, replaceButton, allButton]), row([matchCase])]
+        let stack = NSStackView(views: rows); stack.orientation = .vertical; stack.spacing = 5; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false; addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6)
+        ] + rows.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
+        wantsLayer = true; layer?.backgroundColor = NSColor(CrowTheme.bg1).cgColor
+        refreshMatches()
+    }
+    required init?(coder: NSCoder) { nil }
+    func show() {
+        guard let editor, let scroll = editor.enclosingScrollView else { return }
+        scroll.findBarView = self; scroll.isFindBarVisible = true
+        refreshMatches(); onVisibility(true)
+        editor.window?.makeFirstResponder(searchField)
+    }
+    func toggle() {
+        if editor?.enclosingScrollView?.isFindBarVisible == true { closeFind() } else { show() }
+    }
+    @objc func closeFind() {
+        editor?.enclosingScrollView?.isFindBarVisible = false
+        onVisibility(false)
+        if let editor { editor.window?.makeFirstResponder(editor) }
+    }
+    func refreshMatches() {
+        guard let editor else { return }
+        let result = DocumentSearch.matches(in: editor.string, query: searchField.stringValue, matchCase: matchCase.state == .on)
+        ranges = result.ranges; truncated = result.truncated
+        refreshPosition()
+        for button in [previousButton, nextButton, replaceButton] { button?.isEnabled = !ranges.isEmpty }
+        allButton?.isEnabled = !ranges.isEmpty && !truncated
+    }
+    func refreshPosition() {
+        let current = editor.flatMap { ranges.firstIndex(of: $0.selectedRange()) }.map { $0 + 1 } ?? 0
+        countLabel.stringValue = "\(current)/\(ranges.count)\(truncated ? "+" : "")"
+        countLabel.toolTip = truncated ? "More matches exist. Narrow the search to enable Replace All." : "Current match / total matches"
+        countLabel.setAccessibilityValue(countLabel.stringValue)
+    }
+    private func select(_ range: NSRange) {
+        editor?.setSelectedRange(range); editor?.scrollRangeToVisible(range)
+        editor?.showFindIndicator(for: range)
+        refreshPosition()
+    }
+    @objc func nextMatch() {
+        refreshMatches()
+        guard let editor, !ranges.isEmpty else { return }
+        select(ranges.first { $0.location >= NSMaxRange(editor.selectedRange()) } ?? ranges[0])
+    }
+    @objc func previousMatch() {
+        refreshMatches()
+        guard let editor, !ranges.isEmpty else { return }
+        select(ranges.last { $0.location < editor.selectedRange().location } ?? ranges.last!)
+    }
+    @objc func caseChanged() {
+        refreshMatches()
+        if let selected = editor?.selectedRange(), let range = ranges.first(where: { $0.location >= selected.location }) ?? ranges.first { select(range) }
+    }
+    @objc func replaceOne() {
+        refreshMatches()
+        guard let editor, !ranges.isEmpty else { return }
+        guard ranges.contains(editor.selectedRange()) else { nextMatch(); return }
+        do {
+            _ = try DocumentSearch.replacing(editor.string, ranges: [editor.selectedRange()], with: replacementField.stringValue)
+            editor.insertText(replacementField.stringValue, replacementRange: editor.selectedRange())
+            nextMatch()
+        } catch { showReplacementError(error) }
+    }
+    @objc func replaceAll() {
+        refreshMatches()
+        guard let editor, !ranges.isEmpty, !truncated else { return }
+        do {
+            let text = try DocumentSearch.replacing(editor.string, ranges: ranges, with: replacementField.stringValue)
+            editor.insertText(text, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+            editor.undoManager?.setActionName("Replace All")
+            refreshMatches()
+        } catch { showReplacementError(error) }
+    }
+    private func showReplacementError(_ error: Error) {
+        countLabel.stringValue = "!"
+        countLabel.toolTip = error.localizedDescription
+        countLabel.setAccessibilityValue(error.localizedDescription)
+        NSAccessibility.post(element: countLabel, notification: .announcementRequested,
+            userInfo: [.announcement: error.localizedDescription, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+    func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextField === searchField,
+              (searchField.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+        caseChanged()
+    }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) { closeFind(); return true }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { previousMatch() } else { nextMatch() }
+            return true
+        }
+        return false
     }
 }
 
@@ -153,6 +355,9 @@ struct NativeEditor: UIViewRepresentable {
     let findRequest: Int
     var onSave: () -> Void = {}
     var focused = false
+    var locationRequest: EditorLocationRequest?
+    var findToggleRequest = 0
+    var onFindVisibility: (Bool) -> Void = { _ in }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> NumberedTextView {
         let editor = NumberedTextView(usingTextLayoutManager: false)
@@ -176,14 +381,28 @@ struct NativeEditor: UIViewRepresentable {
         editor.onSave = onSave
         editor.textContainerInset = UIEdgeInsets(top: 10, left: lineNumbers ? 44 : 8, bottom: 10, right: 8)
         editor.setNeedsDisplay()
+        if let request = locationRequest, context.coordinator.lastLocation != request.id {
+            context.coordinator.lastLocation = request.id
+            editor.unmarkText()
+            editor.selectedRange = NSRange(location: max(0, min(request.offset, (editor.text as NSString).length)), length: 0)
+            editor.scrollRangeToVisible(editor.selectedRange)
+            editor.becomeFirstResponder()
+        }
         if context.coordinator.lastFind != findRequest {
             context.coordinator.lastFind = findRequest
             editor.findInteraction?.presentFindNavigator(showingReplace: true)
+        }
+        if context.coordinator.lastToggle != findToggleRequest {
+            context.coordinator.lastToggle = findToggleRequest
+            if editor.findInteraction?.isFindNavigatorVisible == true { editor.findInteraction?.dismissFindNavigator() }
+            else { editor.findInteraction?.presentFindNavigator(showingReplace: true) }
         }
     }
     @MainActor final class Coordinator: NSObject, UITextViewDelegate {
         var parent: NativeEditor
         var lastFind: Int
+        var lastLocation: UUID?
+        var lastToggle = 0
         init(_ parent: NativeEditor) { self.parent = parent; lastFind = parent.findRequest }
         func textViewDidChange(_ textView: UITextView) { parent.text = textView.text; textView.setNeedsDisplay() }
         func scrollViewDidScroll(_ scrollView: UIScrollView) { scrollView.setNeedsDisplay() }

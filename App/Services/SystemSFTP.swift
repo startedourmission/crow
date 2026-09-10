@@ -85,7 +85,9 @@ final class SystemSFTP: @unchecked Sendable {
             }
         }
     }
-    func read(_ path: String) async throws -> String { try await run { try $0.read(path) } }
+    func read(_ path: String, maximumSize: Int = TextFiles.sizeLimit) async throws -> String {
+        try await run { try $0.read(path, maximumSize: maximumSize) }
+    }
     func write(_ text: String, path: String, expected: String?, overwrite: Bool) async throws {
         try await run { wire in
             if !overwrite, let expected, try wire.read(path) != expected { throw FileFailure.conflict }
@@ -349,8 +351,8 @@ final class SystemSFTP: @unchecked Sendable {
         }
         func close(_ handle: Data) throws { _ = try request(4, .bytes(handle)) }
         func rename(_ source: String, _ destination: String) throws { _ = try request(18, .string(source) + .string(destination)) }
-        func read(_ path: String) throws -> String {
-            guard (try stat(path).size ?? 0) <= UInt64(TextFiles.sizeLimit) else { throw FileFailure.tooLarge }
+        func read(_ path: String, maximumSize: Int = TextFiles.sizeLimit) throws -> String {
+            guard (try stat(path).size ?? 0) <= UInt64(maximumSize) else { throw FileFailure.tooLarge }
             let handle = try open(path, flags: 1); defer { try? close(handle) }
             var data = Data()
             while true {
@@ -359,7 +361,7 @@ final class SystemSFTP: @unchecked Sendable {
                 let chunk = try response.bytes()
                 guard !chunk.isEmpty else { break }
                 data.append(chunk)
-                guard data.count <= TextFiles.sizeLimit else { throw FileFailure.tooLarge }
+                guard data.count <= maximumSize else { throw FileFailure.tooLarge }
             }
             return try TextFiles.decode(data)
         }

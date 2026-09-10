@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1ED17000000000000000021 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000020 /* InspectorPanel.swift */; };
+		F1ED17000000000000000022 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000020 /* InspectorPanel.swift */; };
+		F1ED17000000000000000024 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000023 /* GitRepository.swift */; };
+		F1ED17000000000000000025 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000023 /* GitRepository.swift */; };
 		F1ED17000000000000000010 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000012 /* MarkdownEditor.swift */; };
 		F1ED17000000000000000011 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000012 /* MarkdownEditor.swift */; };
 		F1ED17000000000000000007 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000009 /* WindowDragRegion.swift */; };
@@ -93,6 +97,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F1ED17000000000000000020 /* InspectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Shell/InspectorPanel.swift; sourceTree = SOURCE_ROOT; };
+		F1ED17000000000000000023 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/GitRepository.swift; sourceTree = SOURCE_ROOT; };
 		F1ED17000000000000000012 /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
 		F1ED17000000000000000009 /* WindowDragRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/WindowDragRegion.swift; sourceTree = SOURCE_ROOT; };
 		F1ED17000000000000000003 /* markdown-editor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-editor.js"; sourceTree = "<group>"; };
@@ -186,6 +192,8 @@
 			isa = PBXGroup;
 			children = (
 				F1ED17000000000000000009 /* WindowDragRegion.swift */,
+				F1ED17000000000000000020 /* InspectorPanel.swift */,
+				F1ED17000000000000000023 /* GitRepository.swift */,
 				731BB62EF6BA3ABD2B5E0A7B /* App */,
 				9318993AA5D14FAD4678BCE4 /* Packages */,
 				1A1C9CA78960D194555619D3 /* Tests */,
@@ -427,6 +435,8 @@
 				B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */,
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
 				F1ED17000000000000000007 /* WindowDragRegion.swift in Sources */,
+				F1ED17000000000000000021 /* InspectorPanel.swift in Sources */,
+				F1ED17000000000000000024 /* GitRepository.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
 				F1ED17000000000000000010 /* MarkdownEditor.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
@@ -468,6 +478,8 @@
 				26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */,
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
 				F1ED17000000000000000008 /* WindowDragRegion.swift in Sources */,
+				F1ED17000000000000000022 /* InspectorPanel.swift in Sources */,
+				F1ED17000000000000000025 /* GitRepository.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
 				F1ED17000000000000000011 /* MarkdownEditor.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,

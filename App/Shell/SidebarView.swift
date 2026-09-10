@@ -1,6 +1,34 @@
 import CrowCore
 import SwiftUI
 
+#if os(macOS)
+struct SidebarTopBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if model.sidebarVisible { Spacer(minLength: 0) }
+            Button { model.sidebarVisible.toggle() } label: {
+                Image(systemName: "sidebar.left").frame(width: 28, height: 28).contentShape(Rectangle())
+            }
+            .help(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            .accessibilityLabel(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            .accessibilityIdentifier("crow.sidebar-toggle")
+            .windowDragExcluded()
+            if !model.sidebarVisible { Spacer(minLength: 0) }
+        }
+        .buttonStyle(CrowButtonStyle())
+        .font(.system(size: 14))
+        .crowForeground(CrowTheme.textDim)
+        .padding(.horizontal, 12)
+        .padding(.leading, 36) // Leave room for the native traffic lights.
+        .frame(height: 40)
+        .background(CrowTheme.bg1)
+        .windowDragBackground()
+    }
+}
+#endif
+
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @State private var naming = false
@@ -18,7 +46,9 @@ struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            #if !os(macOS)
             CrowDivider()
+            #endif
             if model.sidebarPane == .hosts {
                 hostsList
             } else if model.hasWorkspace {
@@ -30,7 +60,12 @@ struct SidebarView: View {
         }
         .background(CrowTheme.bg1)
         .windowDragBackground()
-        .foregroundStyle(CrowTheme.text)
+        .crowForeground(CrowTheme.text)
+        .task(id: "\(model.selectedWorkspaceID)-\(explorer.searchVisible)-\(model.fileSearchFocusRequest)") {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            searchFocused = explorer.searchVisible
+        }
         .task(id: model.selectedWorkspaceID.rawValue.uuidString + model.sidebarPane.rawValue + model.current.snapshot.rootPath) {
             guard model.sidebarPane == .files else { return }
             let tree = explorer
@@ -67,7 +102,7 @@ struct SidebarView: View {
                 Text("HOSTS")
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.6)
-                .foregroundStyle(CrowTheme.textDim)
+                .crowForeground(CrowTheme.textDim)
             }
             if model.sidebarPane == .files {
                 toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
@@ -81,16 +116,16 @@ struct SidebarView: View {
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
                     #endif
                 toolbarButton("Search Files", symbol: "magnifyingglass") {
-                    explorer.searchVisible.toggle()
-                    if !explorer.searchVisible { explorer.query = "" }
-                    searchFocused = explorer.searchVisible
+                    if explorer.searchVisible { explorer.searchVisible = false; explorer.query = "" }
+                    else { model.focusFileSearch() }
                 }
+                .accessibilityIdentifier("crow.sidebar-search")
             } else {
                 Spacer()
                     #if os(macOS)
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
                     #endif
-                Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.help("SSH Command").windowDragExcluded()
+                Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.buttonStyle(CrowButtonStyle()).help("SSH Command").windowDragExcluded()
             }
         }
         .padding(.horizontal, 12)
@@ -99,9 +134,10 @@ struct SidebarView: View {
 
     private func toolbarButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 14)).frame(width: 28, height: 28).contentShape(Rectangle())
+            Image(systemName: symbol).font(.system(size: 14)).crowForeground(CrowTheme.textDim)
+                .frame(width: 28, height: 28).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).help(title).accessibilityLabel(title).disabled(!model.hasWorkspace)
+        .buttonStyle(CrowButtonStyle()).help(title).accessibilityLabel(title).disabled(!model.hasWorkspace)
         .windowDragExcluded()
     }
 
@@ -119,19 +155,52 @@ struct SidebarView: View {
                     Text(model.selectedWorkspace.connection == .connecting ? "Connecting to remote files…" : explorer.rootPath)
                         .lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 0)
-                }.font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12).padding(.vertical, 5)
+                }.font(.system(size: 10)).crowForeground(CrowTheme.textDim).padding(.horizontal, 12).padding(.vertical, 5)
             }
             if explorer.searchVisible {
+                VStack(spacing: 0) {
                 HStack(spacing: 4) {
-                    TextField("Search file names or paths…", text: Bindable(explorer).query)
+                    Menu {
+                        Button("File names") { selectSearchMode(contents: false) }
+                        Button("File contents — contents:") { selectSearchMode(contents: true) }
+                    } label: {
+                        Text(FileSearchQuery(explorer.query).contents ? "Contents" : "Name")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .menuStyle(.borderlessButton).fixedSize().crowMenuHover()
+                    .accessibilityLabel("Search mode").accessibilityIdentifier("crow.search-mode")
+                    TextField("File names or contents: text", text: Bindable(explorer).query)
                         .textFieldStyle(.plain).focused($searchFocused)
-                        .accessibilityLabel("Search file names or paths")
+                        .accessibilityLabel("Search file names or contents")
+                        .accessibilityIdentifier("crow.file-search")
+                        .help("Search file names, or use contents: text to search inside files. Press Return to refresh.")
+                        .onSubmit { explorer.refreshSearch(force: true) }
+                        .onKeyPress(.tab) {
+                            guard let completion = FileSearchQuery.prefixCompletion(for: explorer.query) else { return .ignored }
+                            explorer.query = completion
+                            return .handled
+                        }
                     Button { explorer.query = ""; explorer.searchVisible = false } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.plain).help("Close Search")
+                        .buttonStyle(CrowButtonStyle()).help("Close Search")
                 }
                 .font(.system(size: 12)).padding(8)
                 .background(CrowTheme.bg0)
                 .windowDragExcluded()
+                if searchFocused, let completion = FileSearchQuery.prefixCompletion(for: explorer.query) {
+                    Button {
+                        explorer.query = completion
+                        model.focusFileSearch()
+                    } label: {
+                        HStack {
+                            Text("contents:").font(.system(size: 11, design: .monospaced))
+                            Text("Search file contents").font(.system(size: 10)).crowForeground(CrowTheme.textDim)
+                            Spacer(minLength: 0)
+                            Text("⇥").font(.system(size: 11)).crowForeground(CrowTheme.textDim)
+                        }.padding(8).frame(maxWidth: .infinity).contentShape(Rectangle())
+                    }.buttonStyle(CrowButtonStyle()).background(CrowTheme.bg2).windowDragExcluded()
+                        .accessibilityIdentifier("crow.search-prefix-completion")
+                }
+                }
             }
             if explorer.isSearching || explorer.loading.contains(explorer.rootPath) {
                 HStack {
@@ -151,12 +220,16 @@ struct SidebarView: View {
                         .frame(width: 10).opacity(entry.isDirectory ? 1 : 0)
                     Image(systemName: entry.isDirectory ? "folder" : icon(for: entry.name))
                         .font(.system(size: 12))
-                        .foregroundStyle(CrowTheme.textDim)
+                        .crowForeground(CrowTheme.textDim)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name).font(.system(size: 13)).foregroundStyle(CrowTheme.text).lineLimit(1)
+                        Text(entry.name).font(.system(size: 13)).crowForeground(CrowTheme.text).lineLimit(1)
                         if explorer.searching {
                             Text(explorer.relativePath(entry.path)).font(.system(size: 10))
-                                .foregroundStyle(CrowTheme.textDim).lineLimit(1).truncationMode(.middle)
+                                .crowForeground(CrowTheme.textDim).lineLimit(1).truncationMode(.middle)
+                            if let match = explorer.contentMatches[entry.path] {
+                                Text("\(match.line): \(match.excerpt)").font(.system(size: 11))
+                                    .crowForeground(CrowTheme.textDim).lineLimit(2)
+                            }
                         }
                     }
                     if explorer.loading.contains(entry.path) { ProgressView().controlSize(.mini) }
@@ -165,7 +238,7 @@ struct SidebarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
             .overlay { if dropFolder == entry.path { RoundedRectangle(cornerRadius: 4).stroke(CrowTheme.accent, lineWidth: 1).allowsHitTesting(false) } }
             .listRowBackground((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? CrowTheme.fileSelection : Color.clear)
             .accessibilityAddTraits((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? .isSelected : [])
@@ -218,13 +291,13 @@ struct SidebarView: View {
                                 .accessibilityIdentifier("crow.empty-choose-project")
                                 .windowDragExcluded()
                         }
-                    }.foregroundStyle(CrowTheme.textDim).padding(16)
+                    }.crowForeground(CrowTheme.textDim).padding(16)
                 }
             }
         }
         if let message = explorer.errorMessage ?? explorer.limitMessage {
-            Text(message).font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).padding(8)
-            if model.selectedWorkspace.isRemote, model.selectedWorkspace.connection != .connecting {
+            Text(message).font(.system(size: 11)).crowForeground(CrowTheme.textDim).padding(8)
+            if explorer.errorMessage != nil, model.selectedWorkspace.isRemote, model.selectedWorkspace.connection != .connecting {
                 Button("Retry File Connection") { model.retryRemoteFiles() }.padding(.bottom, 8).windowDragExcluded()
             }
         }
@@ -242,6 +315,11 @@ struct SidebarView: View {
         } else { model.openFile(entry) }
     }
 
+    private func selectSearchMode(contents: Bool) {
+        explorer.query = FileSearchQuery(explorer.query).switchingToContents(contents)
+        model.focusFileSearch()
+    }
+
     private var hostsList: some View {
         List(model.hosts) { (host: SSHHost) in
             Button {
@@ -252,12 +330,12 @@ struct SidebarView: View {
                         .font(.system(size: 13, weight: .medium))
                     Text("\(host.userAtHost):\(host.port)")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(CrowTheme.textDim)
+                        .crowForeground(CrowTheme.textDim)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CrowButtonStyle())
             .contextMenu {
                 Button("Connect") { model.connect(host) }
                 Button("Advanced…") { model.editHost(host) }
@@ -271,7 +349,7 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Advanced settings are optional.")
                 .font(.system(size: 11))
-                .foregroundStyle(CrowTheme.textDim)
+                .crowForeground(CrowTheme.textDim)
                 .padding(12)
         }
     }
@@ -314,13 +392,13 @@ struct RemoteProjectFolderPicker: View {
             List(folders) { folder in
                 Button { browse(folder.path) } label: {
                     Label(folder.name, systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }.buttonStyle(CrowButtonStyle())
             }
             .overlay {
                 if loading { ProgressView() }
                 else if folders.isEmpty && error == nil { Text("No subfolders").foregroundStyle(.secondary) }
             }
-            if let error { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled) }
+            if let error { Text(error).font(.caption).crowForeground(CrowTheme.danger).textSelection(.enabled) }
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()

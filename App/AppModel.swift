@@ -27,6 +27,33 @@ final class AppModel {
     var selectedWorkspaceID: WorkspaceID
     var settings = EditorSettings() { didSet { schedulePersist() } }
     var sidebarPane: SidebarPane = .files
+    var inspectorVisible = true
+    var editorLocationBufferID: BufferID?
+    var editorLocationRequest: EditorLocationRequest?
+    var documentFindRequest = 0
+    var fileSearchFocusRequest = 0
+
+    func focusFileSearch() {
+        guard hasWorkspace else { return }
+        sidebarPane = .files; sidebarVisible = true
+        current.explorer.searchVisible = true
+        fileSearchFocusRequest += 1
+    }
+    func findInCurrentDocument() {
+        guard inspectedBuffer != nil else { return }
+        documentFindRequest += 1
+    }
+    func adjustFontSize(by amount: Double) {
+        if case .terminal = current.snapshot.layout?.activePane?.selected {
+            settings.terminalFontSize = min(32, max(11, settings.terminalFontSize + amount))
+        } else {
+            settings.fontSize = min(32, max(11, settings.fontSize + amount))
+        }
+    }
+    func selectNumberedTab(_ number: Int) {
+        guard let pane = current.snapshot.layout?.activePane, number > 0, number <= pane.tabs.count else { return }
+        selectTab(pane.tabs[number - 1], in: pane.id)
+    }
     var compactSurface: CompactSurface = .editor
     var statusMessage = "Ready"
     var errorMessage: String?
@@ -147,6 +174,17 @@ final class AppModel {
         }
     }
     var selectedBuffer: OpenBuffer? { buffers.first { $0.id == selectedBufferID } }
+    var inspectedBuffer: OpenBuffer? {
+        guard let layout = current.snapshot.layout,
+              let pane = layout.panes.first(where: { $0.id == layout.activePaneID }) else { return selectedBuffer }
+        guard case .file(let id) = pane.selected else { return nil }
+        return buffers.first { $0.id == id }
+    }
+    func navigateToOutline(_ item: OutlineItem, in buffer: OpenBuffer) {
+        guard inspectedBuffer?.id == buffer.id else { return }
+        editorLocationBufferID = buffer.id
+        editorLocationRequest = EditorLocationRequest(offset: item.offset, headingIndex: item.headingIndex)
+    }
     var sidebarVisible: Bool {
         get { settings.sidebarVisible }
         set { settings.sidebarVisible = newValue }
@@ -350,6 +388,23 @@ final class AppModel {
                 return try await remote.list(path)
             }
             return try await Task.detached { try FileExplorer.localEntries(path) }.value
+        }
+        state.explorer.readContent = { [weak self, weak state] path in
+            guard let self, let state else { throw CancellationError() }
+            if let buffer = state.snapshot.buffers.first(where: { $0.path == path }) {
+                guard buffer.text.utf8.count <= FileExplorer.contentSizeLimit else { throw FileFailure.tooLarge }
+                return buffer.text
+            }
+            if state.snapshot.workspace.isRemote {
+                let remote = try self.fileConnection(in: state)
+                return try await remote.read(path, maximumSize: FileExplorer.contentSizeLimit)
+            }
+            return try await Task.detached {
+                let url = URL(fileURLWithPath: path)
+                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true else { throw FileFailure.unsupportedText }
+                return try TextFiles.read(url, maximumSize: FileExplorer.contentSizeLimit)
+            }.value
         }
         Task { await state.explorer.refresh(); state.explorer.refreshSearch() }
         let generation = UUID(); state.refreshGeneration = generation
