@@ -2,9 +2,10 @@ import SwiftUI
 
 enum CrowTheme {
     static let bg0 = Color.white
-    static let bg1 = Color(red: 0.97, green: 0.975, blue: 0.985)
+    static let bg1 = Color(white: 0.965)
     static let bg2 = Color(red: 0.94, green: 0.95, blue: 0.965)
     static let bg3 = Color(red: 0.89, green: 0.915, blue: 0.945)
+    static let fileSelection = Color(white: 0.91)
     static let accent = Color(red: 0.075, green: 0.13, blue: 0.22)
     static let border = accent.opacity(0.12)
     static let text = Color(red: 0.10, green: 0.13, blue: 0.18)

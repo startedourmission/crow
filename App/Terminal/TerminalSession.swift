@@ -30,6 +30,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     private let directory: String
     private let remote: RemoteConnection?
     private var started = false
+    @ObservationIgnored private var appliedFontSize: Double?
     #if os(macOS)
     var systemSSH: SystemSSHSpec?
     var shellEnvironment: [String]?
@@ -71,6 +72,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     }
 
     func setFontSize(_ size: Double) {
+        guard appliedFontSize != size else { return }
+        appliedFontSize = size
         #if os(macOS)
         view.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         #else

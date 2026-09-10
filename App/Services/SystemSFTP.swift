@@ -1,19 +1,45 @@
 #if os(macOS)
 import Foundation
 import CrowCore
+import Darwin
 
 /// SFTP v3 over an authenticated OpenSSH multiplex channel. No second password,
-/// private-key import, command-shell escaping, or parsing of `ls` output.
+/// private-key import or parsing of `ls` output. File paths use SFTP packets,
+/// never shell interpolation (including the login-shell server fallback).
 final class SystemSFTP: @unchecked Sendable {
     private let queue = DispatchQueue(label: "crow.system-sftp")
     private let wire: Wire
     init(spec: SystemSSHSpec) throws { wire = try Wire(spec: spec) }
-    var isConnected: Bool { wire.process.isRunning }
+    var isConnected: Bool { wire.isConnected }
+
+    /// Negotiate capabilities, not OS names, distributions or host-specific settings.
+    private enum Transport: String, CaseIterable {
+        case subsystem = "SFTP subsystem"
+        case command = "Remote command"
+        case shell = "Shell stream"
+    }
+
+    /// A fixed POSIX bootstrap; no file paths or user commands are interpolated.
+    /// Used only if the standard subsystem fails. No installation or server changes.
+    private static func serverCommand(marker: String) -> String {
+        "exec sh -c " + SystemSSHBridge.quote("""
+        crow_sftp_path=$(command -v sftp-server 2>/dev/null)
+        for crow_sftp_server in "$crow_sftp_path" /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/openssh/sftp-server /usr/libexec/sftp-server /usr/local/libexec/sftp-server /usr/local/libexec/openssh/sftp-server; do
+          if test -n "$crow_sftp_server" && test -x "$crow_sftp_server"; then
+            # Preserve the SSH login environment's starting directory.
+            printf '\\n%s\\n' '\(marker)'
+            exec "$crow_sftp_server"
+          fi
+        done
+        printf '%s\\n' 'No executable sftp-server found in the login environment (PATH or standard OpenSSH locations).' >&2
+        exit 127
+        """)
+    }
 
     private func run<T: Sendable>(_ body: @escaping @Sendable (Wire) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [wire] in
-                let timeout = DispatchWorkItem { if wire.process.isRunning { wire.process.terminate() } }
+                let timeout = DispatchWorkItem { wire.close() }
                 DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: timeout)
                 defer { timeout.cancel() }
                 do { try wire.initialize(); continuation.resume(returning: try body(wire)) }
@@ -21,14 +47,19 @@ final class SystemSFTP: @unchecked Sendable {
             }
         }
     }
-    func close() { if wire.process.isRunning { wire.process.terminate() } }
+    func close() { wire.close() }
     deinit { close() }
 
-    func realPath(_ path: String) async throws -> String {
-        try await run { wire in
-            let home = try wire.realPath(".")
-            return try wire.realPath(path == "~" ? home : path.hasPrefix("~/") ? home + "/" + path.dropFirst(2) : path)
+    static func protectWrites(to handle: FileHandle) throws {
+        // Convert a closed reader into EPIPE instead of killing Crow with SIGPIPE.
+        // This is descriptor-local: do not change signal behavior in users' child shells.
+        guard fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+    }
+
+    func realPath(_ path: String) async throws -> String {
+        try await run { try $0.resolvePath(path) }
     }
     func list(_ path: String) async throws -> [FileEntry] {
         try await run { wire in
@@ -90,31 +121,89 @@ final class SystemSFTP: @unchecked Sendable {
     func rename(_ source: String, to destination: String) async throws { try await run { try $0.rename(source, destination) } }
 
     private final class Wire: @unchecked Sendable {
-        let process = Process()
-        let input = Pipe(), output = Pipe()
-        private var ready = false
+        private let spec: SystemSSHSpec
+        private let lifecycle = NSLock()
+        private var channel: Channel
+        private var closed = false
+        private var starting = true
+        private var ready = false // Accessed only on the serial file queue.
+        private var reportsHome = false
         private var nextID: UInt32 = 0
         init(spec: SystemSSHSpec) throws {
-            guard FileManager.default.fileExists(atPath: spec.socket) else { throw FileFailure.disconnected }
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = ["-T", "-s"] + spec.multiplexArguments + ["sftp"]
-            process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
-            try process.run()
+            self.spec = spec
+            channel = try Channel(spec: spec, transport: .subsystem)
+        }
+        var isConnected: Bool {
+            lifecycle.lock(); defer { lifecycle.unlock() }
+            return !closed && (starting || channel.process.isRunning)
+        }
+        private func activeChannel() throws -> Channel {
+            lifecycle.lock(); defer { lifecycle.unlock() }
+            guard !closed else { throw FileFailure.disconnected }
+            return channel
+        }
+        func close() {
+            lifecycle.lock(); closed = true; let channel = channel; lifecycle.unlock()
+            channel.close()
         }
         func initialize() throws {
-            guard !ready else { return }
+            if ready { _ = try activeChannel(); return }
+            var failures: [String] = []
+            for transport in Transport.allCases {
+                if transport != .subsystem {
+                    // Never retry a file operation. Explicit close/timeout must not
+                    // resurrect a channel, and every attempt reuses the same SSH master.
+                    lifecycle.lock()
+                    guard !closed else { lifecycle.unlock(); throw FileFailure.disconnected }
+                    channel.close()
+                    do { channel = try Channel(spec: spec, transport: transport) }
+                    catch { closed = true; starting = false; lifecycle.unlock(); throw error }
+                    lifecycle.unlock()
+                }
+                do {
+                    let attempt = try activeChannel()
+                    let deadline = DispatchWorkItem { attempt.expireNegotiation() }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 8, execute: deadline)
+                    defer { deadline.cancel(); _ = attempt.finishNegotiation() }
+                    try attempt.prepare()
+                    try handshake()
+                    guard attempt.finishNegotiation() else { throw CommandError("SFTP negotiation timed out.") }
+                    lifecycle.lock()
+                    guard !closed else { lifecycle.unlock(); throw FileFailure.disconnected }
+                    starting = false; ready = true
+                    lifecycle.unlock()
+                    return
+                }
+                catch {
+                    failures.append("\(transport.rawValue): \(error.localizedDescription)")
+                    lifecycle.lock(); let cancelled = closed; lifecycle.unlock()
+                    if cancelled { throw FileFailure.disconnected }
+                }
+            }
+            close()
+            throw CommandError("File connection unavailable. The server needs a working SFTP subsystem or a POSIX shell with an executable sftp-server. No server settings were changed; the terminal connection was left open.\n\n" + failures.joined(separator: "\n\n"))
+        }
+        private func handshake() throws {
             try send(Data([1]) + .u32(3))
             var packet = Packet(data: try receive())
             guard try packet.byte() == 2, try packet.uint32() == 3 else { throw CommandError("The server does not support SFTP v3.") }
-            ready = true
+            reportsHome = false
+            while packet.offset < packet.data.count {
+                let name = try packet.string(), version = try packet.string()
+                if name == "home-directory", version == "1" { reportsHome = true }
+            }
         }
-        private func send(_ data: Data) throws { try input.fileHandleForWriting.write(contentsOf: .u32(UInt32(data.count)) + data) }
+        private func send(_ data: Data) throws {
+            let channel = try activeChannel()
+            guard channel.process.isRunning else { throw channel.closedError() }
+            do { try channel.input.fileHandleForWriting.write(contentsOf: .u32(UInt32(data.count)) + data) }
+            catch { throw channel.closedError() }
+        }
         private func exact(_ count: Int) throws -> Data {
+            let channel = try activeChannel()
             var data = Data()
             while data.count < count {
-                guard let part = try output.fileHandleForReading.read(upToCount: count - data.count), !part.isEmpty else {
-                    throw CommandError("SSH/SFTP connection closed. Reconnect from the terminal.")
-                }
+                let part = try channel.read(count - data.count)
                 data.append(part)
             }
             return data
@@ -122,8 +211,99 @@ final class SystemSFTP: @unchecked Sendable {
         private func receive() throws -> Data {
             var header = Packet(data: try exact(4))
             let count = Int(try header.uint32())
-            guard count > 0, count <= 2_097_152 else { throw CommandError("Invalid SFTP packet size.") }
+            guard count > 0, count <= 2_097_152 else { throw CommandError("Invalid SFTP packet size. The noninteractive login shell may be printing startup text.") }
             return try exact(count)
+        }
+
+        private final class Channel: @unchecked Sendable {
+            let process = Process()
+            let input = Pipe(), output = Pipe(), errors = Pipe()
+            private let diagnostics = Diagnostics()
+            private let transport: Transport
+            private let marker = "CROW_SFTP_READY_" + UUID().uuidString
+            private var buffered = Data() // Only accessed on the serial file queue.
+            private let negotiationLock = NSLock()
+            private var negotiationEnded = false
+            private var negotiationExpired = false
+            init(spec: SystemSSHSpec, transport: Transport) throws {
+                self.transport = transport
+                guard FileManager.default.fileExists(atPath: spec.socket) else { throw FileFailure.disconnected }
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+                let command: [String]
+                switch transport {
+                case .subsystem: command = ["sftp"]
+                case .command: command = [SystemSFTP.serverCommand(marker: marker)]
+                case .shell: command = [] // SSH shell request: no remote command option.
+                }
+                process.arguments = (transport == .subsystem ? ["-T", "-s"] : ["-T"]) + spec.multiplexArguments + command
+                process.standardInput = input; process.standardOutput = output; process.standardError = errors
+                let diagnostics = self.diagnostics
+                errors.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    if data.isEmpty { handle.readabilityHandler = nil }
+                    else { diagnostics.append(data) }
+                }
+                try SystemSFTP.protectWrites(to: input.fileHandleForWriting)
+                try process.run()
+            }
+            func expireNegotiation() {
+                negotiationLock.lock(); defer { negotiationLock.unlock() }
+                guard !negotiationEnded else { return }
+                negotiationExpired = true; negotiationEnded = true
+                close()
+            }
+            @discardableResult func finishNegotiation() -> Bool {
+                negotiationLock.lock(); defer { negotiationLock.unlock() }
+                negotiationEnded = true
+                return !negotiationExpired
+            }
+            func prepare() throws {
+                guard transport != .subsystem else { return }
+                if transport == .shell {
+                    // Send the bootstrap as shell input, not an SSH exec request.
+                    // It bypasses broken command wrappers/options while preserving
+                    // the user's selected login environment. Never allocate a PTY:
+                    // terminal echo/newline translation would corrupt binary SFTP.
+                    do { try input.fileHandleForWriting.write(contentsOf: Data((SystemSFTP.serverCommand(marker: marker) + "\n").utf8)) }
+                    catch { throw closedError() }
+                }
+                // Wait until the shell has consumed the entire bootstrap before sending
+                // binary INIT. Discard bounded startup banners, never protocol packets.
+                let delimiter = Data(("\n" + marker + "\n").utf8)
+                var startup = Data()
+                while startup.count < 65_536 {
+                    startup.append(try read(4096))
+                    if let range = startup.range(of: delimiter) {
+                        buffered = Data(startup[range.upperBound...])
+                        return
+                    }
+                }
+                throw CommandError("Shell startup exceeded 64 KiB without an SFTP-ready marker.")
+            }
+            func read(_ count: Int) throws -> Data {
+                if !buffered.isEmpty {
+                    let result = Data(buffered.prefix(count)); buffered.removeFirst(result.count); return result
+                }
+                // One pipe read returns available bytes; FileHandle's sized read may
+                // wait for a full buffer and deadlock on a short bootstrap marker.
+                var bytes = [UInt8](repeating: 0, count: count)
+                while true {
+                    let received = Darwin.read(output.fileHandleForReading.fileDescriptor, &bytes, count)
+                    if received > 0 { return Data(bytes.prefix(received)) }
+                    if received < 0 && errno == EINTR { continue }
+                    throw closedError()
+                }
+            }
+            func closedError() -> CommandError {
+                negotiationLock.lock(); let expired = negotiationExpired; negotiationLock.unlock()
+                let explanation = expired ? "SFTP negotiation timed out." : "The SFTP file channel closed."
+                let detail = diagnostics.text
+                return CommandError(detail.isEmpty ? explanation : explanation + "\n\n" + detail)
+            }
+            func close() {
+                if process.isRunning { process.terminate() }
+            }
+            deinit { close(); errors.fileHandleForReading.readabilityHandler = nil }
         }
         func request(_ type: UInt8, _ payload: Data, expecting: UInt8 = 101, allowEOF: Bool = false) throws -> Packet {
             nextID &+= 1
@@ -143,6 +323,20 @@ final class SystemSFTP: @unchecked Sendable {
             var response = try request(16, .string(path), expecting: 104)
             guard try response.uint32() > 0 else { throw CommandError("SFTP returned no path.") }
             return try response.string()
+        }
+        func resolvePath(_ path: String) throws -> String {
+            guard path == "~" || path.hasPrefix("~/") else { return try realPath(path) }
+            // A server's starting working directory isn't necessarily the user's home.
+            // Keep the explicit Home action separate from initial "." discovery.
+            let home: String
+            if reportsHome {
+                // expand-path("~") intentionally means server CWD in OpenSSH.
+                // home-directory with an empty username reports the actual account home.
+                var response = try request(200, .string("home-directory") + .string(""), expecting: 104)
+                guard try response.uint32() > 0 else { throw CommandError("SFTP returned no home path.") }
+                home = try response.string()
+            } else { home = try realPath(".") }
+            return try realPath(path == "~" ? home : home + "/" + path.dropFirst(2))
         }
         func stat(_ path: String) throws -> Attributes {
             var response = try request(17, .string(path), expecting: 105)
@@ -168,6 +362,19 @@ final class SystemSFTP: @unchecked Sendable {
                 guard data.count <= TextFiles.sizeLimit else { throw FileFailure.tooLarge }
             }
             return try TextFiles.decode(data)
+        }
+    }
+    /// Drain stderr continuously without letting a noisy server block or grow memory unboundedly.
+    private final class Diagnostics: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func append(_ chunk: Data) {
+            lock.lock(); defer { lock.unlock() }
+            data.append(chunk); if data.count > 8192 { data = data.suffix(8192) }
+        }
+        var text: String {
+            lock.lock(); defer { lock.unlock() }
+            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
     private struct Attributes { var size: UInt64?; var permissions: UInt32? }

@@ -9,6 +9,10 @@ struct ActivityBar: View {
             paneButton(.files, symbol: "doc.text")
             paneButton(.hosts, symbol: "network")
             Spacer()
+                #if os(macOS)
+                .frame(maxWidth: .infinity)
+                .overlay { WindowDragRegion() }
+                #endif
             Button {
                 model.terminalVisible.toggle()
             } label: {
@@ -18,14 +22,22 @@ struct ActivityBar: View {
                     .frame(width: CrowTheme.activityWidth, height: 40)
             }
             .buttonStyle(.plain)
+            .windowDragExcluded()
             .help("Terminal")
+            Button { model.settingsVisible = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18))
+                    .foregroundStyle(CrowTheme.textDim)
+                    .frame(width: CrowTheme.activityWidth, height: 40)
+            }
+            .buttonStyle(.plain)
+            .windowDragExcluded()
+            .help("Settings")
         }
         .padding(.vertical, 8)
         .frame(width: CrowTheme.activityWidth)
-        .background(CrowTheme.bg0)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(CrowTheme.border).frame(width: 1)
-        }
+        .background(CrowTheme.bg1)
+        .windowDragBackground()
     }
 
     private func paneButton(_ pane: SidebarPane, symbol: String) -> some View {
@@ -50,6 +62,7 @@ struct ActivityBar: View {
                 }
         }
         .buttonStyle(.plain)
+        .windowDragExcluded()
         .help(pane == .files ? "Files" : "Hosts")
     }
 }

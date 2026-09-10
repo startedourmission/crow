@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1ED17000000000000000010 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000012 /* MarkdownEditor.swift */; };
+		F1ED17000000000000000011 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000012 /* MarkdownEditor.swift */; };
+		F1ED17000000000000000007 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000009 /* WindowDragRegion.swift */; };
+		F1ED17000000000000000008 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000009 /* WindowDragRegion.swift */; };
+		F1ED17000000000000000001 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000003 /* markdown-editor.js */; };
+		F1ED17000000000000000002 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000003 /* markdown-editor.js */; };
+		F1ED17000000000000000004 /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */; };
+		F1ED17000000000000000005 /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */; };
 		02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
 		038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 797792777CAD6CD2D456EBF8 /* SwiftTerm */; };
 		0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
@@ -85,6 +93,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F1ED17000000000000000012 /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
+		F1ED17000000000000000009 /* WindowDragRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/WindowDragRegion.swift; sourceTree = SOURCE_ROOT; };
+		F1ED17000000000000000003 /* markdown-editor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-editor.js"; sourceTree = "<group>"; };
+		F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "MarkdownEditor-LICENSES.txt"; sourceTree = "<group>"; };
 		04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHIntegrationTests.swift; sourceTree = "<group>"; };
 		0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CrowMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0AA32B4589742FCAABE76F6B /* Crow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -162,6 +174,9 @@
 		0FEEE4A3561B20E2D72EF908 /* Editor */ = {
 			isa = PBXGroup;
 			children = (
+				F1ED17000000000000000012 /* MarkdownEditor.swift */,
+				F1ED17000000000000000003 /* markdown-editor.js */,
+				F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */,
 				C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */,
 			);
 			path = Editor;
@@ -170,6 +185,7 @@
 		19496BAFC18CA285F1D341DB = {
 			isa = PBXGroup;
 			children = (
+				F1ED17000000000000000009 /* WindowDragRegion.swift */,
 				731BB62EF6BA3ABD2B5E0A7B /* App */,
 				9318993AA5D14FAD4678BCE4 /* Packages */,
 				1A1C9CA78960D194555619D3 /* Tests */,
@@ -380,6 +396,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */,
+				F1ED17000000000000000001 /* markdown-editor.js in Resources */,
+				F1ED17000000000000000004 /* MarkdownEditor-LICENSES.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -388,6 +406,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				B09A2B69C85652902D15946E /* Assets.xcassets in Resources */,
+				F1ED17000000000000000002 /* markdown-editor.js in Resources */,
+				F1ED17000000000000000005 /* MarkdownEditor-LICENSES.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -406,7 +426,9 @@
 				3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */,
 				B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */,
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
+				F1ED17000000000000000007 /* WindowDragRegion.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
+				F1ED17000000000000000010 /* MarkdownEditor.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
 				271182EE8B959D21CC270333 /* SSHCommandView.swift in Sources */,
 				CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */,
@@ -445,7 +467,9 @@
 				E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */,
 				26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */,
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
+				F1ED17000000000000000008 /* WindowDragRegion.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
+				F1ED17000000000000000011 /* MarkdownEditor.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
 				A53E1FCC6B5BFFA376DF6273 /* SSHCommandView.swift in Sources */,
 				F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */,

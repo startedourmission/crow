@@ -45,6 +45,17 @@ struct WindowCloseGuard: NSViewRepresentable {
         required init?(coder: NSCoder) { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            if let window {
+                window.titleVisibility = .hidden
+                window.titlebarAppearsTransparent = true
+                window.styleMask.insert(.fullSizeContentView)
+                window.toolbar = nil
+                window.tabbingMode = .disallowed
+                window.isMovableByWindowBackground = false
+                // Keep OS movement/tiling available. Tab/file gestures must never
+                // disable movement for the entire window, even temporarily.
+                window.isMovable = true
+            }
             if let window, window.delegate !== self { previous = window.delegate; window.delegate = self }
         }
         override func responds(to selector: Selector!) -> Bool {

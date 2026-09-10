@@ -10,6 +10,7 @@ struct NativeEditor: NSViewRepresentable {
     let lineNumbers: Bool
     let findRequest: Int
     var onSave: () -> Void = {}
+    var focused = false
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
@@ -48,10 +49,20 @@ struct NativeEditor: NSViewRepresentable {
             editor.string = text
             editor.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
         }
-        editor.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        if editor.font?.pointSize != CGFloat(fontSize) {
+            editor.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        }
         editor.indentWidth = indentWidth
         editor.onSave = onSave
-        scroll.rulersVisible = lineNumbers
+        if focused && !context.coordinator.wasFocused {
+            Task { @MainActor [weak editor, weak coordinator = context.coordinator] in
+                await Task.yield()
+                guard coordinator?.parent.focused == true, let editor else { return }
+                editor.window?.makeFirstResponder(editor)
+            }
+        }
+        context.coordinator.wasFocused = focused
+        if scroll.rulersVisible != lineNumbers { scroll.rulersVisible = lineNumbers }
         scroll.verticalRulerView?.needsDisplay = true
         if context.coordinator.lastFind != findRequest {
             context.coordinator.lastFind = findRequest
@@ -62,6 +73,7 @@ struct NativeEditor: NSViewRepresentable {
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeEditor
         var lastFind: Int
+        var wasFocused = false
         init(_ parent: NativeEditor) { self.parent = parent; lastFind = parent.findRequest }
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
@@ -140,6 +152,7 @@ struct NativeEditor: UIViewRepresentable {
     let lineNumbers: Bool
     let findRequest: Int
     var onSave: () -> Void = {}
+    var focused = false
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> NumberedTextView {
         let editor = NumberedTextView(usingTextLayoutManager: false)

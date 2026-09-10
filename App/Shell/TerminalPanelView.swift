@@ -107,6 +107,7 @@ struct StatusBarView: View {
         .padding(.horizontal, 10)
         .frame(height: 24)
         .background(CrowTheme.bg1)
+        .windowDragBackground()
         .overlay(alignment: .top) {
             Rectangle().fill(CrowTheme.border).frame(height: 1)
         }

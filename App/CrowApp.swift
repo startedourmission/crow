@@ -13,11 +13,13 @@ struct CrowApp: App {
                 .environment(model)
                 .preferredColorScheme(.light)
                 #if os(macOS)
+                .frame(minWidth: 640, minHeight: 400)
                 .background(WindowCloseGuard(model: model))
                 .onAppear { appDelegate.model = model }
                 #endif
         }
         #if os(macOS)
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -31,7 +33,11 @@ struct CrowApp: App {
                     if !NSApp.sendAction(#selector(CodeTextView.saveDocument(_:)), to: nil, from: nil) { model.saveSelectedBuffer() }
                 }.keyboardShortcut("s", modifiers: .command)
                 Button("Save All") { Task { await model.saveAll() } }.keyboardShortcut("s", modifiers: [.command, .option])
-                Button("Close Tab") { if let id = model.selectedBufferID { model.closeBuffer(id) } }
+                Button("Close Tab") {
+                    if let pane = model.current.snapshot.layout?.activePane, let tab = pane.selected {
+                        model.closeTab(tab, in: pane.id)
+                    }
+                }
                     .keyboardShortcut("w", modifiers: .command)
             }
             CommandGroup(replacing: .appSettings) {
@@ -53,7 +59,11 @@ struct CrowApp: App {
                 }
                 .keyboardShortcut("`", modifiers: .control)
                 Button("New Terminal") { model.newTerminal() }.keyboardShortcut("t", modifiers: [.command, .shift])
-                Button("Split Editor") { model.toggleSplit() }.keyboardShortcut("\\", modifiers: .command)
+                Button("Split Right") {
+                    if let pane = model.current.snapshot.layout?.activePane, let tab = pane.selected {
+                        model.splitTab(tab, in: pane.id, placement: .right)
+                    }
+                }.keyboardShortcut("\\", modifiers: .command)
             }
         }
         #endif

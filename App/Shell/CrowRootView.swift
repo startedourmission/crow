@@ -1,6 +1,9 @@
 import CrowCore
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct CrowRootView: View {
     @Environment(AppModel.self) private var model
@@ -38,6 +41,27 @@ struct CrowRootView: View {
             Button("Discard Changes", role: .destructive) { model.discardBuffer(id) }
             Button("Cancel", role: .cancel) {}
         }
+        .alert("Close this terminal?", isPresented: Binding(
+            get: { model.terminalCloseRequest != nil }, set: { if !$0 { model.terminalCloseRequest = nil } }),
+            presenting: model.terminalCloseRequest) { id in
+                Button("Close Terminal", role: .destructive) { model.closeTerminal(id) }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in Text("The shell and its running commands will be terminated.") }
+        .alert("Remove vault from list?", isPresented: Binding(
+            get: { model.workspaceRemovalRequest != nil },
+            set: { if !$0 { model.workspaceRemovalRequest = nil } }), presenting: model.workspaceRemovalRequest) { id in
+                let dirty = model.states.first { $0.id == id }?.snapshot.buffers.contains(where: \.isDirty) == true
+                if dirty {
+                    Button("Save and Remove") { Task { await model.saveAndRemoveWorkspace(id) } }
+                }
+                Button(dirty ? "Discard Changes and Remove" : "Remove", role: .destructive) {
+                    model.removeWorkspace(id, discardChanges: true)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { id in
+                let name = model.states.first { $0.id == id }?.snapshot.workspace.name ?? "This vault"
+                Text("\(name) will be removed from the list and its terminal sessions will end. Folders and saved files will not be deleted.")
+            }
         .alert("File changed externally", isPresented: Binding(get: { model.conflictRequest != nil }, set: { if !$0 { model.conflictRequest = nil } }), presenting: model.conflictRequest) { id in
             Button("Overwrite", role: .destructive) { Task { await model.saveBuffer(id, overwrite: true) } }
             Button("Cancel", role: .cancel) {}
@@ -60,31 +84,68 @@ struct CrowRootView: View {
 
 struct RegularWorkspaceView: View {
     @Environment(AppModel.self) private var model
+    @AppStorage("crow.sidebarWidth") private var sidebarWidth = Double(CrowTheme.sidebarWidth)
+    @State private var sidebarDragStart: CGFloat?
+    @State private var liveSidebarWidth: CGFloat?
 
     var body: some View {
         VStack(spacing: 0) {
+            #if !os(macOS)
             WorkspaceSwitcher()
-            HStack(spacing: 0) {
+            #endif
+            GeometryReader { workspaceGeometry in
+              HStack(spacing: 0) {
                 ActivityBar()
+                    #if os(macOS)
+                    .padding(.top, 40)
+                    .background(CrowTheme.bg1)
+                    .windowDragBackground()
+                    .overlay(alignment: .top) { WindowDragRegion().frame(height: 12) }
+                    #endif
                 if model.sidebarVisible {
-                    SidebarView()
-                        .frame(width: CrowTheme.sidebarWidth)
-                    Rectangle().fill(CrowTheme.border).frame(width: 1)
-                }
-                GeometryReader { geo in
                     VStack(spacing: 0) {
-                        EditorAreaView()
-                        if model.terminalVisible {
-                            ResizeHandle(fraction: Bindable(model).settings.terminalFraction, totalHeight: geo.size.height)
-                            TerminalPanelView()
-                                .frame(height: max(CrowTheme.terminalMinHeight, geo.size.height * model.settings.terminalFraction))
-                        }
+                        #if os(macOS)
+                        WorkspaceSwitcher().padding(.leading, 36)
+                            .background(CrowTheme.bg1)
+                            .windowDragBackground()
+                            .overlay(alignment: .top) { WindowDragRegion().frame(height: 6) }
+                        #endif
+                        SidebarView()
                     }
+                        .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: workspaceGeometry.size.width))
+                        .background(CrowTheme.bg1)
+                    ResizeHandle(axis: .horizontal, label: "Resize file explorer", onDrag: { translation in
+                        if sidebarDragStart == nil {
+                            sidebarDragStart = SplitSizing.sidebarWidth(sidebarWidth, available: workspaceGeometry.size.width)
+                        }
+                        liveSidebarWidth = SplitSizing.sidebarWidth((sidebarDragStart ?? sidebarWidth) + translation,
+                            available: workspaceGeometry.size.width)
+                    }, onEnd: {
+                        if let width = liveSidebarWidth { sidebarWidth = width }
+                        sidebarDragStart = nil; liveSidebarWidth = nil
+                    })
                 }
+                VStack(spacing: 0) {
+                    #if os(macOS)
+                    if !model.sidebarVisible {
+                        HStack {
+                            WorkspaceSwitcher().frame(maxWidth: 280)
+                            Spacer().frame(maxHeight: .infinity).overlay { WindowDragRegion() }
+                        }.frame(height: 40).padding(.leading, 36).background(CrowTheme.bg1)
+                    }
+                    #endif
+                    if !model.hasWorkspace { EmptyWorkspaceView() }
+                    else { WorkspaceAreaView() }
+                }
+              }
+              .transaction { $0.animation = nil }
             }
             StatusBarView()
         }
         .background(CrowTheme.bg0)
+        #if os(macOS)
+        .ignoresSafeArea(.container, edges: .top)
+        #endif
     }
 }
 
@@ -94,6 +155,9 @@ struct CompactWorkspaceView: View {
     var body: some View {
         VStack(spacing: 0) {
             WorkspaceSwitcher()
+            if !model.hasWorkspace {
+                EmptyWorkspaceView()
+            } else {
             Picker("Surface", selection: Bindable(model).compactSurface) {
                 Text("Files").tag(CompactSurface.files)
                 Text("Editor").tag(CompactSurface.editor)
@@ -115,36 +179,113 @@ struct CompactWorkspaceView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
             StatusBarView()
+                .contextMenu { Button("Settings…") { model.settingsVisible = true } }
         }
         .background(CrowTheme.bg0)
     }
 }
 
-private struct ResizeHandle: View {
-    @Binding var fraction: Double
-    let totalHeight: Double
-    @State private var startingFraction: Double?
-
+private struct EmptyWorkspaceView: View {
+    @Environment(AppModel.self) private var model
     var body: some View {
-        Rectangle()
-            .fill(CrowTheme.border)
-            .frame(height: 6)
-            .overlay(
-                Capsule()
-                    .fill(CrowTheme.textDim.opacity(0.5))
-                    .frame(width: 36, height: 2)
-            )
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if startingFraction == nil { startingFraction = fraction }
-                        let delta = -value.translation.height / max(totalHeight, 1)
-                        fraction = min(0.65, max(0.18, (startingFraction ?? fraction) + delta))
-                    }
-                    .onEnded { _ in startingFraction = nil }
-            )
-            .accessibilityLabel("Resize terminal")
+        VStack(spacing: 16) {
+            Text("Open a folder to get started").foregroundStyle(CrowTheme.textDim)
+            Button("Open Folder…") { model.folderImporterVisible = true }
+            Button("SSH Command…") { model.sshCommandVisible = true }
+            Button("Settings…") { model.settingsVisible = true }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+enum SplitSizing {
+    static func sidebarWidth(_ proposed: CGFloat, available: CGFloat) -> CGFloat {
+        min(max(180, proposed), max(180, min(520, available - CrowTheme.activityWidth - 326)))
+    }
+    static func terminalHeight(_ proposed: CGFloat, available: CGFloat) -> CGFloat {
+        let maximum = max(0, available - 126) // editor + divider
+        return min(max(min(CrowTheme.terminalMinHeight, maximum), proposed), maximum)
+    }
+}
+
+struct ResizeHandle: View {
+    let axis: Axis
+    let label: String
+    let onDrag: (CGFloat) -> Void
+    let onEnd: () -> Void
+
+    var body: some View {
+        ZStack {
+            CrowTheme.bg1
+            Rectangle().fill(CrowTheme.border)
+                .frame(width: axis == .horizontal ? 1 : nil, height: axis == .vertical ? 1 : nil)
+            #if os(macOS)
+            NativeResizeHandle(axis: axis, label: label, onDrag: onDrag, onEnd: onEnd)
+            #else
+            Color.clear.contentShape(Rectangle()).gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        onDrag(axis == .horizontal ? value.translation.width : value.translation.height)
+                    }
+                    .onEnded { _ in onEnd() }
+            )
+            #endif
+        }
+        .frame(width: axis == .horizontal ? 6 : nil, height: axis == .vertical ? 6 : nil)
+        .accessibilityLabel(label)
+    }
+}
+
+#if os(macOS)
+private struct NativeResizeHandle: NSViewRepresentable {
+    let axis: Axis
+    let label: String
+    let onDrag: (CGFloat) -> Void
+    let onEnd: () -> Void
+    func makeNSView(context: Context) -> ResizeHandleView { ResizeHandleView() }
+    func updateNSView(_ view: ResizeHandleView, context: Context) {
+        view.axis = axis; view.onDrag = onDrag; view.onEnd = onEnd
+        view.setAccessibilityLabel(label)
+        view.setAccessibilityIdentifier(axis == .horizontal ? "crow.resize.sidebar" : "crow.resize.terminal")
+    }
+}
+
+final class ResizeHandleView: NSView {
+    var axis: Axis = .vertical
+    var onDrag: (CGFloat) -> Void = { _ in }
+    var onEnd: () -> Void = {}
+    private var dragOrigin: NSPoint?
+    private var cursorTracking: NSTrackingArea?
+    var resizeCursor: NSCursor { axis == .horizontal ? .resizeLeftRight : .resizeUpDown }
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: resizeCursor) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTracking { removeTrackingArea(cursorTracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .cursorUpdate, .inVisibleRect], owner: self)
+        addTrackingArea(area); cursorTracking = area
+    }
+    override func cursorUpdate(with event: NSEvent) { resizeCursor.set() }
+    override func mouseDown(with event: NSEvent) {
+        // Screen coordinates stay fixed while this divider moves under the pointer.
+        dragOrigin = window?.convertPoint(toScreen: event.locationInWindow)
+        resizeCursor.set()
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let dragOrigin, let point = window?.convertPoint(toScreen: event.locationInWindow) else { return }
+        resizeCursor.set()
+        onDrag(axis == .horizontal ? point.x - dragOrigin.x : dragOrigin.y - point.y)
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard dragOrigin != nil else { return }
+        mouseDragged(with: event)
+        dragOrigin = nil; onEnd()
+        NSCursor.arrow.set()
+        window?.invalidateCursorRects(for: self)
+    }
+}
+#endif

@@ -41,6 +41,26 @@ The macOS target is intentionally **not App Sandbox-enabled** so the local shell
 
 New Crow local terminals load a private zsh `ssh` function; your shell configuration files are not modified. It invokes `/usr/bin/ssh` and uses a private [OpenSSH multiplex connection](https://man.openbsd.org/ssh_config#ControlMaster) so file operations and additional terminal tabs need no second login. SFTP is spoken directly over that channel, following the [SFTP v3 wire format](https://www.ietf.org/archive/id/draft-ietf-secsh-filexfer-02.txt), not by parsing shell output.
 
+Mac file connections negotiate capabilities in order: the standard SFTP subsystem,
+an installed `sftp-server` started through an SSH command, then the same bootstrap
+sent through a plain SSH shell channel without a remote command. This handles login
+wrappers where interactive login works but command execution does not, without
+hard-coding hostnames, operating systems or distribution names. Fallbacks require a
+POSIX-compatible login shell and an executable `sftp-server` on PATH or in a standard
+OpenSSH location. Crow does not install packages or edit remote SSH/shell settings.
+Each handshake has an 8-second deadline; startup banners are bounded and discarded
+before the binary protocol starts. Only connection setup is retried, never file writes.
+If every method fails, the error includes each attempted method and leaves the
+terminal connection open. The selected login environment's default distribution
+is used; Crow does not choose or switch WSL distributions.
+
+New Mac SSH workspaces start at the file channel's initial working directory (`.`),
+without forcing the SFTP process into `$HOME`. This preserves the SSH login's
+starting directory in the shell fallbacks. Once selected, the project folder is
+saved and survives reconnects. Later terminal `cd` commands do not move the file
+browser. Explicit Home navigation uses the server's home-expansion extension when
+available; no continuous directory synchronization or shell-profile injection is used.
+
 Restart the app or open a new terminal after updating to activate integration. `command ssh`, `/usr/bin/ssh`, custom overrides of the `ssh` function, tunnel-only/remote-command sessions and explicit multiplex-control commands remain terminal-only. Automatic registration is for interactive connections from Crow's Mac local terminal, not Terminal.app or remote shells. The command box is a single SSH command parser, not a shell: pipelines, substitutions and shell operators are rejected. Config aliases and agent access are Mac-only.
 
 Disconnecting a workspace closes its UI channels; an SSH command still running in the original local terminal is independent (use `exit` there). Crow-owned master connections use a 60-second idle persistence and are closed on normal app shutdown. Running SSH processes are never restored after restart; the saved command can be used to reconnect. Connection arguments/paths are stored locally with the session, so do not embed passwords or other secrets in command arguments.

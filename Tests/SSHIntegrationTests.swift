@@ -5,6 +5,14 @@ import SwiftTerm
 @testable import Crow
 
 final class SSHIntegrationTests: XCTestCase {
+    func testClosedSFTPPipeThrowsInsteadOfTerminatingApplication() throws {
+        let pipe = Pipe()
+        try SystemSFTP.protectWrites(to: pipe.fileHandleForWriting)
+        XCTAssertEqual(fcntl(pipe.fileHandleForWriting.fileDescriptor, F_GETNOSIGPIPE), 1)
+        try pipe.fileHandleForReading.close()
+        defer { try? pipe.fileHandleForWriting.close() }
+        XCTAssertThrowsError(try pipe.fileHandleForWriting.write(contentsOf: Data([1, 2, 3])))
+    }
     @MainActor func testLoopbackSSHHostVerificationSFTPAndPTY() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-sshd-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -159,6 +167,16 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertEqual(model.hosts.first?.port, port)
         XCTAssertFalse(model.hostEditorVisible)
         let native = try XCTUnwrap(imported.remote)
+        let closedChannel = try SystemSFTP(spec: XCTUnwrap(imported.systemSSH))
+        _ = try await closedChannel.list(root.path)
+        closedChannel.close()
+        for _ in 0..<100 where closedChannel.isConnected { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(closedChannel.isConnected)
+        do {
+            _ = try await closedChannel.list(root.path)
+            XCTFail("A closed SFTP channel must report a connection error")
+        } catch { /* Regression: this request previously terminated the app with signal 13. */ }
+        XCTAssertTrue(localTerminal.running, "A failed file-list channel must not stop the user's SSH terminal")
         let nativePath = root.appendingPathComponent("native sftp.txt").path
         try await native.create(nativePath, directory: false)
         try await native.write(largeText, path: nativePath, expected: "")
@@ -188,6 +206,7 @@ final class SSHIntegrationTests: XCTestCase {
 
         let quickModel = AppModel(vaultURL: root.appendingPathComponent("quick-vault"))
         defer { quickModel.shutdown() }
+        quickModel.sidebarPane = .hosts
         try await quickModel.connectCommand(command)
         for _ in 0..<200 {
             if quickModel.current.snapshot.workspace.connection == .connected { break }
@@ -197,6 +216,43 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(quickModel.current.terminals.values.contains(where: \.running))
         XCTAssertFalse(quickModel.hostEditorVisible)
         XCTAssertNil(quickModel.credentialRequest, "Mac authentication stays inside OpenSSH, not an app password form")
+        XCTAssertEqual(quickModel.sidebarPane, .files, "Connecting from the host list must show the file explorer")
+        let tree = quickModel.current.explorer
+        for _ in 0..<100 where tree.children[quickModel.current.snapshot.rootPath] == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(tree.rootPath, quickModel.current.snapshot.rootPath)
+        XCTAssertNotNil(tree.children[tree.rootPath], tree.errorMessage ?? "Remote root was not loaded")
+
+        let project = root.appendingPathComponent("Project with spaces")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try Data("# Remote note".utf8).write(to: project.appendingPathComponent("note.md"))
+        let remoteID = quickModel.selectedWorkspaceID
+        let sessions = quickModel.current.terminals
+        let listing = try await quickModel.remoteDirectory(in: remoteID, at: root.path)
+        let projectPath = (listing.path as NSString).appendingPathComponent(project.lastPathComponent)
+        XCTAssertTrue(listing.folders.contains { $0.path == projectPath })
+        // Browsing alone must not change the active project.
+        XCTAssertNotEqual(quickModel.current.snapshot.rootPath, root.path)
+        try await quickModel.selectRemoteProject(project.path, in: remoteID)
+        for _ in 0..<100 where !tree.rows.contains(where: { $0.entry.name == "note.md" }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(tree.rootPath, projectPath)
+        XCTAssertTrue(tree.rows.contains { $0.entry.name == "note.md" })
+        for (id, session) in sessions { XCTAssertTrue(quickModel.current.terminals[id] === session); XCTAssertTrue(session.running) }
+
+        // SFTP can fail independently of the authenticated terminal; file browsing repairs that channel.
+        let oldConnection = try XCTUnwrap(quickModel.current.remote)
+        await oldConnection.disconnect()
+        let repaired = try await quickModel.remoteDirectory(in: remoteID, at: project.path)
+        XCTAssertEqual(repaired.path, projectPath)
+        XCTAssertFalse(quickModel.current.remote === oldConnection)
+        XCTAssertTrue(quickModel.current.terminals.values.allSatisfy(\.running))
+        quickModel.persist()
+        let restored = AppModel(vaultURL: quickModel.vaultURL)
+        defer { restored.shutdown() }
+        XCTAssertEqual(restored.current.snapshot.rootPath, projectPath)
     }
 }
 #endif

@@ -2,6 +2,23 @@ import CrowCore
 import Foundation
 import Observation
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
+
+struct WorkspaceTabDrag: Codable, Equatable {
+    let workspaceID: WorkspaceID
+    let paneID: UUID
+    let tab: WorkspaceTab
+}
+
+struct ExplorerFileDrag: Codable, Equatable {
+    let workspaceID: WorkspaceID
+    let path: String
+    let isDirectory: Bool
+    var name: String { (path as NSString).lastPathComponent }
+    var entry: FileEntry { FileEntry(name: name, path: path, isDirectory: isDirectory) }
+}
 
 @MainActor @Observable
 final class AppModel {
@@ -14,6 +31,10 @@ final class AppModel {
     var statusMessage = "Ready"
     var errorMessage: String?
     var closeRequest: BufferID?
+    var terminalCloseRequest: UUID?
+    var draggedTab: WorkspaceTabDrag?
+    var draggedFile: ExplorerFileDrag?
+    var workspaceRemovalRequest: WorkspaceID?
     var conflictRequest: BufferID?
     var deleteRequest: FileEntry?
     var hostKeyChallenge: HostKeyChallenge?
@@ -32,6 +53,9 @@ final class AppModel {
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private var saving: Set<BufferID> = []
     @ObservationIgnored private var persistenceAvailable = true
+    // A presentation-only fallback: never persisted or used for file operations.
+    private let emptyState = WorkspaceState(.init(
+        workspace: Workspace(name: "No Folder", kind: .local, connection: .local), rootPath: ""))
 
     init(vaultURL: URL? = nil, sessionURL: URL? = nil) {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -51,6 +75,7 @@ final class AppModel {
             : self.vaultURL.appendingPathComponent(".crow-session.json"))
         let local = Workspace(name: "Vault", kind: .local, connection: .local)
         selectedWorkspaceID = local.id
+        var restoredSession = false
         do {
             try FileManager.default.createDirectory(at: self.vaultURL, withIntermediateDirectories: true)
             let readme = self.vaultURL.appendingPathComponent("README.md")
@@ -60,7 +85,8 @@ final class AppModel {
             }
             if FileManager.default.fileExists(atPath: self.sessionURL.path) {
                 let saved = try JSONDecoder().decode(SessionSnapshot.self, from: Data(contentsOf: self.sessionURL))
-                guard saved.version == 1, !saved.workspaces.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+                guard saved.version == 1 else { throw CocoaError(.fileReadCorruptFile) }
+                restoredSession = true
                 hosts = saved.hosts; settings = saved.settings
                 states = saved.workspaces.map { snapshot in
                     var restored = snapshot
@@ -74,7 +100,6 @@ final class AppModel {
                 }
                 let labBuffers = states.filter { $0.snapshot.workspace.kind == .imeLab }.flatMap(\.snapshot.buffers)
                 states.removeAll { $0.snapshot.workspace.kind == .imeLab }
-                if states.isEmpty { states = [WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path))] }
                 if !labBuffers.isEmpty {
                     if !states.contains(where: { !$0.snapshot.workspace.isRemote }) {
                         states.append(WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path)))
@@ -84,7 +109,7 @@ final class AppModel {
                         destination.snapshot.buffers.append(buffer)
                     }
                 }
-                selectedWorkspaceID = states.contains(where: { $0.id == saved.selectedWorkspaceID }) ? saved.selectedWorkspaceID : states[0].id
+                selectedWorkspaceID = states.contains(where: { $0.id == saved.selectedWorkspaceID }) ? saved.selectedWorkspaceID : (states.first?.id ?? emptyState.id)
                 for state in states { restoreAccess(state) }
             }
         } catch {
@@ -97,15 +122,17 @@ final class AppModel {
                 } catch { persistenceAvailable = false }
             }
         }
-        if states.isEmpty {
+        if states.isEmpty && !restoredSession {
             states = [WorkspaceState(.init(workspace: local, rootPath: self.vaultURL.path))]
             let readme = self.vaultURL.appendingPathComponent("README.md")
             if let text = try? TextFiles.read(readme) { addBuffer(path: readme.path, text: text, to: states[0]) }
         }
+        for state in states { ensureLayout(state) }
         refreshFiles()
     }
 
-    var current: WorkspaceState { states.first(where: { $0.id == selectedWorkspaceID }) ?? states[0] }
+    var hasWorkspace: Bool { !states.isEmpty }
+    var current: WorkspaceState { states.first(where: { $0.id == selectedWorkspaceID }) ?? states.first ?? emptyState }
     var workspaces: [Workspace] { states.map(\.snapshot.workspace) }
     var selectedWorkspace: Workspace { current.snapshot.workspace }
     var workspaceTitle: String { selectedWorkspace.name }
@@ -113,7 +140,11 @@ final class AppModel {
     var buffers: [OpenBuffer] { current.snapshot.buffers }
     var selectedBufferID: BufferID? {
         get { current.snapshot.selectedBufferID }
-        set { current.snapshot.selectedBufferID = newValue; schedulePersist() }
+        set {
+            current.snapshot.selectedBufferID = newValue
+            if let newValue { current.snapshot.layout?.select(.file(newValue)) }
+            schedulePersist()
+        }
     }
     var selectedBuffer: OpenBuffer? { buffers.first { $0.id == selectedBufferID } }
     var sidebarVisible: Bool {
@@ -127,26 +158,142 @@ final class AppModel {
     var hasUnsavedChanges: Bool { states.contains { $0.snapshot.buffers.contains(where: \.isDirty) } }
 
     func selectWorkspace(_ id: WorkspaceID) {
-        selectedWorkspaceID = id; refreshFiles()
+        guard states.contains(where: { $0.id == id }) else { return }
+        selectedWorkspaceID = id; sidebarPane = .files; ensureLayout(current); refreshFiles()
         statusMessage = workspaceTitle; schedulePersist()
     }
 
+    func ensureLayout(_ state: WorkspaceState) {
+        guard state.snapshot.layout == nil else { return }
+        state.snapshot.layout = WorkspaceLayout(files: state.snapshot.buffers.map(\.id),
+            selectedFile: state.snapshot.selectedBufferID, terminals: state.snapshot.terminalIDs,
+            selectedTerminal: state.snapshot.selectedTerminalID, terminalFraction: settings.terminalFraction)
+    }
+    func activatePane(_ paneID: UUID) {
+        guard let pane = current.snapshot.layout?.panes.first(where: { $0.id == paneID }) else { return }
+        current.snapshot.layout?.activePaneID = paneID
+        if let tab = pane.selected { selectTab(tab, in: paneID) }
+    }
+    func selectTab(_ tab: WorkspaceTab, in paneID: UUID) {
+        guard current.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
+        current.snapshot.layout?.select(tab, in: paneID)
+        switch tab {
+        case .file(let id): current.snapshot.selectedBufferID = id
+        case .terminal(let id): current.snapshot.selectedTerminalID = id
+        }
+        schedulePersist()
+    }
+    func closeTab(_ tab: WorkspaceTab, in paneID: UUID) {
+        guard current.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
+        switch tab {
+        case .file(let id):
+            if (current.snapshot.layout?.allTabs.filter { $0 == tab }.count ?? 0) > 1 {
+                current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
+            } else { closeBuffer(id) }
+        case .terminal(let id): terminalCloseRequest = id
+        }
+    }
+    @discardableResult func moveTab(_ drag: WorkspaceTabDrag, to paneID: UUID,
+        placement: PanePlacement, before: WorkspaceTab? = nil) -> Bool {
+        guard drag.workspaceID == selectedWorkspaceID else { return false }
+        let moved = current.snapshot.layout?.move(drag.tab, from: drag.paneID, to: paneID,
+            placement: placement, before: before) ?? false
+        if moved {
+            current.maximizedPaneID = nil
+            if let pane = current.snapshot.layout?.activePane, let tab = pane.selected { selectTab(tab, in: pane.id) }
+            schedulePersist()
+        }
+        return moved
+    }
+    func splitTab(_ tab: WorkspaceTab, in paneID: UUID, placement: PanePlacement) {
+        guard current.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
+        if case .terminal = tab {
+            let id = UUID()
+            current.snapshot.terminalIDs.append(id); current.snapshot.selectedTerminalID = id
+            current.snapshot.layout?.open(.terminal(id), in: paneID)
+            _ = current.snapshot.layout?.move(.terminal(id), from: paneID, to: paneID, placement: placement)
+        } else {
+            _ = current.snapshot.layout?.move(tab, from: paneID, to: paneID, placement: placement, copy: true)
+        }
+        current.maximizedPaneID = nil; schedulePersist()
+        if let pane = current.snapshot.layout?.activePane, let tab = pane.selected { selectTab(tab, in: pane.id) }
+    }
+    func resizePaneSplit(_ id: UUID, fraction: Double) {
+        let resized = current.snapshot.layout?.root?.resizing(id, fraction: fraction)
+        current.snapshot.layout?.root = resized
+        schedulePersist()
+    }
+    func newTerminal(inWorkspace id: WorkspaceID) {
+        guard states.contains(where: { $0.id == id }) else { return }
+        selectWorkspace(id); newTerminal()
+    }
+    #if os(macOS)
+    func openWorkspaceInFinder(_ id: WorkspaceID) {
+        guard let state = states.first(where: { $0.id == id }), !state.snapshot.workspace.isRemote else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: state.snapshot.rootPath, isDirectory: true))
+    }
+    #endif
+
+    func requestWorkspaceRemoval(_ id: WorkspaceID) {
+        guard states.contains(where: { $0.id == id }) else { return }
+        workspaceRemovalRequest = id
+    }
+
+    @discardableResult func removeWorkspace(_ id: WorkspaceID, discardChanges: Bool = false) -> Bool {
+        guard let index = states.firstIndex(where: { $0.id == id }) else { return false }
+        let state = states[index]
+        guard discardChanges || !state.snapshot.buffers.contains(where: \.isDirty) else {
+            workspaceRemovalRequest = id
+            return false
+        }
+        disconnect(state)
+        state.refreshGeneration = UUID()
+        state.accessURL?.stopAccessingSecurityScopedResource(); state.accessURL = nil
+        states.remove(at: index)
+        if selectedWorkspaceID == id {
+            selectedWorkspaceID = states.isEmpty ? emptyState.id : states[min(index, states.count - 1)].id
+            refreshFiles()
+        }
+        if workspaceRemovalRequest == id { workspaceRemovalRequest = nil }
+        statusMessage = "Removed \(state.snapshot.workspace.name) from the list. Files were not deleted."
+        persist()
+        return true
+    }
+
+    @discardableResult func saveAndRemoveWorkspace(_ id: WorkspaceID) async -> Bool {
+        guard let state = states.first(where: { $0.id == id }) else { return false }
+        for buffer in state.snapshot.buffers.filter(\.isDirty) {
+            guard await saveBuffer(buffer.id) else { return false }
+        }
+        // Recheck all buffers: edits can arrive while a remote save is pending.
+        return removeWorkspace(id)
+    }
+
     func openFolder(_ url: URL) {
-        let path = url.resolvingSymlinksInPath().path
+        let resolvedURL = url.resolvingSymlinksInPath()
+        let path = resolvedURL.path
+        do {
+            guard url.isFileURL, try resolvedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+                throw NSError(domain: "Crow.Folder", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Choose a folder to open as a workspace."])
+            }
+        } catch { report(error); return }
         if let existing = states.first(where: { !$0.snapshot.workspace.isRemote && $0.snapshot.rootPath == path }) {
+            sidebarPane = .files; sidebarVisible = true
             selectWorkspace(existing.id); return
         }
         let accessed = url.startAccessingSecurityScopedResource()
         do {
-            var options: URL.BookmarkCreationOptions = []
-            #if os(macOS)
-            options = .withSecurityScope
-            #endif
-            let bookmark = try url.bookmarkData(options: options, includingResourceValuesForKeys: nil, relativeTo: nil)
+            // macOS is intentionally unsandboxed for local shells. App-scoped
+            // bookmarks unnecessarily depend on signing identity and can fail
+            // after an in-place debug rebuild. Ordinary bookmarks still track
+            // moved folders without depending on scopedbookmarksagent.
+            let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
             let state = WorkspaceState(.init(workspace: Workspace(name: url.lastPathComponent, kind: .local, connection: .local),
                 rootPath: path, bookmark: bookmark))
             if accessed { state.accessURL = url }
-            states.append(state); selectWorkspace(state.id)
+            states.append(state); sidebarPane = .files; sidebarVisible = true
+            selectWorkspace(state.id)
         } catch { if accessed { url.stopAccessingSecurityScopedResource() }; report(error) }
     }
 
@@ -156,16 +303,35 @@ final class AppModel {
             var stale = false
             var options: URL.BookmarkResolutionOptions = []
             #if os(macOS)
-            options = .withSecurityScope
+            options = .withoutUI
             #endif
             let url = try URL(resolvingBookmarkData: bookmark, options: options, relativeTo: nil, bookmarkDataIsStale: &stale)
             if url.startAccessingSecurityScopedResource() { state.accessURL = url }
             state.snapshot.relocateRoot(to: url.resolvingSymlinksInPath().path)
+            #if os(macOS)
+            // Upgrade saved app-scoped bookmarks to ordinary macOS bookmarks.
+            state.snapshot.bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            #endif
             if stale { statusMessage = "Reopen \(state.snapshot.workspace.name) if folder access fails." }
-        } catch { report(error) }
+        } catch {
+            #if os(macOS)
+            // Legacy scoped bookmarks can outlive a development signing identity.
+            // Recover only the previously saved local directory, if still readable.
+            let saved = URL(fileURLWithPath: state.snapshot.rootPath)
+            if !state.snapshot.workspace.isRemote,
+               (try? saved.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+               FileManager.default.isReadableFile(atPath: saved.path),
+               let renewed = try? saved.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+                state.snapshot.bookmark = renewed
+                return
+            }
+            #endif
+            report(error)
+        }
     }
 
     func navigate(to path: String) {
+        guard hasWorkspace else { return }
         current.snapshot.directoryPath = selectedWorkspace.isRemote ? path : URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         refreshFiles(); schedulePersist()
     }
@@ -175,7 +341,17 @@ final class AppModel {
     }
 
     func refreshFiles() {
+        guard hasWorkspace else { return }
         let state = current, path = current.snapshot.directoryPath
+        state.explorer.configure(rootPath: state.snapshot.rootPath) { [weak self, weak state] path in
+            guard let self, let state else { throw CancellationError() }
+            if state.snapshot.workspace.isRemote {
+                let remote = try self.fileConnection(in: state)
+                return try await remote.list(path)
+            }
+            return try await Task.detached { try FileExplorer.localEntries(path) }.value
+        }
+        Task { await state.explorer.refresh(); state.explorer.refreshSearch() }
         let generation = UUID(); state.refreshGeneration = generation
         if !state.snapshot.workspace.isRemote {
             do {
@@ -199,11 +375,59 @@ final class AppModel {
         }
     }
 
+    /// Reopen only the SFTP channel when it has exited; keep the user's terminal session alive.
+    private func fileConnection(in state: WorkspaceState) throws -> RemoteConnection {
+        if let remote = state.remote, remote.isConnected { return remote }
+        #if os(macOS)
+        if let spec = state.systemSSH, FileManager.default.fileExists(atPath: spec.socket),
+           state.snapshot.workspace.connection != .disconnected {
+            let remote = RemoteConnection()
+            try remote.attach(spec); state.remote = remote
+            return remote
+        }
+        #endif
+        throw FileFailure.disconnected
+    }
+
+    func remoteDirectory(in id: WorkspaceID, at path: String) async throws -> (path: String, folders: [FileEntry]) {
+        guard let state = states.first(where: { $0.id == id }), state.snapshot.workspace.isRemote else { throw FileFailure.disconnected }
+        let remote = try fileConnection(in: state)
+        let resolved = try await remote.realPath(path.isEmpty ? "~" : path)
+        let entries = try await remote.list(resolved)
+        try Task.checkCancellation()
+        guard states.contains(where: { $0 === state }), state.remote === remote else { throw CancellationError() }
+        return (resolved, entries.filter { $0.isDirectory && !$0.name.hasPrefix(".") })
+    }
+
+    func selectRemoteProject(_ path: String, in id: WorkspaceID) async throws {
+        let directory = try await remoteDirectory(in: id, at: path)
+        guard let state = states.first(where: { $0.id == id }),
+              case .remote(let hostID, _) = state.snapshot.workspace.kind else { throw FileFailure.disconnected }
+        state.snapshot.rootPath = directory.path; state.snapshot.directoryPath = directory.path
+        state.snapshot.workspace.kind = .remote(hostID: hostID, path: directory.path)
+        state.snapshot.workspace.connection = .connected
+        if selectedWorkspaceID == id {
+            sidebarPane = .files; refreshFiles()
+            await state.explorer.refresh()
+        }
+        statusMessage = "Project folder: \(directory.path)"; schedulePersist()
+    }
+
+    func retryRemoteFiles() {
+        let state = current
+        Task {
+            do { try await selectRemoteProject(state.snapshot.rootPath, in: state.id) }
+            catch { report(error) }
+        }
+    }
+
     func openFile(_ entry: FileEntry) {
         if entry.isDirectory { navigate(to: entry.path); return }
         let state = current
         if let existing = state.snapshot.buffers.first(where: { $0.path == entry.path }) {
-            state.snapshot.selectedBufferID = existing.id; compactSurface = .editor; return
+            state.snapshot.selectedBufferID = existing.id
+            ensureLayout(state); state.snapshot.layout?.open(.file(existing.id))
+            state.maximizedPaneID = nil; compactSurface = .editor; schedulePersist(); return
         }
         if !state.snapshot.workspace.isRemote {
             do { addBuffer(path: entry.path, text: try TextFiles.read(URL(fileURLWithPath: entry.path)), to: state) }
@@ -227,7 +451,9 @@ final class AppModel {
         var buffer = OpenBuffer(title: (path as NSString).lastPathComponent, path: path, text: text,
             language: LanguageMode.infer(filename: path), isRemote: state.snapshot.workspace.isRemote)
         buffer.savedText = text
-        state.snapshot.buffers.append(buffer); state.snapshot.selectedBufferID = buffer.id; schedulePersist()
+        state.snapshot.buffers.append(buffer); state.snapshot.selectedBufferID = buffer.id
+        ensureLayout(state); state.snapshot.layout?.open(.file(buffer.id)); state.maximizedPaneID = nil
+        schedulePersist()
     }
 
     func updateBufferText(_ id: BufferID, _ text: String) {
@@ -240,6 +466,9 @@ final class AppModel {
 
     @discardableResult func saveBuffer(_ id: BufferID, overwrite: Bool = false) async -> Bool {
         guard let (state, index) = locate(id), !saving.contains(id) else { return false }
+        guard !state.movingPaths.contains(where: { state.snapshot.buffers[index].path == $0 || state.snapshot.buffers[index].path.hasPrefix($0 + "/") }) else {
+            statusMessage = "Wait for the file move to finish before saving."; return false
+        }
         saving.insert(id); defer { saving.remove(id) }
         let buffer = state.snapshot.buffers[index]
         do {
@@ -272,6 +501,7 @@ final class AppModel {
     func discardBuffer(_ id: BufferID) {
         guard let (state, _) = locate(id) else { return }
         state.snapshot.buffers.removeAll { $0.id == id }
+        state.snapshot.layout?.remove(.file(id))
         if state.snapshot.selectedBufferID == id { state.snapshot.selectedBufferID = state.snapshot.buffers.last?.id }
         if state.snapshot.splitBufferID == id { state.snapshot.splitBufferID = nil }
         schedulePersist()
@@ -280,18 +510,23 @@ final class AppModel {
         current.snapshot.splitBufferID = current.snapshot.splitBufferID == nil ? selectedBufferID : nil; schedulePersist()
     }
     func newUntitledBuffer() { createEntry(name: "untitled-\(UUID().uuidString.prefix(6)).txt", directory: false) }
-    @discardableResult func createEntry(name: String, directory: Bool) -> Task<Void, Never> {
+    @discardableResult func createEntry(name: String, directory: Bool, in parentPath: String? = nil) -> Task<Void, Never> {
+        guard hasWorkspace else { folderImporterVisible = true; return Task {} }
         let state = current
         return Task {
             do {
                 try TextFiles.validateName(name)
-                let path = (state.snapshot.directoryPath as NSString).appendingPathComponent(name)
+                let path = ((parentPath ?? state.snapshot.directoryPath) as NSString).appendingPathComponent(name)
                 if state.snapshot.workspace.isRemote {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
                     try await remote.create(path, directory: directory)
                 } else if directory { try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false) }
                 else { try Data().write(to: URL(fileURLWithPath: path), options: .withoutOverwriting) }
                 if !directory { addBuffer(path: path, text: "", to: state) }
+                state.explorer.selectedPath = path
+                if parentPath != nil {
+                    await state.explorer.reveal(FileEntry(name: name, path: path, isDirectory: false))
+                }
                 if state.id == selectedWorkspaceID { refreshFiles() }
             } catch { report(error) }
         }
@@ -307,6 +542,7 @@ final class AppModel {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
                     try await remote.rename(entry.path, to: destination)
                 } else { try FileManager.default.moveItem(atPath: entry.path, toPath: destination) }
+                state.explorer.didRename(from: entry.path, to: destination)
                 for index in state.snapshot.buffers.indices {
                     let path = state.snapshot.buffers[index].path
                     if path == entry.path || path.hasPrefix(entry.path + "/") {
@@ -316,6 +552,77 @@ final class AppModel {
                     }
                 }
                 if state.id == selectedWorkspaceID { refreshFiles() }; schedulePersist()
+            } catch { report(error) }
+        }
+    }
+    func canMoveFile(_ drag: ExplorerFileDrag, to folder: String) -> Bool {
+        guard drag.workspaceID == selectedWorkspaceID, hasWorkspace else { return false }
+        let root = current.snapshot.rootPath
+        func within(_ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
+        guard within(drag.path), within(folder), drag.path != root,
+              (drag.path as NSString).deletingLastPathComponent != folder,
+              !drag.isDirectory || (folder != drag.path && !folder.hasPrefix(drag.path + "/")) else { return false }
+        return folder == root || current.explorer.children.values.joined().contains { $0.path == folder && $0.isDirectory }
+            || current.explorer.results.contains { $0.path == folder && $0.isDirectory }
+    }
+    @discardableResult func moveFile(_ drag: ExplorerFileDrag, to folder: String) -> Task<Void, Never> {
+        guard canMoveFile(drag, to: folder) else { return Task {} }
+        let state = current
+        return Task {
+            let affected = state.snapshot.buffers.filter { $0.path == drag.path || $0.path.hasPrefix(drag.path + "/") }
+            guard !affected.contains(where: { saving.contains($0.id) }),
+                  !state.movingPaths.contains(where: { drag.path == $0 || drag.path.hasPrefix($0 + "/") || $0.hasPrefix(drag.path + "/") }) else {
+                errorMessage = "Wait for the current save or move to finish."; return
+            }
+            state.movingPaths.insert(drag.path)
+            defer { state.movingPaths.remove(drag.path) }
+            do {
+                let source: String, parent: String, root: String
+                if state.snapshot.workspace.isRemote {
+                    guard let remote = state.remote else { throw FileFailure.disconnected }
+                    root = state.snapshot.rootPath
+                    parent = try await remote.realPath(folder)
+                    source = (try await remote.realPath((drag.path as NSString).deletingLastPathComponent) as NSString).appendingPathComponent(drag.name)
+                } else {
+                    root = URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
+                    parent = URL(fileURLWithPath: folder).resolvingSymlinksInPath().path
+                    source = URL(fileURLWithPath: drag.path).deletingLastPathComponent().resolvingSymlinksInPath()
+                        .appendingPathComponent(drag.name).path
+                    guard try URL(fileURLWithPath: parent).resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+                        throw CocoaError(.fileWriteInvalidFileName)
+                    }
+                }
+                func within(_ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
+                guard within(source), within(parent), source != root,
+                      !drag.isDirectory || (parent != source && !parent.hasPrefix(source + "/")) else {
+                    throw CommandError("Files can only be moved within this vault, outside their own subfolders.")
+                }
+                let destination = (parent as NSString).appendingPathComponent(drag.name)
+                guard destination != source else { return }
+                if state.snapshot.workspace.isRemote {
+                    guard let remote = state.remote else { throw FileFailure.disconnected }
+                    guard try await !remote.list(parent).contains(where: { $0.name == drag.name }) else { throw CocoaError(.fileWriteFileExists) }
+                    try await remote.rename(source, to: destination)
+                } else {
+                    guard (try? FileManager.default.attributesOfItem(atPath: destination)) == nil else { throw CocoaError(.fileWriteFileExists) }
+                    try FileManager.default.moveItem(atPath: source, toPath: destination)
+                }
+                state.explorer.didRename(from: drag.path, to: destination)
+                for index in state.snapshot.buffers.indices {
+                    let path = state.snapshot.buffers[index].path
+                    if path == drag.path || path.hasPrefix(drag.path + "/") {
+                        state.snapshot.buffers[index].path = destination + path.dropFirst(drag.path.count)
+                    }
+                }
+                let working = state.snapshot.directoryPath
+                if working == drag.path || working.hasPrefix(drag.path + "/") {
+                    state.snapshot.directoryPath = destination + working.dropFirst(drag.path.count)
+                }
+                state.explorer.selectedPath = destination
+                await state.explorer.reveal(.init(name: drag.name, path: destination, isDirectory: false))
+                if selectedWorkspaceID == state.id { refreshFiles() }
+                statusMessage = "Moved \(drag.name) to \(state.explorer.relativePath(parent))"
+                schedulePersist()
             } catch { report(error) }
         }
     }
@@ -347,7 +654,7 @@ final class AppModel {
     func connectCommand(_ line: String, password: String = "") async throws {
         let command = try SSHCommand(line)
         #if os(macOS)
-        let directory = current.snapshot.workspace.isRemote ? vaultURL.path : current.snapshot.directoryPath
+        let directory = !hasWorkspace || current.snapshot.workspace.isRemote ? vaultURL.path : current.snapshot.directoryPath
         let spec = try await bridge().prepare(command.arguments, directory: directory)
         beginSystemSSH(spec, imported: false)
         #else
@@ -386,14 +693,19 @@ final class AppModel {
             }
             state = existing; disconnect(state)
         } else {
-            state = WorkspaceState(.init(workspace: Workspace(name: host.name, kind: .remote(hostID: host.id, path: "~"), connection: .connecting), rootPath: "~"))
+            // Resolve the server's starting directory only for a new workspace.
+            // Existing project selections survive reconnect; later terminal cd is independent.
+            state = WorkspaceState(.init(workspace: Workspace(name: host.name, kind: .remote(hostID: host.id, path: "."), connection: .connecting), rootPath: "."))
             states.append(state)
         }
         state.systemSSH = spec; state.snapshot.workspace.name = host.name
         state.snapshot.workspace.connection = .connecting
         if !imported {
             selectWorkspace(state.id); terminalVisible = true; compactSurface = .terminal
-            if state.snapshot.selectedTerminalID == nil { let id = UUID(); state.snapshot.terminalIDs.append(id); state.snapshot.selectedTerminalID = id }
+            if state.snapshot.selectedTerminalID == nil {
+                let id = UUID(); state.snapshot.terminalIDs.append(id); state.snapshot.selectedTerminalID = id
+                state.snapshot.layout?.open(.terminal(id))
+            }
             terminal(state.snapshot.selectedTerminalID!, in: state).start()
         }
         state.connectionTask = Task { [weak self, weak state] in
@@ -407,9 +719,11 @@ final class AppModel {
                 }
                 let connection = RemoteConnection(); try connection.attach(spec)
                 state.remote = connection
-                let root = try await connection.realPath("~")
+                let root = try await connection.realPath(state.snapshot.rootPath)
                 try Task.checkCancellation()
+                guard state.remote === connection else { return }
                 state.snapshot.rootPath = root; state.snapshot.directoryPath = root
+                state.snapshot.workspace.kind = .remote(hostID: host.id, path: root)
                 state.snapshot.workspace.connection = .connected
                 if selectedWorkspaceID == state.id { refreshFiles() }
                 statusMessage = "SSH workspace added: \(host.userAtHost)"; schedulePersist()
@@ -473,7 +787,7 @@ final class AppModel {
                         self?.statusMessage = "Connection closed — reconnect to start a new shell."
                     }
                 }
-                let root = try await connection.realPath(host.remotePath)
+                let root = try await connection.realPath(state.snapshot.rootPath)
                 try Task.checkCancellation()
                 guard state.remote === connection else { await connection.disconnect(); return }
                 state.snapshot.rootPath = root; state.snapshot.directoryPath = root
@@ -500,6 +814,7 @@ final class AppModel {
     }
     func disconnectCurrent() { disconnect(current) }
     private func disconnect(_ state: WorkspaceState) {
+        state.explorer.stop()
         state.connectionTask?.cancel(); state.connectionTask = nil
         let connection = state.remote; state.remote = nil; state.stopTerminals()
         state.snapshot.workspace.connection = .disconnected
@@ -523,12 +838,17 @@ final class AppModel {
         return session
     }
     func newTerminal() {
+        guard hasWorkspace else { folderImporterVisible = true; return }
+        ensureLayout(current)
         let id = UUID(); current.snapshot.terminalIDs.append(id); current.snapshot.selectedTerminalID = id
+        current.snapshot.layout?.open(.terminal(id)); current.maximizedPaneID = nil
         terminalVisible = true; schedulePersist()
     }
     func closeTerminal(_ id: UUID) {
-        current.terminals[id]?.stop(); current.terminals[id] = nil; current.snapshot.terminalIDs.removeAll { $0 == id }
-        if current.snapshot.selectedTerminalID == id { current.snapshot.selectedTerminalID = current.snapshot.terminalIDs.last }
+        guard let state = states.first(where: { $0.snapshot.terminalIDs.contains(id) }) else { return }
+        state.terminals[id]?.stop(); state.terminals[id] = nil; state.snapshot.terminalIDs.removeAll { $0 == id }
+        state.snapshot.layout?.remove(.terminal(id))
+        if state.snapshot.selectedTerminalID == id { state.snapshot.selectedTerminalID = state.snapshot.terminalIDs.last }
         schedulePersist()
     }
     func schedulePersist() {
@@ -539,7 +859,7 @@ final class AppModel {
         }
     }
     func persist() {
-        guard !states.isEmpty, persistenceAvailable else { return }
+        guard persistenceAvailable else { return }
         do { try TextFiles.saveSession(.init(hosts: hosts, workspaces: states.map(\.snapshot),
             selectedWorkspaceID: selectedWorkspaceID, settings: settings), to: sessionURL) }
         catch { report(error) }
@@ -558,6 +878,7 @@ final class AppModel {
         persistenceTask?.cancel()
         persist()
         for state in states {
+            state.explorer.stop()
             state.stopTerminals(); state.connectionTask?.cancel()
             let remote = state.remote; Task { await remote?.disconnect() }
             state.accessURL?.stopAccessingSecurityScopedResource()

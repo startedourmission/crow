@@ -15,6 +15,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     public var terminalIDs: [UUID]
     public var selectedTerminalID: UUID?
     public var terminalSplit = false
+    public var layout: WorkspaceLayout?
 
     public init(workspace: Workspace, rootPath: String, bookmark: Data? = nil) {
         self.workspace = workspace
@@ -42,6 +43,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case workspace, rootPath, directoryPath, bookmark, buffers, selectedBufferID, splitBufferID
         case terminalIDs, selectedTerminalID, terminalSplit
+        case layout
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -55,6 +57,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
         terminalIDs = try values.decodeIfPresent([UUID].self, forKey: .terminalIDs) ?? [UUID()]
         selectedTerminalID = try values.decodeIfPresent(UUID.self, forKey: .selectedTerminalID) ?? terminalIDs.first
         terminalSplit = try values.decodeIfPresent(Bool.self, forKey: .terminalSplit) ?? false
+        layout = try values.decodeIfPresent(WorkspaceLayout.self, forKey: .layout)
     }
 }
 

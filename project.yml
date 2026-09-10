@@ -30,6 +30,13 @@ targetTemplates:
     type: application
     sources:
       - path: App
+        excludes:
+          - Editor/markdown-editor.js
+          - Editor/MarkdownEditor-LICENSES.txt
+      - path: App/Editor/markdown-editor.js
+        buildPhase: resources
+      - path: App/Editor/MarkdownEditor-LICENSES.txt
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chajinwoo.crow

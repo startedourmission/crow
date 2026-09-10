@@ -1,0 +1,15 @@
+{
+  "name": "crow-markdown-editor",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": {
+    "@tiptap/core": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3",
+    "@tiptap/markdown": "3.31.3",
+    "@tiptap/extension-table": "3.31.3",
+    "@tiptap/extension-task-list": "3.31.3",
+    "@tiptap/extension-task-item": "3.31.3"
+  },
+  "devDependencies": { "esbuild": "0.25.12" }
+}
