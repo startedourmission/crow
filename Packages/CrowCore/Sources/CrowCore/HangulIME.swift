@@ -52,6 +52,27 @@ public enum HangulIME: Sendable {
 
     // MARK: - Hangul
 
+    /// Repairs a separately committed vowel after an open Hangul syllable.
+    /// This is an iOS input fallback, not normalization of pasted text.
+    public static func composeCompoundVowel(base: Character, following: Character) -> Character? {
+        guard isPrecomposedHangul(base) else { return nil }
+        let syllable = decompose(base)
+        guard syllable.final == nil else { return nil }
+
+        let medial: Int
+        switch (syllable.medial, following) {
+        case (8, "ㅏ"): medial = 9   // ㅗ + ㅏ = ㅘ
+        case (8, "ㅐ"): medial = 10  // ㅗ + ㅐ = ㅙ
+        case (8, "ㅣ"): medial = 11  // ㅗ + ㅣ = ㅚ
+        case (13, "ㅓ"): medial = 14 // ㅜ + ㅓ = ㅝ
+        case (13, "ㅔ"): medial = 15 // ㅜ + ㅔ = ㅞ
+        case (13, "ㅣ"): medial = 16 // ㅜ + ㅣ = ㅟ
+        case (18, "ㅣ"): medial = 19 // ㅡ + ㅣ = ㅢ
+        default: return nil
+        }
+        return compose(initial: syllable.initial, medial: medial, final: nil)
+    }
+
     static func resyllabify(previous: String, incoming: String) -> (Int, String)? {
         guard let prevLast = previous.last, isPrecomposedHangul(prevLast),
               let nextFirst = incoming.first, isPrecomposedHangul(nextFirst)

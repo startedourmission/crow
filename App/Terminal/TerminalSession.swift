@@ -46,7 +46,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             view = CrowLocalTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 300))
         } else { view = SwiftTerm.TerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 300)) }
         #else
-        view = SwiftTerm.TerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 300))
+        view = CrowIOSTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 300))
         #endif
         super.init()
         view.optionAsMetaKey = false
@@ -193,6 +193,34 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     // Remote escape sequences must not read the system clipboard silently.
     func clipboardRead(source: SwiftTerm.TerminalView) -> Data? { nil }
 }
+
+#if os(iOS)
+/// SwiftTerm repairs separately committed Korean finals, but not compound vowels.
+/// Use its input buffer so UIKit's context and the PTY receive the same correction.
+class CrowIOSTerminalView: SwiftTerm.TerminalView {
+    override func insertText(_ text: String) {
+        guard textInputMode?.primaryLanguage?.hasPrefix("ko") == true,
+              !controlModifier, !metaModifier,
+              (inputAccessoryView as? TerminalAccessory)?.controlModifier != true,
+              markedTextRange == nil,
+              let selection = selectedTextRange, selection.isEmpty,
+              compare(selection.end, to: endOfDocument) == .orderedSame,
+              text.count == 1, let vowel = text.first,
+              let previous = position(from: selection.start, offset: -1),
+              let range = textRange(from: previous, to: selection.start),
+              let base = self.text(in: range)?.last,
+              let composed = HangulIME.composeCompoundVowel(base: base, following: vowel) else {
+            super.insertText(text)
+            return
+        }
+
+        // The base has already been committed: replace one character, not two
+        // terminal cells. Super also updates UIKit's text and selection ranges.
+        super.deleteBackward()
+        super.insertText(String(composed))
+    }
+}
+#endif
 
 #if os(macOS)
 private final class CrowLocalTerminalView: LocalProcessTerminalView {

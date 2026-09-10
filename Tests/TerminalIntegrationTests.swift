@@ -81,3 +81,109 @@ final class TerminalIntegrationTests: XCTestCase {
     }
 }
 #endif
+
+#if os(iOS)
+import UIKit
+
+private final class KoreanInputMode: UITextInputMode {
+    override var primaryLanguage: String? { "ko-KR" }
+}
+
+private final class KoreanTerminalView: CrowIOSTerminalView {
+    var koreanEnabled = true
+    override var textInputMode: UITextInputMode? { koreanEnabled ? KoreanInputMode() : nil }
+}
+
+final class IOSTerminalIntegrationTests: XCTestCase {
+    @MainActor
+    func testCompoundVowelsUpdatePTYAndUIKitContext() {
+        for (base, vowel, expected) in [
+            ("도", "ㅏ", "돠"), ("도", "ㅐ", "돼"), ("도", "ㅣ", "되"),
+            ("두", "ㅓ", "둬"), ("두", "ㅔ", "뒈"), ("두", "ㅣ", "뒤"), ("으", "ㅣ", "의"),
+        ] {
+            let view = KoreanTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 400))
+            let coordinator = TerminalCoordinator()
+            view.terminalDelegate = coordinator
+            var sent: [UInt8] = []
+            coordinator.onBytes = { sent += $0 }
+            view.insertText("앞😀" + base)
+            view.insertText(vowel)
+            XCTAssertEqual(sent, Array(("앞😀" + base).utf8) + [0x7f] + Array(expected.utf8))
+            XCTAssertEqual(context(view), "앞😀" + expected)
+            XCTAssertEqual(view.offset(from: view.beginningOfDocument, to: view.selectedTextRange!.end), 4)
+            view.deleteBackward()
+            XCTAssertEqual(context(view), "앞😀")
+            XCTAssertEqual(sent.last, 0x7f)
+        }
+    }
+
+    @MainActor
+    func testMarkedCompoundVowelOnlySendsOnCommit() {
+        let view = KoreanTerminalView(frame: .zero)
+        let coordinator = TerminalCoordinator()
+        view.terminalDelegate = coordinator
+        var sent: [UInt8] = []
+        coordinator.onBytes = { sent += $0 }
+        for text in ["ㄷ", "두", "뒈"] {
+            view.setMarkedText(text, selectedRange: NSRange(location: 1, length: 0))
+            XCTAssertTrue(sent.isEmpty)
+        }
+        view.unmarkText()
+        XCTAssertEqual(sent, Array("뒈".utf8))
+        XCTAssertEqual(context(view), "뒈")
+    }
+
+    @MainActor
+    func testPasteSpacesAndKeyboardSwitchDoNotMerge() {
+        let view = KoreanTerminalView(frame: .zero)
+        view.insertText("두ㅔ")
+        XCTAssertEqual(context(view), "두ㅔ")
+        view.insertText(" 도 ")
+        view.insertText("ㅣ")
+        XCTAssertEqual(context(view), "두ㅔ 도 ㅣ")
+        view.insertText(" 도")
+        view.koreanEnabled = false
+        view.insertText("ㅣ")
+        XCTAssertEqual(context(view), "두ㅔ 도 ㅣ 도ㅣ")
+    }
+
+    @MainActor
+    func testCompoundVowelStillAcceptsFinalAndResyllabifies() {
+        let view = KoreanTerminalView(frame: .zero)
+        view.insertText("도")
+        view.insertText("ㅣ")
+        view.insertText("ㄴ")
+        XCTAssertEqual(context(view), "된")
+        view.insertText("ㅏ")
+        XCTAssertEqual(context(view), "되나")
+    }
+
+    @MainActor
+    func testMarkedTextAndSelectedReplacementDoNotMergeWithPreviousSyllable() {
+        let view = KoreanTerminalView(frame: .zero)
+        view.insertText("도")
+        view.setMarkedText("ㅣ", selectedRange: NSRange(location: 1, length: 0))
+        view.insertText("ㅣ")
+        XCTAssertEqual(context(view), "도ㅣ")
+
+        let start = view.position(from: view.beginningOfDocument, offset: 1)!
+        view.selectedTextRange = view.textRange(from: start, to: view.endOfDocument)
+        view.insertText("ㅐ")
+        XCTAssertEqual(context(view), "도ㅐ")
+    }
+
+    @MainActor
+    func testSessionUsesIOSTerminalView() {
+        let session = TerminalSession(id: UUID(),
+            workspace: Workspace(name: "Local", kind: .local, connection: .local),
+            directory: "/tmp", remote: nil, fontSize: 16)
+        XCTAssertTrue(session.view is CrowIOSTerminalView)
+    }
+
+    @MainActor
+    private func context(_ view: TerminalView) -> String? {
+        guard let range = view.textRange(from: view.beginningOfDocument, to: view.endOfDocument) else { return nil }
+        return view.text(in: range)
+    }
+}
+#endif

@@ -2,6 +2,31 @@ import XCTest
 @testable import CrowCore
 
 final class HangulIMETests: XCTestCase {
+    func testCompoundVowelsForEveryInitial() {
+        let cases: [(Int, Character, Int)] = [
+            (8, "ㅏ", 9), (8, "ㅐ", 10), (8, "ㅣ", 11),
+            (13, "ㅓ", 14), (13, "ㅔ", 15), (13, "ㅣ", 16), (18, "ㅣ", 19),
+        ]
+        for initial in 0..<19 {
+            for (medial, vowel, expectedMedial) in cases {
+                let base = HangulIME.compose(initial: initial, medial: medial, final: nil)
+                XCTAssertEqual(HangulIME.composeCompoundVowel(base: base, following: vowel),
+                               HangulIME.compose(initial: initial, medial: expectedMedial, final: nil))
+            }
+        }
+        XCTAssertEqual(HangulIME.composeCompoundVowel(base: "두", following: "ㅔ"), "뒈")
+        XCTAssertEqual(HangulIME.composeCompoundVowel(base: "도", following: "ㅣ"), "되")
+    }
+
+    func testCompoundVowelsRejectUnrelatedInput() {
+        for (base, next): (Character, Character) in [
+            ("둔", "ㅔ"), ("돈", "ㅣ"), ("가", "ㅣ"), ("a", "ㅣ"),
+            ("ㅗ", "ㅣ"), ("도", "a"), ("도", "ㄴ"), ("되", "ㅣ"), ("😀", "ㅣ"),
+        ] {
+            XCTAssertNil(HangulIME.composeCompoundVowel(base: base, following: next))
+        }
+    }
+
     func testMarkedTextNeverProducesPTYBytes() {
         XCTAssertTrue(HangulIME.ptyActionsForMarkedText("ㄱ").isEmpty)
         XCTAssertTrue(HangulIME.ptyActionsForMarkedText("가").isEmpty)
