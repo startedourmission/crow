@@ -4,6 +4,9 @@ import SwiftUI
 #if os(macOS)
 struct SidebarTopBar: View {
     @Environment(AppModel.self) private var model
+    var height: CGFloat = 40
+    // Traffic-light clearance, horizontal padding, and the reopen button.
+    static let collapsedWidth: CGFloat = 36 + 24 + 28
 
     var body: some View {
         HStack(spacing: 8) {
@@ -22,7 +25,7 @@ struct SidebarTopBar: View {
         .crowForeground(CrowTheme.textDim)
         .padding(.horizontal, 12)
         .padding(.leading, 36) // Leave room for the native traffic lights.
-        .frame(height: 40)
+        .frame(height: height)
         .background(CrowTheme.bg1)
         .windowDragBackground()
     }
@@ -322,6 +325,7 @@ struct SidebarView: View {
 
     private var hostsList: some View {
         List(model.hosts) { (host: SSHHost) in
+            VStack(alignment: .leading, spacing: 4) {
             Button {
                 model.connect(host)
             } label: {
@@ -340,6 +344,10 @@ struct SidebarView: View {
                 Button("Connect") { model.connect(host) }
                 Button("Advanced…") { model.editHost(host) }
                 Button("Remove Host…", role: .destructive) { removeHost = host }
+            }
+            #if os(macOS)
+            ReverseSSHHostToggle(host: host)
+            #endif
             }
             .listRowBackground(Color.clear)
             .windowDragExcluded()
@@ -363,6 +371,43 @@ struct SidebarView: View {
         }
     }
 }
+
+#if os(macOS)
+private struct ReverseSSHHostToggle: View {
+    @Environment(AppModel.self) private var model
+    let host: SSHHost
+    private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Toggle("Reverse SSH", isOn: Binding(
+                get: { session?.isEnabled ?? false },
+                set: { model.setReverseSSH($0, for: host) }))
+                .toggleStyle(.switch).controlSize(.mini)
+                .font(.system(size: 11))
+                .help("Allow this server's agents to run commands and edit files on this Mac as your account. Off disconnects their sessions.")
+                .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
+            if let session {
+                if let command = session.connectCommand {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(command, forType: .string)
+                    } label: {
+                        Label("Copy Client Command", systemImage: "doc.on.doc")
+                            .font(.system(size: 11))
+                    }.buttonStyle(CrowButtonStyle())
+                        .help("Run this command on the SSH server. Append a command to execute it on this Mac.")
+                } else if session.status != "Off" {
+                    Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.bottom, 5)
+        .windowDragExcluded()
+    }
+}
+#endif
 
 struct RemoteProjectFolderPicker: View {
     @Environment(AppModel.self) private var model

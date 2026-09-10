@@ -72,10 +72,12 @@ import WebKit
             try require(pixels() == before, "Hover did not reset: \(label)")
         }
         func clickTopButton(search: Bool) async throws {
+            let topButtonInset: CGFloat = search ? 61 : (model.sidebarVisible ? 20 : 18)
             let buttons = views(hosting, WindowMoveAnchorView.self).filter { anchor in
                 let rect = anchor.convert(anchor.activeRect, to: nil)
                 return anchor.excludesMovement && rect.width == 28 && rect.height == 28 &&
-                    abs(rect.midY - (hosting.bounds.height - (search ? 61 : 20))) < 1
+                    (search || model.sidebarVisible || rect.maxX < 150) &&
+                    abs(rect.midY - (hosting.bounds.height - topButtonInset)) < 1
             }.sorted { $0.convert($0.activeRect, to: nil).midX < $1.convert($1.activeRect, to: nil).midX }
             try require(buttons.count == (search ? 3 : 1), "Search must be right-aligned beside New Folder; only the sidebar toggle belongs in the top row")
             for button in buttons {
@@ -85,6 +87,10 @@ import WebKit
             let rect = button.convert(button.activeRect, to: nil)
             if !model.sidebarVisible && !search {
                 try require(rect.maxX < 150, "Collapsed sidebar reopen button is not on the left")
+                for source in views(hosting, WorkspaceTabDragView.self) where source.payload != nil {
+                    let tabRect = source.convert(source.bounds, to: nil)
+                    try require(!tabRect.intersects(rect), "Sidebar reopen button overlaps a tab")
+                }
             }
             let point = NSPoint(x: rect.midX, y: rect.midY)
             let requests = window.nativeDragRequests
@@ -98,7 +104,7 @@ import WebKit
             guard let surface = hosting.superview?.subviews.compactMap({ $0 as? WindowMoveSurface }).first else {
                 try require(false, "Missing movement surface after \(label)"); return
             }
-            let gap = NSPoint(x: hosting.bounds.width - 100, y: hosting.bounds.height - (model.sidebarVisible ? 18 : 58))
+            let gap = NSPoint(x: hosting.bounds.width - 100, y: hosting.bounds.height - 18)
             try require(surface.containsRegion(surface.convert(gap, from: nil)), "The empty top tab bar cannot move the window (\(label))")
             try require(WorkspaceDragRouter.shared.source(at: gap, in: window) == nil, "Tab router intercepted blank header")
             let requests = window.nativeDragRequests
@@ -169,12 +175,37 @@ import WebKit
         window.setContentSize(NSSize(width: 1280, height: 800))
         try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
         try verify("resize")
+        func tabTopInsets() -> [String: CGFloat] {
+            Dictionary(uniqueKeysWithValues: views(hosting, WorkspaceTabDragView.self).compactMap { source in
+                guard let payload = source.payload else { return nil }
+                return ("\(payload.paneID)-\(payload.tab.key)", hosting.bounds.height - source.convert(source.bounds, to: nil).maxY)
+            })
+        }
+        let expandedTabInsets = tabTopInsets()
+        try require(!expandedTabInsets.isEmpty, "Missing tabs for sidebar alignment check")
         try await clickTopButton(search: false)
         try require(!model.sidebarVisible, "Sidebar toggle did not collapse the panel")
+        try require(tabTopInsets() == expandedTabInsets, "Closing the sidebar shifted the tabs vertically")
         try verify("sidebar hidden")
         try await clickTopButton(search: false)
         try require(model.sidebarVisible, "Sidebar toggle did not restore the panel")
+        try require(tabTopInsets() == expandedTabInsets, "Opening the sidebar shifted the tabs vertically")
         try verify("sidebar restored")
+        if let layout = model.current.snapshot.layout, let pane = layout.activePane, let tab = pane.selected {
+            for placement in [PanePlacement.right, .bottom] {
+                model.splitTab(tab, in: pane.id, placement: placement)
+                try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+                let splitInsets = tabTopInsets()
+                try require(splitInsets.count == 2, "Missing split tabs for sidebar alignment check")
+                try await clickTopButton(search: false)
+                try require(tabTopInsets() == splitInsets, "Closing the sidebar shifted split tabs (\(placement))")
+                try await clickTopButton(search: false)
+                try require(tabTopInsets() == splitInsets, "Opening the sidebar shifted split tabs (\(placement))")
+                print("PASS sidebar tab alignment: \(placement) split, reopen control does not overlap tabs")
+                model.current.snapshot.layout = layout
+                try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+            }
+        }
         if let source = views(hosting, WorkspaceTabDragView.self).first(where: { $0.payload != nil }),
            let tab = views(hosting, WindowMoveAnchorView.self).first(where: { anchor in
                anchor.excludesMovement && anchor.activeRect.height == 36 &&
@@ -189,6 +220,7 @@ import WebKit
             try require(window.frame.origin == origin, "Tab close click moved the window")
             try verify("last tab closed")
         }
+        if CommandLine.arguments.contains("--sidebar-layout-only") { return }
         let noteURL = root.appendingPathComponent("outline.md")
         let note = "# First\n\n" + String(repeating: "paragraph\n\n", count: 70) + "## 두번째\n\nend\n"
         try Data(note.utf8).write(to: noteURL)

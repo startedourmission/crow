@@ -19,4 +19,4 @@ swiftc -parse-as-library -target arm64-apple-macos15 -I "$crow_products" \
   "$crow_root/Tools/NativeSmoke/FullWindowSmoke.swift" -o "$crow_app/MacOS/Smoke"
 cp "$crow_root/Tools/NativeSmoke/Info.plist" "$crow_app/Info.plist"
 cp "$crow_root/App/Editor/markdown-editor.js" "$crow_app/Resources/markdown-editor.js"
-"$crow_app/MacOS/Smoke"
+"$crow_app/MacOS/Smoke" "${@:2}"

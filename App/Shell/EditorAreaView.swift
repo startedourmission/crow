@@ -190,7 +190,7 @@ struct WorkspaceAreaView: View {
             }
             let root = model.current.maximizedPaneID.flatMap { id in panes.contains { $0.id == id } ? PaneNode.pane(id) : nil }
                 ?? saved.root?.retaining(Set(panes.map(\.id)))
-            if let root { WorkspaceNodeView(node: root, panes: panes) }
+            if let root { WorkspaceNodeView(node: root, panes: panes, isTopLeading: true) }
             else { empty }
         } else { empty }
     }
@@ -208,14 +208,17 @@ private struct WorkspaceNodeView: View {
     @Environment(AppModel.self) private var model
     let node: PaneNode
     let panes: [WorkspacePane]
+    let isTopLeading: Bool
     var body: AnyView {
         switch node {
         case .pane(let id):
-            if let pane = panes.first(where: { $0.id == id }) { return AnyView(WorkspacePaneView(pane: pane).id(id)) }
+            if let pane = panes.first(where: { $0.id == id }) {
+                return AnyView(WorkspacePaneView(pane: pane, isTopLeading: isTopLeading).id(id))
+            }
             return AnyView(EmptyView())
         case .split(let id, let axis, let fraction, let first, let second):
             return AnyView(WorkspaceSplitView(id: id, axis: axis, fraction: fraction,
-                first: first, second: second, panes: panes))
+                first: first, second: second, panes: panes, isTopLeading: isTopLeading))
         }
     }
 }
@@ -228,6 +231,7 @@ private struct WorkspaceSplitView: View {
     let first: PaneNode
     let second: PaneNode
     let panes: [WorkspacePane]
+    let isTopLeading: Bool
     @State private var dragStart: CGFloat?
     @State private var liveSize: CGFloat?
 
@@ -245,15 +249,15 @@ private struct WorkspaceSplitView: View {
             })
             if axis == .horizontal {
                 HStack(spacing: 0) {
-                    WorkspaceNodeView(node: first, panes: panes).frame(width: size)
+                    WorkspaceNodeView(node: first, panes: panes, isTopLeading: isTopLeading).frame(width: size)
                     handle
-                    WorkspaceNodeView(node: second, panes: panes).frame(maxWidth: .infinity)
+                    WorkspaceNodeView(node: second, panes: panes, isTopLeading: false).frame(maxWidth: .infinity)
                 }
             } else {
                 VStack(spacing: 0) {
-                    WorkspaceNodeView(node: first, panes: panes).frame(height: size)
+                    WorkspaceNodeView(node: first, panes: panes, isTopLeading: isTopLeading).frame(height: size)
                     handle
-                    WorkspaceNodeView(node: second, panes: panes).frame(maxHeight: .infinity)
+                    WorkspaceNodeView(node: second, panes: panes, isTopLeading: false).frame(maxHeight: .infinity)
                 }
             }
         }
@@ -265,6 +269,7 @@ private let workspaceTabType = UTType(exportedAs: "dev.chajinwoo.crow.workspace-
 private struct WorkspacePaneView: View {
     @Environment(AppModel.self) private var model
     let pane: WorkspacePane
+    let isTopLeading: Bool
     @State private var dropPlacement: PanePlacement?
 
     var body: some View {
@@ -355,6 +360,10 @@ private struct WorkspacePaneView: View {
             }
             #endif
         }
+        #if os(macOS)
+        // Only the top-left pane shares its header with the collapsed sidebar controls.
+        .padding(.leading, !model.sidebarVisible && isTopLeading ? SidebarTopBar.collapsedWidth : 0)
+        #endif
         .padding(.trailing, 5).frame(height: 36).background(CrowTheme.bg1)
         #if !os(macOS)
         .onDrop(of: [workspaceTabType], delegate: WorkspacePaneDrop(model: model, paneID: pane.id,

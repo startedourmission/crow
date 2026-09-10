@@ -148,14 +148,16 @@ struct RegularWorkspaceView: View {
                     })
                 }
                 VStack(spacing: 0) {
-                    #if os(macOS)
-                    if !model.sidebarVisible {
-                        SidebarTopBar()
-                    }
-                    #endif
                     if !model.hasWorkspace { EmptyWorkspaceView() }
                     else { WorkspaceAreaView() }
                 }
+                #if os(macOS)
+                .overlay(alignment: .topLeading) {
+                    if !model.sidebarVisible {
+                        SidebarTopBar(height: 36).frame(width: SidebarTopBar.collapsedWidth)
+                    }
+                }
+                #endif
                 #if os(macOS)
                 if model.inspectorVisible {
                     ResizeHandle(axis: .horizontal, label: "Resize right sidebar", onDrag: { translation in

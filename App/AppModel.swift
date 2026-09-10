@@ -73,6 +73,7 @@ final class AppModel {
     var credentialRequest: SSHHost?
     var pendingCredentialRequest: SSHHost?
     #if os(macOS)
+    var reverseSSHConnections: [HostID: ReverseSSHSession] = [:]
     @ObservationIgnored private var sshBridge: SystemSSHBridge?
     #endif
     let vaultURL: URL
@@ -706,12 +707,13 @@ final class AppModel {
     }
 
     func editHost(_ host: SSHHost? = nil) { editingHost = host; hostEditorVisible = true }
-    func connectCommand(_ line: String, password: String = "") async throws {
+    func connectCommand(_ line: String, password: String = "", preserveReverseSSH: Bool = false) async throws {
         let command = try SSHCommand(line)
         #if os(macOS)
         let directory = !hasWorkspace || current.snapshot.workspace.isRemote ? vaultURL.path : current.snapshot.directoryPath
         let spec = try await bridge().prepare(command.arguments, directory: directory)
-        beginSystemSSH(spec, imported: false)
+        try Task.checkCancellation()
+        beginSystemSSH(spec, imported: false, preserveReverseSSH: preserveReverseSSH)
         #else
         let (parsed, identity) = try command.portableHost(defaultUsername: "")
         var host = hosts.first { $0.hostname == parsed.hostname && $0.port == parsed.port && $0.username == parsed.username } ?? parsed
@@ -735,7 +737,7 @@ final class AppModel {
         sshBridge = value; return value
     }
 
-    private func beginSystemSSH(_ proposed: SystemSSHSpec, imported: Bool) {
+    private func beginSystemSSH(_ proposed: SystemSSHSpec, imported: Bool, preserveReverseSSH: Bool = false) {
         var host = proposed.host
         if let saved = hosts.first(where: { $0.hostname == host.hostname && $0.port == host.port && $0.username == host.username }) { host.id = saved.id }
         let spec = SystemSSHSpec(host: host, socket: proposed.socket, arguments: proposed.arguments, directory: proposed.directory)
@@ -746,7 +748,7 @@ final class AppModel {
                 if !imported { selectWorkspace(existing.id); terminalVisible = true; compactSurface = .terminal }
                 return
             }
-            state = existing; disconnect(state)
+            state = existing; disconnect(state, stopReverseSSH: !preserveReverseSSH)
         } else {
             // Resolve the server's starting directory only for a new workspace.
             // Existing project selections survive reconnect; later terminal cd is independent.
@@ -802,6 +804,9 @@ final class AppModel {
     }
     func removeHost(_ host: SSHHost) {
         do {
+            #if os(macOS)
+            reverseSSHConnections.removeValue(forKey: host.id)?.stop()
+            #endif
             try SecureStore.remove(host.id.rawValue.uuidString); hosts.removeAll { $0.id == host.id }
             for state in states {
                 if case .remote(let id, _) = state.snapshot.workspace.kind, id == host.id { disconnect(state) }
@@ -868,7 +873,38 @@ final class AppModel {
         disconnect(current); connect(host)
     }
     func disconnectCurrent() { disconnect(current) }
-    private func disconnect(_ state: WorkspaceState) {
+    #if os(macOS)
+    func setReverseSSH(_ enabled: Bool, for host: SSHHost) {
+        if !enabled { reverseSSHConnections[host.id]?.stop(); return }
+        let session = reverseSSHConnections[host.id] ?? ReverseSSHSession()
+        reverseSSHConnections[host.id] = session
+        session.start { [weak self] in
+            guard let self else { throw CancellationError() }
+            @MainActor func state() -> WorkspaceState? {
+                self.states.first { if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false }
+            }
+            if let existing = state(), existing.remote?.isConnected == true, let spec = existing.systemSSH { return spec }
+            guard let arguments = host.commandArguments else {
+                throw CommandError("Connect this host with an SSH command once to enable Reverse SSH.")
+            }
+            try await connectCommand("ssh " + arguments.map(SystemSSHBridge.quote).joined(separator: " "), preserveReverseSSH: true)
+            sidebarPane = .hosts
+            for _ in 0..<480 {
+                try Task.checkCancellation()
+                if let workspace = state() {
+                    if case .failed(let error) = workspace.snapshot.workspace.connection { throw CommandError(error) }
+                    if workspace.snapshot.workspace.connection == .connected, let spec = workspace.systemSSH { return spec }
+                }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            throw CommandError("Finish SSH authentication in the terminal, then enable Reverse SSH again.")
+        }
+    }
+    #endif
+    private func disconnect(_ state: WorkspaceState, stopReverseSSH: Bool = true) {
+        #if os(macOS)
+        if stopReverseSSH, case .remote(let id, _) = state.snapshot.workspace.kind { reverseSSHConnections[id]?.stop() }
+        #endif
         state.explorer.stop()
         state.connectionTask?.cancel(); state.connectionTask = nil
         let connection = state.remote; state.remote = nil; state.stopTerminals()
@@ -928,6 +964,7 @@ final class AppModel {
     }
     func shutdown() {
         #if os(macOS)
+        reverseSSHConnections.values.forEach { $0.stop() }
         sshBridge?.stop(); sshBridge = nil
         #endif
         persistenceTask?.cancel()

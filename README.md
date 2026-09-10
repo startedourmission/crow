@@ -38,6 +38,7 @@ bash scripts/test-macos-terminal.sh
 - Save/discard/cancel when closing dirty tabs, quit protection on Mac, external-edit conflict checks and explicit overwrite confirmation.
 - SSH without a setup form: on Mac, run `ssh user@host -p 2222` or `ssh config-alias` in Crow's local terminal. After successful authentication a workspace is added automatically, without stealing terminal focus. The + menu also accepts a single SSH command. Mac uses your actual OpenSSH config, agent, keys and known_hosts; any password, passphrase or host verification prompt stays in the terminal. iOS accepts a command and asks for a password only when needed; private-key import remains under Advanced settings and credentials use Keychain.
 - SFTP browsing and editing. Saves upload to a temporary file first, check for conflicting changes, then replace using backup/rename with rollback. SFTP v3 replacement is not atomic; a concurrent server writer can still race a save.
+- macOS SSH host list has a **Reverse SSH** toggle. On creates a private, temporary SSH endpoint on this Mac and forwards a server loopback port to it using the existing OpenSSH connection. Crow prepares a dedicated key, pinned host key and executable connection script on the server; **Copy Client Command** gives agents the command to run (append a quoted shell command to execute it on the Mac). It runs as your Mac account and supports file access. No system Remote Login setting, permanent authorized key or additional daemon installation is needed. Off immediately closes accepted client sockets, then cancels the forwarding and removes the server bundle without closing ordinary SSH. Access is never restored automatically. A disconnected saved OpenSSH host reconnects when enabled; normal SSH authentication may be required. Legacy hosts must first be connected with an SSH command. This control is not available on iPhone/iPad.
 - Session restoration for workspaces, tabs, unsaved drafts, splits and preferences. Drafts are stored locally in the session JSON (mode `0600`), not encrypted by Crow. Running shell processes and SSH connections are not restored; reconnect starts a new shell. On iOS, backgrounding persists drafts and foregrounding checks connection state; this does not keep SSH alive indefinitely in the background.
 
 The macOS target is intentionally **not App Sandbox-enabled** so the local shell can run normal developer commands. Only run commands and connect to servers you trust.
@@ -71,6 +72,18 @@ Restart the app or open a new terminal after updating to activate integration. `
 Disconnecting a workspace closes its UI channels; an SSH command still running in the original local terminal is independent (use `exit` there). Crow-owned master connections use a 60-second idle persistence and are closed on normal app shutdown. Running SSH processes are never restored after restart; the saved command can be used to reconnect. Connection arguments/paths are stored locally with the session, so do not embed passwords or other secrets in command arguments.
 
 ## Test and run
+
+Reverse SSH can be tested against disposable loopback SSH servers without enabling Remote Login:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh Tools/run-reverse-ssh-smoke.sh
+# Also test the app's host-list toggle, automatic connection, and reconnection:
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh Tools/run-reverse-ssh-smoke.sh "$PWD/DerivedData"
+```
+
+The server needs OpenSSH-compatible remote forwarding, an SSH client, a POSIX shell and SFTP file permissions.
+Temporary connection files use a private `.crow-client-…` directory at the SFTP home/starting directory.
+If the server disconnects before cleanup, files may remain there, but the stopped Mac endpoint and its key are revoked.
 
 In Xcode choose `Crow-macOS` → **My Mac** → Run, or `Crow-iOS` → an installed iPhone/iPad simulator → Run. A full Xcode installation and its platform/Metal components are required. Device builds also require your signing team.
 

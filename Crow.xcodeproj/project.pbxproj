@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2127326E92F920E24F7BD0E4 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EE2768DAD149153FD4F579 /* ReverseSSH.swift */; };
+		A916EE2520FDF598DAFAB2F5 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EE2768DAD149153FD4F579 /* ReverseSSH.swift */; };
 		F1ED17000000000000000021 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000020 /* InspectorPanel.swift */; };
 		F1ED17000000000000000022 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000020 /* InspectorPanel.swift */; };
 		F1ED17000000000000000024 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000023 /* GitRepository.swift */; };
@@ -97,6 +99,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		73EE2768DAD149153FD4F579 /* ReverseSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/ReverseSSH.swift; sourceTree = SOURCE_ROOT; };
 		F1ED17000000000000000020 /* InspectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Shell/InspectorPanel.swift; sourceTree = SOURCE_ROOT; };
 		F1ED17000000000000000023 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/GitRepository.swift; sourceTree = SOURCE_ROOT; };
 		F1ED17000000000000000012 /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
@@ -258,6 +261,7 @@
 				3281820F331A8C3742CC86D3 /* RemoteConnection.swift */,
 				BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */,
 				A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */,
+				73EE2768DAD149153FD4F579 /* ReverseSSH.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -444,6 +448,7 @@
 				CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */,
 				167B5EB84C67FE7E6C59CE40 /* SystemSFTP.swift in Sources */,
 				F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */,
+				2127326E92F920E24F7BD0E4 /* ReverseSSH.swift in Sources */,
 				2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */,
 				C4453DC4CAB73D14F3EC557F /* TerminalSession.swift in Sources */,
 				02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */,
@@ -487,6 +492,7 @@
 				F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */,
 				7D1F42A42AE8999100EAE27A /* SystemSFTP.swift in Sources */,
 				3BD61F6E38C75029D729A6EA /* SystemSSH.swift in Sources */,
+				A916EE2520FDF598DAFAB2F5 /* ReverseSSH.swift in Sources */,
 				109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */,
 				E37F3C5FF7993AB42B933D31 /* TerminalSession.swift in Sources */,
 				196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */,

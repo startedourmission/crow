@@ -122,6 +122,39 @@ final class SystemSFTP: @unchecked Sendable {
     }
     func rename(_ source: String, to destination: String) async throws { try await run { try $0.rename(source, destination) } }
 
+    /// Never place a client access key in a world-readable directory or follow an existing file.
+    func installReverseSSHBundle(at path: String, identity: String, knownHosts: String, command: String) async throws {
+        try await run { wire in
+            _ = try wire.request(14, .string(path) + .u32(4) + .u32(0o700))
+            guard let mode = try wire.stat(path).permissions, mode & 0o777 == 0o700 else {
+                throw CommandError("The server must support private directory permissions for Reverse SSH.")
+            }
+            for (name, text, mode): (String, String, UInt32) in [
+                ("identity", identity, 0o600), ("known_hosts", knownHosts, 0o600), ("connect", command, 0o700),
+            ] {
+                let file = path + "/" + name
+                let handle = try wire.open(file, flags: 2 | 8 | 32, permissions: mode)
+                do {
+                    guard let permissions = try wire.stat(file).permissions, permissions & 0o777 == mode else {
+                        throw CommandError("The server must support private file permissions for Reverse SSH.")
+                    }
+                    _ = try wire.request(6, .bytes(handle) + .u64(0) + .bytes(Data(text.utf8)))
+                    try wire.close(handle)
+                } catch { try? wire.close(handle); throw error }
+            }
+        }
+    }
+
+    func removeReverseSSHBundle(at path: String) async throws {
+        guard (path as NSString).lastPathComponent.hasPrefix(".crow-client-") else {
+            throw CommandError("Invalid Reverse SSH connection directory.")
+        }
+        try await run { wire in
+            for name in ["identity", "known_hosts", "connect"] { _ = try? wire.request(13, .string(path + "/" + name)) }
+            _ = try wire.request(15, .string(path))
+        }
+    }
+
     private final class Wire: @unchecked Sendable {
         private let spec: SystemSSHSpec
         private let lifecycle = NSLock()

@@ -38,6 +38,9 @@ This links the existing Debug app library into a separate activation-prohibited
 fixture with a disposable vault. It tests native drag handoff from blank tab-bar
 and sidebar space, tab/file/close-button/editor hit-test exclusions, resizing,
 sidebar hide/show, and closing the last tab. It does not launch or restart the user's Crow.
+Pass `--sidebar-layout-only` after the DerivedData path to run just these window checks,
+including unchanged tab heights when toggling the sidebar in single and split panes,
+and the reopen button remaining clear of the tabs.
 It also clicks summary headings/functions in the right sidebar and checks the native
 insertion caret, scrolling, rendered Markdown selection, and active-file switching.
 Search checks cover prefix completion with a window-local Tab event, find-bar toggling,
@@ -54,3 +57,10 @@ Both fixtures override `performDrag(with:)` to record the request without enteri
 Window Server pointer tracking. They verify routing and that OS window movement is
 enabled, not end-to-end physical dragging, snapping, or macOS keyboard shortcuts.
 Those require a separate manual check; these tests never take over the user's cursor.
+
+`zsh Tools/run-reverse-ssh-smoke.sh` exercises a real loopback OpenSSH master,
+Crow's private per-connection SSH server, generated client credentials, command execution,
+file edits, rejection of unrelated keys, immediate live-session revocation, server-file cleanup,
+rapid toggle cancellation, and master disconnection. Pass the built app's DerivedData directory
+to also exercise the app's host-list toggle through automatic connection and reconnection.
+It uses disposable keys, known-hosts files and directories; system Remote Login is not enabled.
