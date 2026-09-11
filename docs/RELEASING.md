@@ -57,6 +57,14 @@ DMG SHA-256 값으로 `Casks/crow.rb`를 갱신합니다. 두 파일을 커밋�
 README의 최신 DMG 링크는 고정 파일명 `Crow-macOS.dmg`를 사용하므로 새 버전에도
 자동으로 연결됩니다.
 
+Homebrew 6에서는 비공식 tap을 처음 사용할 때 Cask 신뢰 등록이 필요합니다.
+
+```sh
+brew trust --cask startedourmission/crow/crow
+brew tap startedourmission/crow https://github.com/startedourmission/crow
+brew install --cask crow
+```
+
 ## 최종 확인
 
 ```sh

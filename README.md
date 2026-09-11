@@ -30,9 +30,13 @@ Mac, iPhone, iPad에서 로컬 폴더와 SSH 서버를 한곳에서 다루는 �
 Crow 저장소를 처음 한 번만 tap으로 등록한 뒤 설치합니다.
 
 ```sh
+brew trust --cask startedourmission/crow/crow
 brew tap startedourmission/crow https://github.com/startedourmission/crow
 brew install --cask crow
 ```
+
+첫 번째 명령은 Homebrew 6의 비공식 tap 보호 정책에 따라 Crow Cask만 명시적으로
+신뢰하는 단계입니다. 저장소 전체를 신뢰하지 않아도 됩니다.
 
 Homebrew를 통한 수동 업그레이드는 다음과 같습니다.
 
