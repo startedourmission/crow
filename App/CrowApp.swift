@@ -22,6 +22,10 @@ struct CrowApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 800)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { appDelegate.checkForUpdates() }
+                    .disabled(appDelegate.updaterController == nil)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New File") {
                     model.newUntitledBuffer()

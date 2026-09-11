@@ -1,102 +1,149 @@
 # Crow
 
-SSH workspace for iPhone, iPad, and Mac. Terminal plus a plain-text editor.
-Looks like VS Code, splits like Orca, without the agent IDE or the companion-app story.
+Mac, iPhone, iPad에서 로컬 폴더와 SSH 서버를 한곳에서 다루는 개발 작업 공간입니다.
+터미널과 일반 텍스트 편집기를 함께 제공하며, Markdown·소스 코드·설정 파일을
+빠르게 열고 편집할 수 있습니다.
 
-- **Workspaces, not one blob.** Local vault is one workspace. Each SSH host opens another. Files and the terminal belong to the workspace you are in.
-- **Editor is format-agnostic.** Markdown is first-class. txt, json, yaml, conf, and the rest open in the same editor.
-- **Terminal IME is the product.** Marked Hangul never goes to the PTY. Only committed UTF-8 does.
+## macOS 다운로드
 
-## Open
+### [최신 Crow DMG 다운로드](https://github.com/startedourmission/crow/releases/latest/download/Crow-macOS.dmg)
+
+- 지원 운영체제: macOS 15 Sequoia 이상
+- 지원 Mac: Apple Silicon 및 Intel
+- 배포 파일은 Developer ID로 서명하고 Apple 공증을 거칩니다.
+
+설치는 간단합니다.
+
+1. 위 링크에서 `Crow-macOS.dmg`를 다운로드합니다.
+2. DMG를 열고 `Crow.app`을 `Applications` 폴더로 드래그합니다.
+3. 응용 프로그램 폴더에서 Crow를 실행합니다.
+
+정상 배포본은 Apple 공증을 받은 파일이므로 Gatekeeper를 끄거나 터미널에서
+격리 속성을 삭제할 필요가 없습니다.
+
+아직 Release가 한 번도 게시되지 않았다면 최신 다운로드 링크가 404를 반환할
+수 있습니다. 이 경우 [Releases](https://github.com/startedourmission/crow/releases)
+페이지에서 배포 상태를 확인해 주세요.
+
+## Homebrew로 설치
+
+Crow 저장소를 처음 한 번만 tap으로 등록한 뒤 설치합니다.
+
+```sh
+brew trust --cask startedourmission/crow/crow
+brew tap startedourmission/crow https://github.com/startedourmission/crow
+brew install --cask crow
+```
+
+첫 번째 명령은 Homebrew 6의 비공식 tap 보호 정책에 따라 Crow Cask만 명시적으로
+신뢰하는 단계입니다. 저장소 전체를 신뢰하지 않아도 됩니다.
+
+Homebrew를 통한 수동 업그레이드는 다음과 같습니다.
+
+```sh
+brew upgrade --cask --greedy crow
+```
+
+## 자동 업데이트
+
+Crow는 Sparkle의 서명된 업데이트 피드를 자동으로 확인합니다. 새 버전이 있으면
+앱 안에서 안내하며, 언제든지 메뉴의 **Crow → Check for Updates…**를 선택해 직접
+확인할 수 있습니다.
+
+업데이트 파일도 최초 설치 파일과 마찬가지로 Developer ID 서명과 Apple 공증,
+Sparkle EdDSA 서명 검증을 거칩니다.
+
+## 주요 기능
+
+- 로컬 폴더와 여러 SSH 호스트를 각각 독립된 작업 공간으로 관리
+- macOS 실제 로그인 셸과 PTY 기반 터미널 탭·분할·크기 조절
+- 한글 IME 조합 중 문자가 PTY로 잘못 전송되지 않는 터미널 입력 처리
+- Markdown, txt, json, yaml, 소스 코드 등 UTF-8 일반 텍스트 편집
+- 실행 취소, 찾기·바꾸기, 줄 번호, 들여쓰기, 글꼴 크기 조절
+- 파일명·경로 검색과 `contents:` 접두사를 이용한 파일 내용 검색
+- 파일·폴더 생성, 이름 변경, 가져오기 및 복구 가능한 삭제
+- 작업 공간별 파일 탭, 터미널, 분할 화면, 임시 초안 복원
+- 로컬 및 원격 Git 브랜치·변경 파일 확인
+- SFTP 파일 탐색과 충돌 감지 저장
+- macOS에서 기존 OpenSSH 설정, 에이전트, 키, `known_hosts` 사용
+- 서버의 에이전트가 임시 SSH 경로를 통해 Mac에서 명령을 실행할 수 있는
+  Reverse SSH 기능
+
+## SSH 사용
+
+Mac의 Crow 터미널에서 평소처럼 SSH 명령을 실행하면 됩니다.
+
+```sh
+ssh user@example.com
+ssh user@example.com -p 2222
+ssh my-config-alias
+```
+
+Crow는 시스템 OpenSSH 설정과 에이전트, 키를 그대로 사용합니다. 비밀번호,
+키 암호, 호스트 확인 질문은 터미널 안에서 처리되며 Crow가 별도로 저장하지
+않습니다. 연결이 완료되면 해당 서버가 작업 공간에 자동으로 추가됩니다.
+
+원격 파일은 SFTP로 읽고 씁니다. 저장할 때 임시 파일과 백업·이름 변경 절차를
+사용하고 외부 변경을 감지하지만, SFTP v3의 교체 작업 자체는 원자적이지 않아
+동시에 같은 파일을 쓰는 다른 프로그램과 충돌할 수 있습니다.
+
+## 데이터와 보안
+
+macOS 버전은 로컬 셸과 일반 개발 명령을 실행해야 하므로 App Sandbox를 사용하지
+않습니다. 신뢰할 수 있는 명령과 서버에만 연결하세요.
+
+- 로컬 삭제 파일은 작업 공간 루트의 `.crow-trash`로 이동합니다.
+- 원격 삭제 파일은 같은 서버의 숨김 `.crow-trash-…` 경로로 이동합니다.
+- 저장하지 않은 초안과 세션 정보는 로컬 JSON 파일에 권한 `0600`으로 저장되며
+  별도 암호화되지는 않습니다.
+- SSH 개인키와 인증 정보는 macOS Keychain 및 시스템 OpenSSH가 관리합니다.
+- 실행 중인 셸 프로세스와 SSH 연결은 앱 재시작 후 자동 복원되지 않습니다.
+
+## 개발하기
+
+필요한 도구는 전체 Xcode와 XcodeGen입니다. Xcode의 플랫폼 및 Metal Toolchain
+컴포넌트도 설치되어 있어야 합니다.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 xcodegen generate
-xed Crow.xcodeproj
+open Crow.xcodeproj
 ```
 
-Schemes: `Crow-iOS`, `Crow-macOS`.
+Xcode에서 `Crow-macOS` 또는 `Crow-iOS` 스킴을 선택합니다.
+
+핵심 로직 테스트:
 
 ```sh
 swift test --package-path Packages/CrowCore
-# macOS: build the app and test AppKit input against the SwiftTerm screen buffer
+```
+
+macOS 앱과 터미널 통합 테스트:
+
+```sh
 bash scripts/test-macos-terminal.sh
+xcodebuild test \
+  -project Crow.xcodeproj \
+  -scheme Crow-macOS \
+  -destination 'platform=macOS,arch=arm64'
 ```
 
-## Available now
-
-- White theme with a dark navy accent; responsive Mac, iPad and iPhone layouts.
-- Real macOS login shell (`zsh`) through a PTY, terminal tabs, resize, interrupt and terminal split. iOS uses SSH for real shells. Input regression fixtures run only in tests; there is no IME Lab workspace in the app.
-- Separate file tabs, drafts and terminal instances per workspace. Editor split is available on regular-width screens.
-- Folder import, directory navigation, file/folder creation, rename and recoverable deletion. Local deletions move to the workspace root's hidden `.crow-trash`; remote deletions rename to a hidden `.crow-trash-…` sibling. The status message shows the recovery location.
-- Native plain-text editing with undo, find/replace, line numbers, tab indentation and font settings. macOS also supports block indent/outdent and automatic newline indentation. UTF-8 files up to 16 MB are supported; binary files are rejected.
-- macOS right sidebar with Summary and Git views. Summary follows the active file's unsaved text; Markdown headings and Swift, Python, JavaScript/TypeScript, Go, Rust, C/C++, Ruby and shell declarations jump to the insertion caret, including inside rendered Markdown. Code recognition is lexical, not an LSP/compiler symbol index. Toggle the sidebar from the pane header (bottom-right when no tabs are open) or Option-Command-B; drag its left edge to resize.
-- Git shows the branch and saved-file index/worktree changes, with file opening and automatic refresh while visible. Local Git and existing terminal SSH connections are supported; remote Git requires Git and a POSIX login shell. It does not stage, commit, fetch or change server configuration.
-- macOS shortcuts: Command-plus/minus changes the focused editor/terminal font (Command-equals also enlarges), Command-F searches the active document, Command-Shift-F focuses the existing file search without rewriting its query, Command-comma opens settings, and Command-1…9 selects a tab within the focused pane.
-- Explorer search matches names/paths by default. Prefix with `contents:` for literal, case-insensitive text search through local or SSH files; open buffers use their current unsaved text. Results show the first matching line. Binary/unreadable files and files over 2 MB are skipped; content scans are capped at 2,000 files / 32 MB, with visible limit notices. Press Return to refresh; background content refresh is throttled to 15 seconds.
-- Explorer search includes a Name/Contents dropdown that preserves the search term, plus clickable/Tab completion for `contents:`. The document search icon toggles its bar; Command-F always opens/focuses it. macOS find/replace has an explicit Match Case checkbox, previous/next matches, Replace and All, with undo. Queries are literal; above 10,000 matches the bar asks for a narrower query before allowing Replace All.
-- Save/discard/cancel when closing dirty tabs, quit protection on Mac, external-edit conflict checks and explicit overwrite confirmation.
-- SSH without a setup form: on Mac, run `ssh user@host -p 2222` or `ssh config-alias` in Crow's local terminal. After successful authentication a workspace is added automatically, without stealing terminal focus. The + menu also accepts a single SSH command. Mac uses your actual OpenSSH config, agent, keys and known_hosts; any password, passphrase or host verification prompt stays in the terminal. iOS accepts a command and asks for a password only when needed; private-key import remains under Advanced settings and credentials use Keychain.
-- SFTP browsing and editing. Saves upload to a temporary file first, check for conflicting changes, then replace using backup/rename with rollback. SFTP v3 replacement is not atomic; a concurrent server writer can still race a save.
-- macOS SSH host list has a **Reverse SSH** toggle. On creates a private, temporary SSH endpoint on this Mac and forwards a server loopback port to it using the existing OpenSSH connection. Crow prepares a dedicated key, pinned host key and executable connection script on the server; **Copy Client Command** gives agents the command to run (append a quoted shell command to execute it on the Mac). It runs as your Mac account and supports file access. No system Remote Login setting, permanent authorized key or additional daemon installation is needed. Off immediately closes accepted client sockets, then cancels the forwarding and removes the server bundle without closing ordinary SSH. Access is never restored automatically. A disconnected saved OpenSSH host reconnects when enabled; normal SSH authentication may be required. Legacy hosts must first be connected with an SSH command. This control is not available on iPhone/iPad.
-- Reverse SSH reports ready only after an authenticated server → Mac command succeeds, and checks that path periodically in addition to the SSH master. If direct loopback fails and the login environment provides `powershell.exe`, Crow verifies a binary Windows-loopback bridge (including Windows SSH → WSL with separate localhost networks). SSH authentication and private keys stay in the POSIX environment; no firewall, WSL networking or server settings are changed. Copy shows **Copied!** and a checkmark briefly; re-enabling creates a new command, so replace any previously copied command.
-- Session restoration for workspaces, tabs, unsaved drafts, splits and preferences. Drafts are stored locally in the session JSON (mode `0600`), not encrypted by Crow. Running shell processes and SSH connections are not restored; reconnect starts a new shell. On iOS, backgrounding persists drafts and foregrounding checks connection state; this does not keep SSH alive indefinitely in the background.
-
-The macOS target is intentionally **not App Sandbox-enabled** so the local shell can run normal developer commands. Only run commands and connect to servers you trust.
-
-### Terminal SSH integration
-
-New Crow local terminals load a private zsh `ssh` function; your shell configuration files are not modified. It invokes `/usr/bin/ssh` and uses a private [OpenSSH multiplex connection](https://man.openbsd.org/ssh_config#ControlMaster) so file operations and additional terminal tabs need no second login. SFTP is spoken directly over that channel, following the [SFTP v3 wire format](https://www.ietf.org/archive/id/draft-ietf-secsh-filexfer-02.txt), not by parsing shell output.
-
-Mac file connections negotiate capabilities in order: the standard SFTP subsystem,
-an installed `sftp-server` started through an SSH command, then the same bootstrap
-sent through a plain SSH shell channel without a remote command. This handles login
-wrappers where interactive login works but command execution does not, without
-hard-coding hostnames, operating systems or distribution names. Fallbacks require a
-POSIX-compatible login shell and an executable `sftp-server` on PATH or in a standard
-OpenSSH location. Crow does not install packages or edit remote SSH/shell settings.
-Each handshake has an 8-second deadline; startup banners are bounded and discarded
-before the binary protocol starts. Only connection setup is retried, never file writes.
-If every method fails, the error includes each attempted method and leaves the
-terminal connection open. The selected login environment's default distribution
-is used; Crow does not choose or switch WSL distributions.
-
-New Mac SSH workspaces start at the file channel's initial working directory (`.`),
-without forcing the SFTP process into `$HOME`. This preserves the SSH login's
-starting directory in the shell fallbacks. Once selected, the project folder is
-saved and survives reconnects. Later terminal `cd` commands do not move the file
-browser. Explicit Home navigation uses the server's home-expansion extension when
-available; no continuous directory synchronization or shell-profile injection is used.
-
-Restart the app or open a new terminal after updating to activate integration. `command ssh`, `/usr/bin/ssh`, custom overrides of the `ssh` function, tunnel-only/remote-command sessions and explicit multiplex-control commands remain terminal-only. Automatic registration is for interactive connections from Crow's Mac local terminal, not Terminal.app or remote shells. The command box is a single SSH command parser, not a shell: pipelines, substitutions and shell operators are rejected. Config aliases and agent access are Mac-only.
-
-Disconnecting a workspace closes its UI channels; an SSH command still running in the original local terminal is independent (use `exit` there). Crow-owned master connections use a 60-second idle persistence and are closed on normal app shutdown. Running SSH processes are never restored after restart; the saved command can be used to reconnect. Connection arguments/paths are stored locally with the session, so do not embed passwords or other secrets in command arguments.
-
-## Test and run
-
-Reverse SSH can be tested against disposable loopback SSH servers without enabling Remote Login:
+iOS 시뮬레이터 테스트:
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh Tools/run-reverse-ssh-smoke.sh
-# Also test the app's host-list toggle, automatic connection, and reconnection:
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh Tools/run-reverse-ssh-smoke.sh "$PWD/DerivedData"
+xcodebuild test \
+  -project Crow.xcodeproj \
+  -scheme Crow-iOS \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-The server needs OpenSSH-compatible remote forwarding, an SSH client, a POSIX shell and SFTP file permissions.
-Temporary connection files use a private `.crow-client-…` directory at the SFTP home/starting directory.
-If the server disconnects before cleanup, files may remain there, but the stopped Mac endpoint and its key are revoked.
+설치된 시뮬레이터 이름에 맞게 destination을 변경하세요. 실제 iPhone·iPad 빌드는
+Apple 개발자 서명 팀이 필요합니다.
 
-In Xcode choose `Crow-macOS` → **My Mac** → Run, or `Crow-iOS` → an installed iPhone/iPad simulator → Run. A full Xcode installation and its platform/Metal components are required. Device builds also require your signing team.
+## 배포 관리
 
-```sh
-swift test --package-path Packages/CrowCore
-xcodebuild test -project Crow.xcodeproj -scheme Crow-macOS -destination 'platform=macOS,arch=arm64'
-xcodebuild test -project Crow.xcodeproj -scheme Crow-iOS -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
-xcodebuild test -project Crow.xcodeproj -scheme Crow-iOS -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)'
-```
+Developer ID 서명, Apple 공증, DMG 생성, Sparkle appcast와 Homebrew Cask 갱신
+절차는 [배포 문서](docs/RELEASING.md)에 정리되어 있습니다.
 
-Use a simulator name installed on your machine. The macOS integration suite starts an isolated loopback-only `sshd` with temporary keys; it does not enable Remote Login or change system SSH configuration. It exercises host-key approval/rejection, SFTP round trips/conflicts, real shell input, Hangul commit/backspace, resizing and interrupts.
-
-Verified on this development Mac and iPhone/iPad simulators. Physical-device touch keyboards, external Korean keyboards, real-network interruptions and long background periods still require device testing. This is a plain-text workspace, not an LSP/debugger/Git GUI.
-
-Terminal rendering uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm); iOS and legacy saved connections use [Citadel](https://github.com/orlandos-nl/Citadel). New Mac command connections use the system OpenSSH client.
+터미널 렌더링에는 [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), iOS 및
+일부 SSH 연결에는 [Citadel](https://github.com/orlandos-nl/Citadel)을 사용합니다.

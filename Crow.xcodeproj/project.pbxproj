@@ -7,20 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		2127326E92F920E24F7BD0E4 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EE2768DAD149153FD4F579 /* ReverseSSH.swift */; };
-		A916EE2520FDF598DAFAB2F5 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73EE2768DAD149153FD4F579 /* ReverseSSH.swift */; };
-		F1ED17000000000000000021 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000020 /* InspectorPanel.swift */; };
-		F1ED17000000000000000022 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000020 /* InspectorPanel.swift */; };
-		F1ED17000000000000000024 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000023 /* GitRepository.swift */; };
-		F1ED17000000000000000025 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000023 /* GitRepository.swift */; };
-		F1ED17000000000000000010 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000012 /* MarkdownEditor.swift */; };
-		F1ED17000000000000000011 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000012 /* MarkdownEditor.swift */; };
-		F1ED17000000000000000007 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000009 /* WindowDragRegion.swift */; };
-		F1ED17000000000000000008 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000009 /* WindowDragRegion.swift */; };
-		F1ED17000000000000000001 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000003 /* markdown-editor.js */; };
-		F1ED17000000000000000002 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000003 /* markdown-editor.js */; };
-		F1ED17000000000000000004 /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */; };
-		F1ED17000000000000000005 /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */; };
 		02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
 		038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 797792777CAD6CD2D456EBF8 /* SwiftTerm */; };
 		0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
@@ -28,19 +14,26 @@
 		14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
 		167B5EB84C67FE7E6C59CE40 /* SystemSFTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */; };
 		196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
+		1B2340F02DCCA944C5F62B8D /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */; };
 		229AD114289C014C78DDE79A /* TerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */; };
 		26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
 		271182EE8B959D21CC270333 /* SSHCommandView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A093E56E71878F7439A35214 /* SSHCommandView.swift */; };
+		2AB4FD069ED3F003092DA0D9 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = 7FACD1BCE145D0783FF32A74 /* markdown-editor.js */; };
 		2C65D5FA8F68B3A1C10435D2 /* EchoTerminalFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */; };
 		2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
 		315E43CF31430E0E18AA565C /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
 		360C0A7D789693230AC287A7 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
 		36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
+		39F5CBE7547B34B6416D0A08 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B3B2623FE25570F04A96B0 /* GitRepository.swift */; };
 		3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
 		3BD61F6E38C75029D729A6EA /* SystemSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */; };
 		4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
 		48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3281820F331A8C3742CC86D3 /* RemoteConnection.swift */; };
+		48EF039C2F38D4BE74C798F0 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B3B2623FE25570F04A96B0 /* GitRepository.swift */; };
+		49630C707BCE221ECA00E8CA /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18B58CEDCD01E6C219105813 /* InspectorPanel.swift */; };
+		52F0C7DCC3DE13464614DBBC /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
 		5BF82CF74F73CF09F2B2A893 /* TerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */; };
+		625238F79BADC8151633A02F /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */; };
 		62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
 		6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
 		67E2475B239B9403EBB7E291 /* EchoTerminalFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */; };
@@ -48,6 +41,7 @@
 		6C4ED3E62627C2BD483550B7 /* WorkspaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */; };
 		6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
 		73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
+		75C51A84756BB865D20F817B /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */; };
 		767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
 		7D1F42A42AE8999100EAE27A /* SystemSFTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */; };
 		7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = CC5D04CB9ACC760C88D98F53 /* CrowCore */; };
@@ -55,28 +49,35 @@
 		8B146E0D24489865E8F69A92 /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
 		8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
 		9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
+		9D1F73D97BC4699A52439627 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 8A57E5BB59B15020241DAD01 /* Sparkle */; };
 		A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
 		A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
 		A53E1FCC6B5BFFA376DF6273 /* SSHCommandView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A093E56E71878F7439A35214 /* SSHCommandView.swift */; };
 		AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
 		AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
+		ABACF798FB51E0E27B5574D6 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */; };
 		AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
 		AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */; };
 		B09A2B69C85652902D15946E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
 		B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
 		B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
 		BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2095F40A89154572BBF0B9AA /* CrowCore */; };
+		C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */; };
+		C3266AD20FD3C67651ECE542 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18B58CEDCD01E6C219105813 /* InspectorPanel.swift */; };
 		C4453DC4CAB73D14F3EC557F /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA822D65A1861321E1F582 /* TerminalSession.swift */; };
+		C7061386EE590421187C2662 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = 7FACD1BCE145D0783FF32A74 /* markdown-editor.js */; };
 		C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3281820F331A8C3742CC86D3 /* RemoteConnection.swift */; };
 		CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
 		D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
 		D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
 		DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = DE53485A258DA8FF8E438A1C /* Citadel */; };
 		DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 22349BC58B8FD19F9A28CF2B /* Citadel */; };
+		DFACF071DF461B8E8B3D7DE6 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
 		E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
 		E37F3C5FF7993AB42B933D31 /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA822D65A1861321E1F582 /* TerminalSession.swift */; };
 		E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */; };
 		EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
+		F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */; };
 		F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
 		F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */; };
 /* End PBXBuildFile section */
@@ -99,23 +100,22 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		73EE2768DAD149153FD4F579 /* ReverseSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/ReverseSSH.swift; sourceTree = SOURCE_ROOT; };
-		F1ED17000000000000000020 /* InspectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Shell/InspectorPanel.swift; sourceTree = SOURCE_ROOT; };
-		F1ED17000000000000000023 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/GitRepository.swift; sourceTree = SOURCE_ROOT; };
-		F1ED17000000000000000012 /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
-		F1ED17000000000000000009 /* WindowDragRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/Services/WindowDragRegion.swift; sourceTree = SOURCE_ROOT; };
-		F1ED17000000000000000003 /* markdown-editor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-editor.js"; sourceTree = "<group>"; };
-		F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "MarkdownEditor-LICENSES.txt"; sourceTree = "<group>"; };
 		04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHIntegrationTests.swift; sourceTree = "<group>"; };
 		0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CrowMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		0AA32B4589742FCAABE76F6B /* Crow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "MarkdownEditor-LICENSES.txt"; sourceTree = "<group>"; };
+		18B58CEDCD01E6C219105813 /* InspectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPanel.swift; sourceTree = "<group>"; };
 		2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalTests.swift; sourceTree = "<group>"; };
+		2C603D2C1525D197887432FC /* WindowDragRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDragRegion.swift; sourceTree = "<group>"; };
 		3281820F331A8C3742CC86D3 /* RemoteConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConnection.swift; sourceTree = "<group>"; };
 		37FA822D65A1861321E1F582 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
 		3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostEditorView.swift; sourceTree = "<group>"; };
+		61B3B2623FE25570F04A96B0 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitRepository.swift; sourceTree = "<group>"; };
 		624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalFixture.swift; sourceTree = "<group>"; };
+		643351A73DF6ED8D3D6E4193 /* Crow.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6F615327A09249D69F58FB1F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		736A91B1AC75EDEE2EC70D47 /* Crow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		75FF130C71180BF8D69923FE /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
+		7FACD1BCE145D0783FF32A74 /* markdown-editor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-editor.js"; sourceTree = "<group>"; };
 		81CDA3E505278504B945809C /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceState.swift; sourceTree = "<group>"; };
 		97A032C53156473E97D0B162 /* Crow-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-macOS.entitlements"; sourceTree = "<group>"; };
@@ -128,17 +128,18 @@
 		A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemSSH.swift; sourceTree = "<group>"; };
 		A9F91460E98231B14EB73C47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLifecycle.swift; sourceTree = "<group>"; };
+		BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReverseSSH.swift; sourceTree = "<group>"; };
 		BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemSFTP.swift; sourceTree = "<group>"; };
 		C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeEditor.swift; sourceTree = "<group>"; };
 		CB9788339A1AB51301E2DF81 /* CrowTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CrowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegrationTests.swift; sourceTree = "<group>"; };
 		D8A85DB8385B70D7E310D980 /* Crow-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-iOS.entitlements"; sourceTree = "<group>"; };
 		DC6FE655559409CAEE08CABB /* CrowTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowTheme.swift; sourceTree = "<group>"; };
+		DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
 		E659A052178F6AD11B43C616 /* TerminalViewHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewHost.swift; sourceTree = "<group>"; };
 		E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSwitcher.swift; sourceTree = "<group>"; };
 		F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowAppTests.swift; sourceTree = "<group>"; };
 		F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
-		F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "Crow-macOS.app"; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +150,7 @@
 				7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */,
 				038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */,
 				DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */,
+				9D1F73D97BC4699A52439627 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -172,6 +174,7 @@
 				9D32992D5A11A39787F52729 /* CrowRootView.swift */,
 				9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */,
 				3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */,
+				18B58CEDCD01E6C219105813 /* InspectorPanel.swift */,
 				81CDA3E505278504B945809C /* SidebarView.swift */,
 				A093E56E71878F7439A35214 /* SSHCommandView.swift */,
 				F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */,
@@ -183,9 +186,9 @@
 		0FEEE4A3561B20E2D72EF908 /* Editor */ = {
 			isa = PBXGroup;
 			children = (
-				F1ED17000000000000000012 /* MarkdownEditor.swift */,
-				F1ED17000000000000000003 /* markdown-editor.js */,
-				F1ED17000000000000000006 /* MarkdownEditor-LICENSES.txt */,
+				7FACD1BCE145D0783FF32A74 /* markdown-editor.js */,
+				172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */,
+				DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */,
 				C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */,
 			);
 			path = Editor;
@@ -194,9 +197,6 @@
 		19496BAFC18CA285F1D341DB = {
 			isa = PBXGroup;
 			children = (
-				F1ED17000000000000000009 /* WindowDragRegion.swift */,
-				F1ED17000000000000000020 /* InspectorPanel.swift */,
-				F1ED17000000000000000023 /* GitRepository.swift */,
 				731BB62EF6BA3ABD2B5E0A7B /* App */,
 				9318993AA5D14FAD4678BCE4 /* Packages */,
 				1A1C9CA78960D194555619D3 /* Tests */,
@@ -246,8 +246,8 @@
 		7A6C0BA32DD62D2969069501 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				0AA32B4589742FCAABE76F6B /* Crow.app */,
-				F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */,
+				643351A73DF6ED8D3D6E4193 /* Crow.app */,
+				736A91B1AC75EDEE2EC70D47 /* Crow.app */,
 				0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */,
 				CB9788339A1AB51301E2DF81 /* CrowTests.xctest */,
 			);
@@ -257,11 +257,13 @@
 		91C366062BEB5F0931B98A25 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				61B3B2623FE25570F04A96B0 /* GitRepository.swift */,
 				AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */,
 				3281820F331A8C3742CC86D3 /* RemoteConnection.swift */,
+				BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */,
 				BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */,
 				A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */,
-				73EE2768DAD149153FD4F579 /* ReverseSSH.swift */,
+				2C603D2C1525D197887432FC /* WindowDragRegion.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -339,9 +341,10 @@
 				CC5D04CB9ACC760C88D98F53 /* CrowCore */,
 				797792777CAD6CD2D456EBF8 /* SwiftTerm */,
 				22349BC58B8FD19F9A28CF2B /* Citadel */,
+				8A57E5BB59B15020241DAD01 /* Sparkle */,
 			);
 			productName = "Crow-macOS";
-			productReference = F7287A94D78B8C79F06BA7A3 /* Crow-macOS.app */;
+			productReference = 736A91B1AC75EDEE2EC70D47 /* Crow.app */;
 			productType = "com.apple.product-type.application";
 		};
 		FC0321C587152591263AC989 /* Crow-iOS */ = {
@@ -363,7 +366,7 @@
 				DE53485A258DA8FF8E438A1C /* Citadel */,
 			);
 			productName = "Crow-iOS";
-			productReference = 0AA32B4589742FCAABE76F6B /* Crow.app */;
+			productReference = 643351A73DF6ED8D3D6E4193 /* Crow.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -374,6 +377,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+				};
 			};
 			buildConfigurationList = B682C1620F6EAE7A1E66AC71 /* Build configuration list for PBXProject "Crow" */;
 			developmentRegion = en;
@@ -386,6 +391,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */,
+				6774923512252B0B5D84C882 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				77199E7D2A1A142471EDB4BE /* XCLocalSwiftPackageReference "Packages/CrowCore" */,
 			);
@@ -408,8 +414,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */,
-				F1ED17000000000000000001 /* markdown-editor.js in Resources */,
-				F1ED17000000000000000004 /* MarkdownEditor-LICENSES.txt in Resources */,
+				75C51A84756BB865D20F817B /* MarkdownEditor-LICENSES.txt in Resources */,
+				C7061386EE590421187C2662 /* markdown-editor.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -418,8 +424,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				B09A2B69C85652902D15946E /* Assets.xcassets in Resources */,
-				F1ED17000000000000000002 /* markdown-editor.js in Resources */,
-				F1ED17000000000000000005 /* MarkdownEditor-LICENSES.txt in Resources */,
+				625238F79BADC8151633A02F /* MarkdownEditor-LICENSES.txt in Resources */,
+				2AB4FD069ED3F003092DA0D9 /* markdown-editor.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -436,22 +442,22 @@
 				14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */,
 				767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */,
 				3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */,
+				39F5CBE7547B34B6416D0A08 /* GitRepository.swift in Sources */,
 				B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */,
+				C3266AD20FD3C67651ECE542 /* InspectorPanel.swift in Sources */,
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
-				F1ED17000000000000000007 /* WindowDragRegion.swift in Sources */,
-				F1ED17000000000000000021 /* InspectorPanel.swift in Sources */,
-				F1ED17000000000000000024 /* GitRepository.swift in Sources */,
+				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
-				F1ED17000000000000000010 /* MarkdownEditor.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
+				ABACF798FB51E0E27B5574D6 /* ReverseSSH.swift in Sources */,
 				271182EE8B959D21CC270333 /* SSHCommandView.swift in Sources */,
 				CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */,
 				167B5EB84C67FE7E6C59CE40 /* SystemSFTP.swift in Sources */,
 				F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */,
-				2127326E92F920E24F7BD0E4 /* ReverseSSH.swift in Sources */,
 				2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */,
 				C4453DC4CAB73D14F3EC557F /* TerminalSession.swift in Sources */,
 				02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */,
+				52F0C7DCC3DE13464614DBBC /* WindowDragRegion.swift in Sources */,
 				AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */,
 				36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */,
 			);
@@ -480,22 +486,22 @@
 				4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */,
 				6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */,
 				E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */,
+				48EF039C2F38D4BE74C798F0 /* GitRepository.swift in Sources */,
 				26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */,
+				49630C707BCE221ECA00E8CA /* InspectorPanel.swift in Sources */,
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
-				F1ED17000000000000000008 /* WindowDragRegion.swift in Sources */,
-				F1ED17000000000000000022 /* InspectorPanel.swift in Sources */,
-				F1ED17000000000000000025 /* GitRepository.swift in Sources */,
+				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
-				F1ED17000000000000000011 /* MarkdownEditor.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
+				1B2340F02DCCA944C5F62B8D /* ReverseSSH.swift in Sources */,
 				A53E1FCC6B5BFFA376DF6273 /* SSHCommandView.swift in Sources */,
 				F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */,
 				7D1F42A42AE8999100EAE27A /* SystemSFTP.swift in Sources */,
 				3BD61F6E38C75029D729A6EA /* SystemSSH.swift in Sources */,
-				A916EE2520FDF598DAFAB2F5 /* ReverseSSH.swift in Sources */,
 				109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */,
 				E37F3C5FF7993AB42B933D31 /* TerminalSession.swift in Sources */,
 				196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */,
+				DFACF071DF461B8E8B3D7DE6 /* WindowDragRegion.swift in Sources */,
 				6C4ED3E62627C2BD483550B7 /* WorkspaceState.swift in Sources */,
 				A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */,
 			);
@@ -537,7 +543,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "App/Crow-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = X2V64W34GP;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -651,11 +656,10 @@
 				CODE_SIGN_ENTITLEMENTS = "App/Crow-macOS.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Crow-macOS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSHighResolutionCapable = YES;
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -665,6 +669,7 @@
 				PRODUCT_MODULE_NAME = Crow;
 				PRODUCT_NAME = Crow;
 				SDKROOT = macosx;
+				SPARKLE_PUBLIC_ED_KEY = "";
 			};
 			name = Debug;
 		};
@@ -675,7 +680,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "App/Crow-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = X2V64W34GP;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -706,11 +710,10 @@
 				CODE_SIGN_ENTITLEMENTS = "App/Crow-macOS.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Crow-macOS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSHighResolutionCapable = YES;
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -720,6 +723,7 @@
 				PRODUCT_MODULE_NAME = Crow;
 				PRODUCT_NAME = Crow;
 				SDKROOT = macosx;
+				SPARKLE_PUBLIC_ED_KEY = "";
 			};
 			name = Release;
 		};
@@ -899,6 +903,14 @@
 				version = 0.12.1;
 			};
 		};
+		6774923512252B0B5D84C882 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.6;
+			};
+		};
 		DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
@@ -923,6 +935,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		8A57E5BB59B15020241DAD01 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6774923512252B0B5D84C882 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 		CC5D04CB9ACC760C88D98F53 /* CrowCore */ = {
 			isa = XCSwiftPackageProductDependency;

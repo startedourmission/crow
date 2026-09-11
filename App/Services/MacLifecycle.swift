@@ -1,9 +1,31 @@
 #if os(macOS)
 import AppKit
+import Sparkle
 import SwiftUI
 
 @MainActor final class CrowAppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    let updaterController: SPUStandardUpdaterController?
+
+    override init() {
+        let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        if let publicKey, !publicKey.isEmpty, !publicKey.contains("$(") {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+        } else {
+            // Unsigned local builds intentionally do not contact the production feed.
+            updaterController = nil
+        }
+        super.init()
+    }
+
+    func checkForUpdates() {
+        updaterController?.checkForUpdates(nil)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard model.hasUnsavedChanges else { model.persist(); return .terminateNow }
