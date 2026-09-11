@@ -94,7 +94,8 @@ In Xcode choose `Crow-macOS` → **My Mac** → Run, or `Crow-iOS` → an instal
 or install and upgrade through the project tap:
 
 ```sh
-brew install --cask startedourmission/tap/crow
+brew tap startedourmission/crow https://github.com/startedourmission/crow
+brew install --cask crow
 brew upgrade --cask --greedy crow
 ```
 

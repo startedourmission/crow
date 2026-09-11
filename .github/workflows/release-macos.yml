@@ -37,7 +37,6 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
           SPARKLE_PRIVATE_KEY_BASE64: ${{ secrets.SPARKLE_PRIVATE_KEY_BASE64 }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           missing=()
           for name in \
@@ -49,8 +48,7 @@ jobs:
             NOTARY_KEY_ID \
             NOTARY_ISSUER_ID \
             SPARKLE_PUBLIC_ED_KEY \
-            SPARKLE_PRIVATE_KEY_BASE64 \
-            HOMEBREW_TAP_TOKEN; do
+            SPARKLE_PRIVATE_KEY_BASE64; do
             if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
           if (( ${#missing[@]} > 0 )); then
@@ -122,24 +120,20 @@ jobs:
               --title "Crow $version"
           fi
 
-      - name: Check out Homebrew tap
-        uses: actions/checkout@v6
-        with:
-          repository: startedourmission/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
       - name: Update Homebrew cask
         run: |
           version="${GITHUB_REF_NAME#v}"
           sha256="$(awk '{print $1}' dist/Crow-macOS.dmg.sha256)"
-          scripts/render-homebrew-cask.sh "$version" "$sha256" homebrew-tap/Casks/crow.rb
+          git fetch origin main
+          publish_directory="$RUNNER_TEMP/crow-publish"
+          git worktree add "$publish_directory" origin/main
+          scripts/render-homebrew-cask.sh "$version" "$sha256" "$publish_directory/Casks/crow.rb"
 
           appcast_directory="$RUNNER_TEMP/crow-appcast"
           mkdir -p "$appcast_directory"
           cp dist/Crow-macOS.dmg "$appcast_directory/"
-          if [[ -f homebrew-tap/appcast.xml ]]; then
-            cp homebrew-tap/appcast.xml "$appcast_directory/appcast.xml"
+          if [[ -f "$publish_directory/appcast.xml" ]]; then
+            cp "$publish_directory/appcast.xml" "$appcast_directory/appcast.xml"
           fi
           gh release view "$GITHUB_REF_NAME" --json body --jq .body \
             > "$appcast_directory/Crow-macOS.md"
@@ -156,16 +150,16 @@ jobs:
             --maximum-deltas 0 \
             --maximum-versions 10 \
             "$appcast_directory"
-          cp "$appcast_directory/appcast.xml" homebrew-tap/appcast.xml
-          xmllint --noout homebrew-tap/appcast.xml
+          cp "$appcast_directory/appcast.xml" "$publish_directory/appcast.xml"
+          xmllint --noout "$publish_directory/appcast.xml"
 
-          tap_path="$(brew --repository)/Library/Taps/startedourmission/homebrew-tap"
+          tap_path="$(brew --repository)/Library/Taps/startedourmission/homebrew-crow"
           mkdir -p "$(dirname "$tap_path")"
-          ln -s "$PWD/homebrew-tap" "$tap_path"
-          brew style --cask startedourmission/tap/crow
-          brew audit --cask --strict startedourmission/tap/crow
+          ln -s "$publish_directory" "$tap_path"
+          brew style --cask startedourmission/crow/crow
+          brew audit --cask --strict startedourmission/crow/crow
 
-          cd homebrew-tap
+          cd "$publish_directory"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add Casks/crow.rb appcast.xml
@@ -173,7 +167,7 @@ jobs:
             echo "Homebrew cask is already current."
           else
             git commit -m "Update Crow to ${version}"
-            git push
+            git push origin HEAD:main
           fi
 
       - name: Remove temporary keychain

@@ -2,20 +2,17 @@
 
 Crow's release workflow produces a universal, Developer ID-signed app, notarizes
 and staples both the app and DMG, publishes ZIP and DMG artifacts on GitHub,
-and updates the Homebrew cask and Sparkle appcast.
+and updates the Homebrew cask and Sparkle appcast on `main`.
 
 ## One-time setup
 
-1. Create a public GitHub repository named
-   `startedourmission/homebrew-tap`. Homebrew requires this naming convention for
-   the short tap name `startedourmission/tap`.
+1. Keep `startedourmission/crow` public so Homebrew and Sparkle can fetch its
+   release assets and update metadata without GitHub credentials.
 2. Export the **Developer ID Application** certificate and private key from
    Keychain Access as a password-protected `.p12` file.
 3. Create a team App Store Connect API key with access to the notary service and
    download its `.p8` private key. Record the key ID and issuer ID.
-4. Create a fine-grained GitHub personal access token that can write repository
-   contents in `startedourmission/homebrew-tap`.
-5. Download the Sparkle 2 tools and generate the update-signing key once. Keep
+4. Download the Sparkle 2 tools and generate the update-signing key once. Keep
    the exported private key in a password manager; losing it prevents installed
    copies from trusting future updates.
 
@@ -25,7 +22,7 @@ and updates the Homebrew cask and Sparkle appcast.
    ```
 
    The first command prints the public key. The second exports the private key.
-6. Add these GitHub Actions secrets to the `crow` repository:
+5. Add these GitHub Actions secrets to the `crow` repository:
 
    | Secret | Value |
    | --- | --- |
@@ -38,7 +35,6 @@ and updates the Homebrew cask and Sparkle appcast.
    | `NOTARY_ISSUER_ID` | App Store Connect API issuer ID |
    | `SPARKLE_PUBLIC_ED_KEY` | Public EdDSA key printed by `generate_keys` |
    | `SPARKLE_PRIVATE_KEY_BASE64` | Base64-encoded exported Sparkle private key file |
-   | `HOMEBREW_TAP_TOKEN` | Fine-grained token for the tap repository |
 
    Encode each binary/key file on macOS with:
 
@@ -47,9 +43,6 @@ and updates the Homebrew cask and Sparkle appcast.
    base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
    base64 -i sparkle-private-key | pbcopy
    ```
-
-Both `crow` and `homebrew-tap` must be public so Homebrew and Sparkle can download
-release assets and the appcast without GitHub credentials.
 
 ## Publish a release
 
@@ -73,7 +66,8 @@ not move a published release tag; publish a new patch version instead.
 After the workflow completes, install or upgrade Crow with:
 
 ```sh
-brew install --cask startedourmission/tap/crow
+brew tap startedourmission/crow https://github.com/startedourmission/crow
+brew install --cask crow
 brew upgrade --cask --greedy crow
 ```
 
