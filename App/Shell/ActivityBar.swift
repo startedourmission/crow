@@ -8,6 +8,11 @@ struct ActivityBar: View {
         VStack(spacing: 4) {
             paneButton(.files, symbol: "doc.text")
             paneButton(.hosts, symbol: "network")
+            #if os(macOS)
+            MacSnippetButton(width: CrowTheme.activityWidth, height: 40)
+            #else
+            IPadSnippetButton()
+            #endif
             Spacer()
                 #if os(macOS)
                 .frame(maxWidth: .infinity)
@@ -24,11 +29,6 @@ struct ActivityBar: View {
             .buttonStyle(CrowButtonStyle())
             .windowDragExcluded()
             .help("Terminal")
-            #if os(macOS)
-            MacSnippetButton(width: CrowTheme.activityWidth, height: 40)
-            #else
-            IPadSnippetButton()
-            #endif
             Button { model.settingsVisible = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))

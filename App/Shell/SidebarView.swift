@@ -387,7 +387,7 @@ struct SidebarView: View {
     }
 
     private var hostsList: some View {
-        List {
+        let list = List {
             #if os(iOS)
             if phoneLayout && !model.localWorkspaces.isEmpty {
                 Section("Workspaces") {
@@ -414,20 +414,26 @@ struct SidebarView: View {
                     }
                 }
             }
-            Section {
-                if model.hosts.isEmpty {
-                    Text("Use + to add an SSH host.").font(.caption).crowForeground(CrowTheme.textDim)
-                        .listRowBackground(Color.clear)
-                }
-                hostRows
-            } header: {
-                if phoneLayout { Text("SSH Hosts") }
-            }
+            if phoneLayout {
+                Section("SSH Hosts") { mobileHostRows }
+            } else { mobileHostRows }
             #else
             hostRows
             #endif
         }
-        .listStyle(.sidebar)
+        return Group {
+            #if os(iOS)
+            if phoneLayout {
+                list.listStyle(.sidebar)
+            } else {
+                list.listStyle(.plain)
+                    .contentMargins(.top, 0, for: .scrollContent)
+                    .contentMargins(.horizontal, 0, for: .scrollContent)
+            }
+            #else
+            list.listStyle(.sidebar)
+            #endif
+        }
         .scrollContentBackground(.hidden)
         .accessibilityIdentifier("crow.hosts.workspaces")
         .safeAreaInset(edge: .bottom) {
@@ -442,6 +448,17 @@ struct SidebarView: View {
             #endif
         }
     }
+
+    #if os(iOS)
+    @ViewBuilder private var mobileHostRows: some View {
+        if model.hosts.isEmpty {
+            Text("Use + to add an SSH host.").font(.caption).crowForeground(CrowTheme.textDim)
+                .listRowBackground(Color.clear)
+                .listRowInsets(phoneLayout ? nil : EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 8))
+        }
+        hostRows
+    }
+    #endif
 
     private var hostRows: some View {
         ForEach(model.hosts) { (host: SSHHost) in
@@ -504,6 +521,9 @@ struct SidebarView: View {
                 #endif
             }
             .listRowBackground(Color.clear)
+            #if os(iOS)
+            .listRowInsets(phoneLayout ? nil : EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 8))
+            #endif
             .windowDragExcluded()
         }
     }

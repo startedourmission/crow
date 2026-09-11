@@ -33,12 +33,15 @@ struct WorkspaceSwitcher: View {
                 Text(model.selectedWorkspace.isRemote ? "Workspaces" : (model.hasWorkspace ? model.selectedWorkspace.name : "Open Vault"))
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 2)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .crowForeground(CrowTheme.textDim)
             }
             .crowForeground(CrowTheme.text)
             .padding(.horizontal, 8).frame(height: 28).contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
+        .menuIndicator(.hidden)
         .fixedSize(horizontal: false, vertical: true)
         .crowMenuHover()
         .windowDragExcluded()
