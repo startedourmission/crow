@@ -347,7 +347,73 @@ final class LineNumberRuler: NSRulerView {
 #else
 import UIKit
 
+/// Hands keyboard focus between the source and rendered editors once rendering is ready.
+@MainActor final class EditorKeyboardFocus {
+    private final class Input {
+        weak var view: UIView?
+        var ready: Bool
+        var focus: (() -> Void)?
+        init(_ view: UIView, ready: Bool, focus: (() -> Void)?) {
+            self.view = view; self.ready = ready; self.focus = focus
+        }
+    }
+    private var inputs: [Bool: Input] = [:]
+    private var preview = false
+    private weak var transferFrom: UIView?
+
+    func register(_ view: UIView, preview: Bool, ready: Bool = true, focus: (() -> Void)? = nil) {
+        inputs[preview] = Input(view, ready: ready, focus: focus)
+        finishTransfer()
+    }
+    func renderedReady(_ ready: Bool) {
+        inputs[true]?.ready = ready
+        finishTransfer()
+    }
+    func selectPreview(_ next: Bool) {
+        guard next != preview else { return }
+        let previous = inputs[preview]?.view
+        transferFrom = previous.flatMap { containsFirstResponder($0) ? $0 : nil }
+        preview = next
+        finishTransfer()
+    }
+    private func finishTransfer() {
+        guard let previous = transferFrom else { return }
+        guard containsFirstResponder(previous) else { transferFrom = nil; return }
+        guard let input = inputs[preview], input.ready, let view = input.view, view.window != nil else { return }
+        transferFrom = nil
+        if let focus = input.focus { focus() }
+        else { view.becomeFirstResponder() }
+    }
+    private func containsFirstResponder(_ view: UIView) -> Bool {
+        view.isFirstResponder || view.subviews.contains(where: containsFirstResponder)
+    }
+}
+
+private struct EditorKeyboardFocusKey: EnvironmentKey {
+    static let defaultValue: EditorKeyboardFocus? = nil
+}
+private struct EditorRendererActiveKey: EnvironmentKey { static let defaultValue = true }
+private struct EditorRendererPreviewKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var editorKeyboardFocus: EditorKeyboardFocus? {
+        get { self[EditorKeyboardFocusKey.self] }
+        set { self[EditorKeyboardFocusKey.self] = newValue }
+    }
+    var editorRendererActive: Bool {
+        get { self[EditorRendererActiveKey.self] }
+        set { self[EditorRendererActiveKey.self] = newValue }
+    }
+    var editorRendererPreview: Bool {
+        get { self[EditorRendererPreviewKey.self] }
+        set { self[EditorRendererPreviewKey.self] = newValue }
+    }
+}
+
 struct NativeEditor: UIViewRepresentable {
+    @Environment(\.phoneKeyboardFocus) private var keyboard
+    @Environment(\.editorKeyboardFocus) private var editorKeyboard
+    @Environment(\.editorRendererActive) private var rendererActive
+    @Environment(\.editorRendererPreview) private var rendererPreview
     @Binding var text: String
     let fontSize: Double
     let indentWidth: Int
@@ -371,6 +437,8 @@ struct NativeEditor: UIViewRepresentable {
         return editor
     }
     func updateUIView(_ editor: NumberedTextView, context: Context) {
+        editorKeyboard?.register(editor, preview: rendererPreview)
+        if rendererActive { keyboard?.register(editor, surface: .editor) }
         context.coordinator.parent = self
         if editor.text != text && editor.markedTextRange == nil {
             let selected = editor.selectedRange; editor.text = text

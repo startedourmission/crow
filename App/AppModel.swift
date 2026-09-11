@@ -171,6 +171,7 @@ final class AppModel {
     var hasWorkspace: Bool { !states.isEmpty }
     var current: WorkspaceState { states.first(where: { $0.id == selectedWorkspaceID }) ?? states.first ?? emptyState }
     var workspaces: [Workspace] { states.map(\.snapshot.workspace) }
+    var localWorkspaces: [Workspace] { workspaces.filter { $0.kind == .local } }
     var selectedWorkspace: Workspace { current.snapshot.workspace }
     var workspaceTitle: String { selectedWorkspace.name }
     var files: [FileEntry] { current.files }
@@ -323,31 +324,37 @@ final class AppModel {
     }
 
     func openFolder(_ url: URL) {
-        let resolvedURL = url.resolvingSymlinksInPath()
-        let path = resolvedURL.path
+        // File-provider URLs must be scoped before even reading their metadata.
+        // Keep the exact URL supplied by Files alive for the workspace lifetime.
+        let accessed = url.startAccessingSecurityScopedResource()
+        var retainedAccess = false
+        defer { if accessed && !retainedAccess { url.stopAccessingSecurityScopedResource() } }
         do {
-            guard url.isFileURL, try resolvedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            guard url.isFileURL, try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
                 throw NSError(domain: "Crow.Folder", code: 1,
                     userInfo: [NSLocalizedDescriptionKey: "Choose a folder to open as a workspace."])
             }
-        } catch { report(error); return }
-        if let existing = states.first(where: { !$0.snapshot.workspace.isRemote && $0.snapshot.rootPath == path }) {
-            sidebarPane = .files; sidebarVisible = true
-            selectWorkspace(existing.id); return
-        }
-        let accessed = url.startAccessingSecurityScopedResource()
-        do {
-            // macOS is intentionally unsandboxed for local shells. App-scoped
-            // bookmarks unnecessarily depend on signing identity and can fail
-            // after an in-place debug rebuild. Ordinary bookmarks still track
-            // moved folders without depending on scopedbookmarksagent.
+            let path = url.resolvingSymlinksInPath().path
+            // iOS bookmarks retain the document picker's grant. macOS uses
+            // ordinary bookmarks because its local-shell app is unsandboxed.
             let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            if let existing = states.first(where: { !$0.snapshot.workspace.isRemote && $0.snapshot.rootPath == path }) {
+                // Picking the folder again renews access without losing open edits.
+                if accessed {
+                    let previousAccess = existing.accessURL
+                    existing.accessURL = url; retainedAccess = true
+                    previousAccess?.stopAccessingSecurityScopedResource()
+                }
+                if existing.snapshot.bookmark != nil || path != vaultURL.path { existing.snapshot.bookmark = bookmark }
+                sidebarPane = .files; sidebarVisible = true
+                selectWorkspace(existing.id); return
+            }
             let state = WorkspaceState(.init(workspace: Workspace(name: url.lastPathComponent, kind: .local, connection: .local),
                 rootPath: path, bookmark: bookmark))
-            if accessed { state.accessURL = url }
+            if accessed { state.accessURL = url; retainedAccess = true }
             states.append(state); sidebarPane = .files; sidebarVisible = true
             selectWorkspace(state.id)
-        } catch { if accessed { url.stopAccessingSecurityScopedResource() }; report(error) }
+        } catch { report(error) }
     }
 
     private func restoreAccess(_ state: WorkspaceState) {
@@ -364,8 +371,11 @@ final class AppModel {
             #if os(macOS)
             // Upgrade saved app-scoped bookmarks to ordinary macOS bookmarks.
             state.snapshot.bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            #else
+            if stale {
+                state.snapshot.bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            }
             #endif
-            if stale { statusMessage = "Reopen \(state.snapshot.workspace.name) if folder access fails." }
         } catch {
             #if os(macOS)
             // Legacy scoped bookmarks can outlive a development signing identity.

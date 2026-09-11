@@ -512,6 +512,36 @@ final class CrowAppTests: XCTestCase {
         XCTAssertEqual(model.selectedWorkspaceID, selectedID)
     }
 
+    @MainActor func testRepickingFolderRenewsBookmarkWithoutDiscardingEdits() throws {
+        let model = fixture()
+        let directory = model.vaultURL.appendingPathComponent("AutoVault", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("note.md")
+        try Data("saved".utf8).write(to: file)
+        model.openFolder(directory)
+        let workspaceID = model.selectedWorkspaceID, count = model.workspaces.count
+        model.openFile(FileEntry(name: "note.md", path: file.path, isDirectory: false))
+        let bufferID = try XCTUnwrap(model.selectedBufferID)
+        model.updateBufferText(bufferID, "unsaved edit")
+        let broken = Data("expired folder access".utf8)
+        model.current.snapshot.bookmark = broken
+        model.openFolder(directory)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.workspaces.count, count)
+        XCTAssertEqual(model.selectedWorkspaceID, workspaceID)
+        XCTAssertEqual(model.selectedBufferID, bufferID)
+        XCTAssertEqual(model.selectedBuffer?.text, "unsaved edit")
+        XCTAssertEqual(model.selectedBuffer?.isDirty, true)
+        XCTAssertNotEqual(model.current.snapshot.bookmark, broken)
+        model.persist()
+        let restored = AppModel(vaultURL: model.vaultURL)
+        defer { restored.shutdown() }
+        XCTAssertNil(restored.errorMessage)
+        XCTAssertEqual(restored.selectedWorkspaceID, workspaceID)
+        XCTAssertEqual(restored.selectedBuffer?.text, "unsaved edit")
+        XCTAssertEqual(try TextFiles.read(file), "saved")
+    }
+
     #if os(macOS)
     @MainActor func testRestoreBrokenLegacyBookmarkUsingReadableSavedFolder() throws {
         let model = fixture()

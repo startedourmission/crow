@@ -4,16 +4,16 @@ import SwiftUI
 struct TerminalPanelView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.crowPhoneLayout) private var phoneLayout
     @State private var closeTerminalID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            CrowDivider()
+            if !phoneLayout { header; CrowDivider() }
             if let id = model.current.snapshot.selectedTerminalID {
                 HStack(spacing: 1) {
                     terminal(id)
-                    if model.current.snapshot.terminalSplit, sizeClass != .compact,
+                    if model.current.snapshot.terminalSplit, !phoneLayout, sizeClass != .compact,
                        let other = model.current.snapshot.terminalIDs.first(where: { $0 != id }) {
                         terminal(other)
                     }
@@ -36,8 +36,10 @@ struct TerminalPanelView: View {
             TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
                 .id(session.instanceID)
                 .task(id: session.instanceID) { session.start() }
-            Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
+            if !phoneLayout {
+                Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
+            }
         }
     }
 

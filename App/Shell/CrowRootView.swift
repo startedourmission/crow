@@ -3,6 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 struct CrowRootView: View {
@@ -12,11 +14,15 @@ struct CrowRootView: View {
 
     var body: some View {
         Group {
-            if sizeClass == .compact {
+            #if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .phone || sizeClass == .compact {
                 CompactWorkspaceView()
             } else {
                 RegularWorkspaceView()
             }
+            #else
+            RegularWorkspaceView()
+            #endif
         }
         .background(CrowTheme.bg0)
         .tint(CrowTheme.accent)
@@ -97,25 +103,36 @@ struct RegularWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            #if !os(macOS)
-            WorkspaceSwitcher()
+            #if os(iOS)
+            HStack(spacing: 4) {
+                Button { model.sidebarVisible.toggle() } label: {
+                    Image(systemName: "sidebar.left").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+                .accessibilityIdentifier("crow.sidebar-toggle")
+                WorkspaceSwitcher()
+                Button { model.inspectorVisible.toggle() } label: {
+                    Image(systemName: "sidebar.right").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(model.inspectorVisible ? "Hide Right Sidebar" : "Show Right Sidebar")
+                .accessibilityIdentifier("crow.inspector-toggle")
+            }
+            .buttonStyle(CrowButtonStyle()).crowForeground(CrowTheme.textDim)
+            .background(CrowTheme.bg1)
+            CrowDivider()
             #endif
             GeometryReader { workspaceGeometry in
               let inspectorWidth = min(max(200, liveInspectorWidth ?? savedInspectorWidth), max(200, workspaceGeometry.size.width * 0.35))
-              #if os(macOS)
-              let sidebarAvailable = workspaceGeometry.size.width - (model.inspectorVisible ? inspectorWidth + 6 : 0)
-              #else
-              let sidebarAvailable = workspaceGeometry.size.width
-              #endif
+              let sidebarAvailable = workspaceGeometry.size.width - (model.inspectorVisible ? inspectorWidth + ResizeHandle.thickness : 0)
               HStack(spacing: 0) {
                 ActivityBar()
                     #if os(macOS)
-                    .padding(.top, 40)
+                    .padding(.top, SidebarTopBar.height)
                     .background(CrowTheme.bg1)
                     .windowDragBackground()
                     .overlay(alignment: .top) { WindowDragRegion().frame(height: 12) }
                     .overlay(alignment: .top) {
-                        CrowDivider().padding(.top, 40).allowsHitTesting(false)
+                        CrowDivider().padding(.top, SidebarTopBar.height).allowsHitTesting(false)
                     }
                     #endif
                 if model.sidebarVisible {
@@ -135,7 +152,7 @@ struct RegularWorkspaceView: View {
                         .overlay(alignment: .leading) {
                             Rectangle().fill(CrowTheme.border).frame(width: 1)
                                 #if os(macOS)
-                                .padding(.top, 40)
+                                .padding(.top, SidebarTopBar.height)
                                 #endif
                                 .allowsHitTesting(false)
                         }
@@ -157,11 +174,10 @@ struct RegularWorkspaceView: View {
                 #if os(macOS)
                 .overlay(alignment: .topLeading) {
                     if !model.sidebarVisible {
-                        SidebarTopBar(height: 36).frame(width: SidebarTopBar.collapsedWidth)
+                        SidebarTopBar().frame(width: SidebarTopBar.collapsedWidth)
                     }
                 }
                 #endif
-                #if os(macOS)
                 if model.inspectorVisible {
                     ResizeHandle(axis: .horizontal, label: "Resize right sidebar", onDrag: { translation in
                         if inspectorDragStart == nil { inspectorDragStart = inspectorWidth }
@@ -173,7 +189,6 @@ struct RegularWorkspaceView: View {
                     })
                     InspectorPanel().frame(width: inspectorWidth)
                 }
-                #endif
               }
               .transaction { $0.animation = nil }
             }
@@ -186,45 +201,252 @@ struct RegularWorkspaceView: View {
     }
 }
 
+private struct CrowPhoneLayoutKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var crowPhoneLayout: Bool {
+        get { self[CrowPhoneLayoutKey.self] }
+        set { self[CrowPhoneLayoutKey.self] = newValue }
+    }
+}
+
+#if os(iOS)
+/// Keeps keyboard restoration scoped to the input currently displayed in this workspace.
+@MainActor final class PhoneKeyboardFocus {
+    private final class Input {
+        weak var view: UIView?
+        var focus: (() -> Void)?
+        init(view: UIView, focus: (() -> Void)?) { self.view = view; self.focus = focus }
+    }
+    private var inputs: [CompactSurface: Input] = [:]
+
+    func register(_ view: UIView, surface: CompactSurface, focus: (() -> Void)? = nil) {
+        inputs[surface] = Input(view: view, focus: focus)
+    }
+
+    @discardableResult func show(for surface: CompactSurface) -> Bool {
+        guard let input = inputs[surface], let view = input.view, view.window != nil else { return false }
+        if let focus = input.focus { focus(); return true }
+        return view.becomeFirstResponder()
+    }
+
+    func transition(from previous: CompactSurface, to next: CompactSurface) {
+        guard let view = inputs[previous]?.view, containsFirstResponder(view) else { return }
+        // Both input views remain mounted, so UIKit can transfer focus without
+        // dismissing and presenting the keyboard between document and shell.
+        if (next == .editor || next == .terminal), show(for: next) { return }
+        view.endEditing(true)
+    }
+
+    private func containsFirstResponder(_ view: UIView) -> Bool {
+        view.isFirstResponder || view.subviews.contains(where: containsFirstResponder)
+    }
+}
+
+private struct PhoneKeyboardFocusKey: EnvironmentKey {
+    static let defaultValue: PhoneKeyboardFocus? = nil
+}
+
+extension EnvironmentValues {
+    var phoneKeyboardFocus: PhoneKeyboardFocus? {
+        get { self[PhoneKeyboardFocusKey.self] }
+        set { self[PhoneKeyboardFocusKey.self] = newValue }
+    }
+}
+
 struct CompactWorkspaceView: View {
     @Environment(AppModel.self) private var model
+    @State var keyboard = PhoneKeyboardFocus()
 
     var body: some View {
-        VStack(spacing: 0) {
-            WorkspaceSwitcher()
-            Picker("Surface", selection: Bindable(model).compactSurface) {
-                Text("Hosts").tag(CompactSurface.hosts)
-                Text("Files").tag(CompactSurface.files)
-                Text("Editor").tag(CompactSurface.editor)
-                Text("Terminal").tag(CompactSurface.terminal)
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(CrowTheme.bg1)
-
-            Group {
-                if !model.hasWorkspace && model.compactSurface != .hosts {
-                    EmptyWorkspaceView()
-                } else {
-                    switch model.compactSurface {
-                    case .hosts, .files:
+        Group {
+            if !model.hasWorkspace && model.compactSurface != .hosts {
+                EmptyWorkspaceView()
+            } else {
+                ZStack {
+                    if model.compactSurface == .hosts || model.compactSurface == .files {
                         SidebarView()
-                    case .editor:
+                    }
+                    if model.hasWorkspace {
                         EditorAreaView()
-                    case .terminal:
+                            .opacity(model.compactSurface == .editor ? 1 : 0)
+                            .allowsHitTesting(model.compactSurface == .editor)
+                            .accessibilityHidden(model.compactSurface != .editor)
                         TerminalPanelView()
+                            .opacity(model.compactSurface == .terminal ? 1 : 0)
+                            .allowsHitTesting(model.compactSurface == .terminal)
+                            .accessibilityHidden(model.compactSurface != .terminal)
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            StatusBarView()
-                .contextMenu { Button("Settings…") { model.settingsVisible = true } }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.crowPhoneLayout, true)
         .background(CrowTheme.bg0)
+        .safeAreaInset(edge: .bottom, spacing: 0) { PhoneWorkspaceBar() }
+        .environment(\.phoneKeyboardFocus, keyboard)
+        .onChange(of: model.compactSurface) { previous, next in
+            keyboard.transition(from: previous, to: next)
+        }
     }
 }
+
+/// One thumb-reachable bar above the keyboard; the work area has no app header.
+private struct PhoneWorkspaceBar: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.phoneKeyboardFocus) private var keyboard
+    @State private var keyboardVisible = false
+
+    private var title: String {
+        switch model.compactSurface {
+        case .hosts: return "Hosts"
+        case .editor: return model.selectedBuffer.map { $0.title + ($0.isDirty ? " •" : "") } ?? "Editor"
+        case .files, .terminal:
+            if case .remote(let id, _) = model.selectedWorkspace.kind,
+               let host = model.hosts.first(where: { $0.id == id }) { return host.hostname }
+            return model.hasWorkspace ? model.selectedWorkspace.name : "Crow"
+        }
+    }
+    private var symbol: String {
+        switch model.compactSurface {
+        case .hosts: "server.rack"
+        case .files: "folder"
+        case .editor: "doc.text"
+        case .terminal: "terminal"
+        }
+    }
+    private var canClose: Bool {
+        model.compactSurface == .editor ? model.selectedBufferID != nil
+            : model.compactSurface == .terminal && model.current.snapshot.selectedTerminalID != nil
+    }
+
+    private var otherSurfaces: [CompactSurface] {
+        [.terminal, .editor, .files].filter { $0 != model.compactSurface }
+    }
+    private var canShowKeyboard: Bool {
+        switch model.compactSurface {
+        case .terminal: return model.hasWorkspace && model.current.snapshot.selectedTerminalID != nil
+        case .editor: return model.selectedBuffer != nil
+        case .hosts, .files: return false
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 0) {
+                Button { model.showHosts() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: symbol).font(.system(size: 17))
+                        Text(title).font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, 12).padding(.trailing, canClose ? 0 : 12)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Show Hosts and Workspaces")
+                .accessibilityIdentifier("crow.phone.hosts")
+                if canClose {
+                    Button {
+                        if model.compactSurface == .editor, let id = model.selectedBufferID { model.closeBuffer(id) }
+                        else { model.terminalCloseRequest = model.current.snapshot.selectedTerminalID }
+                    } label: {
+                        Image(systemName: "xmark.circle").font(.system(size: 16))
+                            .frame(width: 36, height: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(model.compactSurface == .editor ? "Close File" : "Close Terminal")
+                }
+            }
+            .background(CrowTheme.bg2, in: RoundedRectangle(cornerRadius: 5))
+            .accessibilityIdentifier("crow.phone.session")
+
+            ForEach(otherSurfaces, id: \.self) { surfaceButton($0) }
+            if canShowKeyboard && !keyboardVisible {
+                Button { keyboard?.show(for: model.compactSurface) } label: { controlIcon("keyboard") }
+                    .accessibilityLabel("Show Keyboard").accessibilityIdentifier("crow.phone.keyboard")
+            } else {
+                Menu {
+                    sessionMenu
+                    generalMenu
+                    if keyboardVisible {
+                        Button("Hide Keyboard", systemImage: "keyboard.chevron.compact.down", action: hideKeyboard)
+                    }
+                } label: { controlIcon("square.grid.2x2") }
+                    .accessibilityLabel("Session and Settings").accessibilityIdentifier("crow.phone.screens")
+            }
+        }
+        .buttonStyle(CrowButtonStyle())
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .foregroundStyle(CrowTheme.accent)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(CrowTheme.bg1)
+        .overlay(alignment: .top) { CrowDivider().allowsHitTesting(false) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardVisible = false
+        }
+        .accessibilityIdentifier("crow.phone.navigation")
+    }
+
+    private func controlIcon(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 18, weight: .regular))
+            .crowForeground(CrowTheme.textDim)
+            .frame(width: 44, height: 44).contentShape(Rectangle())
+    }
+    private func surfaceButton(_ surface: CompactSurface) -> some View {
+        let label = surface == .terminal ? "Terminal" : surface == .editor ? "Editor" : "Files"
+        let icon = surface == .terminal ? "terminal" : surface == .editor ? "doc.text" : "folder"
+        return Button { navigate(surface) } label: { controlIcon(icon) }
+            .accessibilityLabel(label).accessibilityIdentifier("crow.phone.surface.\(surface.rawValue)")
+    }
+
+    @ViewBuilder private var generalMenu: some View {
+        Button("Settings…", systemImage: "gearshape") { model.settingsVisible = true }
+            .accessibilityIdentifier("crow.phone.settings")
+    }
+
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    private func navigate(_ surface: CompactSurface) {
+        model.compactSurface = surface
+    }
+
+    @ViewBuilder private var sessionMenu: some View {
+        if model.compactSurface == .terminal {
+            Button("New Terminal", systemImage: "plus") { model.newTerminal() }
+                .disabled(!model.hasWorkspace)
+            ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
+                Button {
+                    model.current.snapshot.selectedTerminalID = id; model.schedulePersist()
+                } label: {
+                    Label("Terminal \(index + 1)", systemImage: id == model.current.snapshot.selectedTerminalID ? "checkmark" : "terminal")
+                }
+            }
+            if model.selectedWorkspace.isRemote {
+                Button("Reconnect", systemImage: "arrow.clockwise") { model.reconnectCurrent() }
+                Button("Disconnect", systemImage: "network.slash") { model.disconnectCurrent() }
+            }
+            Divider()
+        } else if model.compactSurface == .editor {
+            ForEach(model.buffers) { buffer in
+                Button { model.selectedBufferID = buffer.id } label: {
+                    Label(buffer.title + (buffer.isDirty ? " •" : ""), systemImage: buffer.id == model.selectedBufferID ? "checkmark" : "doc.text")
+                }
+            }
+            Button("Save File", systemImage: "square.and.arrow.down") { model.saveSelectedBuffer() }
+                .disabled(model.selectedBuffer == nil)
+            Divider()
+        }
+    }
+}
+#endif
 
 private struct EmptyWorkspaceView: View {
     @Environment(AppModel.self) private var model
@@ -241,7 +463,12 @@ private struct EmptyWorkspaceView: View {
 
 enum SplitSizing {
     static func sidebarWidth(_ proposed: CGFloat, available: CGFloat) -> CGFloat {
-        min(max(180, proposed), max(180, min(520, available - CrowTheme.activityWidth - 326)))
+        #if os(iOS)
+        let contentReserve: CGFloat = 200 + ResizeHandle.thickness
+        #else
+        let contentReserve: CGFloat = 326
+        #endif
+        return min(max(180, proposed), max(180, min(520, available - CrowTheme.activityWidth - contentReserve)))
     }
     static func terminalHeight(_ proposed: CGFloat, available: CGFloat) -> CGFloat {
         let maximum = max(0, available - 126) // editor + divider
@@ -250,6 +477,11 @@ enum SplitSizing {
 }
 
 struct ResizeHandle: View {
+    #if os(macOS)
+    nonisolated static let thickness: CGFloat = 6
+    #else
+    nonisolated static let thickness: CGFloat = 20
+    #endif
     let axis: Axis
     let label: String
     let onDrag: (CGFloat) -> Void
@@ -263,7 +495,10 @@ struct ResizeHandle: View {
             #if os(macOS)
             NativeResizeHandle(axis: axis, label: label, onDrag: onDrag, onEnd: onEnd)
             #else
-            Color.clear.contentShape(Rectangle()).gesture(
+            Capsule().fill(CrowTheme.textDim.opacity(0.45))
+                .frame(width: axis == .horizontal ? 3 : 28, height: axis == .vertical ? 3 : 28)
+                .allowsHitTesting(false)
+            Color.clear.contentShape(Rectangle()).highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         onDrag(axis == .horizontal ? value.translation.width : value.translation.height)
@@ -272,8 +507,17 @@ struct ResizeHandle: View {
             )
             #endif
         }
-        .frame(width: axis == .horizontal ? 6 : nil, height: axis == .vertical ? 6 : nil)
+        .frame(width: axis == .horizontal ? Self.thickness : nil, height: axis == .vertical ? Self.thickness : nil)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: onDrag(20)
+            case .decrement: onDrag(-20)
+            @unknown default: return
+            }
+            onEnd()
+        }
     }
 }
 

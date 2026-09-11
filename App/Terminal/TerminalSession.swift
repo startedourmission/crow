@@ -106,7 +106,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             local.startProcess(executable: "/bin/zsh", args: ["-l"], environment: shellEnvironment, currentDirectory: directory)
             running = local.process.running; title = "zsh"; status = running ? "Running" : "Could not start shell"
             #else
-            status = "Connect with ssh user@host using the SSH command button."
+            status = "Open Hosts to connect to an SSH server."
             view.feed(text: status + "\r\n")
             #endif
         case .remote:
@@ -198,6 +198,20 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
 /// SwiftTerm repairs separately committed Korean finals, but not compound vowels.
 /// Use its input buffer so UIKit's context and the PTY receive the same correction.
 class CrowIOSTerminalView: SwiftTerm.TerminalView {
+    private var regularAccessory: UIView?
+
+    func setPhoneAccessory(_ enabled: Bool) {
+        if enabled {
+            guard !(inputAccessoryView is CrowPhoneTerminalAccessory) else { return }
+            regularAccessory = inputAccessoryView
+            inputAccessoryView = CrowPhoneTerminalAccessory(terminal: self)
+        } else {
+            guard inputAccessoryView is CrowPhoneTerminalAccessory else { return }
+            inputAccessoryView = regularAccessory; regularAccessory = nil
+        }
+        if isFirstResponder { reloadInputViews() }
+    }
+
     override func insertText(_ text: String) {
         guard textInputMode?.primaryLanguage?.hasPrefix("ko") == true,
               !controlModifier, !metaModifier,
@@ -219,6 +233,68 @@ class CrowIOSTerminalView: SwiftTerm.TerminalView {
         super.deleteBackward()
         super.insertText(String(composed))
     }
+}
+
+private final class CrowPhoneTerminalAccessory: UIInputView {
+    private weak var terminal: CrowIOSTerminalView?
+    private weak var controlButton: UIButton?
+
+    init(terminal: CrowIOSTerminalView) {
+        self.terminal = terminal
+        super.init(frame: CGRect(x: 0, y: 0, width: terminal.bounds.width, height: 44), inputViewStyle: .keyboard)
+        backgroundColor = UIColor(CrowTheme.bg1)
+        let row = UIStackView()
+        row.axis = .horizontal; row.distribution = .fillEqually
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            row.topAnchor.constraint(equalTo: topAnchor), row.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        func key(_ title: String, label: String, symbol: String? = nil, action: @escaping @MainActor () -> Void) -> UIButton {
+            let button = UIButton(type: .system)
+            button.setTitle(symbol == nil ? title : nil, for: .normal)
+            if let symbol { button.setImage(UIImage(systemName: symbol), for: .normal) }
+            button.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
+            button.titleLabel?.numberOfLines = 2
+            button.titleLabel?.textAlignment = .center
+            button.tintColor = UIColor(CrowTheme.accent)
+            button.layer.cornerRadius = 5
+            button.accessibilityLabel = label
+            button.accessibilityIdentifier = "crow.terminal.key.\(label)"
+            button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+            row.addArrangedSubview(button)
+            return button
+        }
+        _ = key("esc", label: "Escape") { [weak terminal] in terminal?.send([0x1b]) }
+        _ = key("tab", label: "Tab") { [weak terminal] in terminal?.send([0x09]) }
+        controlButton = key("ctrl", label: "Control") { [weak self, weak terminal] in
+            terminal?.controlModifier.toggle(); self?.updateControl()
+        }
+        _ = key("shift\ntab", label: "Shift Tab") { [weak terminal] in terminal?.send([0x1b, 0x5b, 0x5a]) }
+        _ = key("◀", label: "Left") { [weak self] in self?.sendArrow(0x44) }
+        _ = key("▲", label: "Up") { [weak self] in self?.sendArrow(0x41) }
+        _ = key("▼", label: "Down") { [weak self] in self?.sendArrow(0x42) }
+        _ = key("▶", label: "Right") { [weak self] in self?.sendArrow(0x43) }
+        _ = key("%", label: "Percent") { [weak terminal] in terminal?.insertText("%") }
+        _ = key("", label: "Hide Keyboard", symbol: "keyboard.chevron.compact.down") { [weak terminal] in _ = terminal?.resignFirstResponder() }
+        NotificationCenter.default.addObserver(self, selector: #selector(updateControl), name: .terminalViewControlModifierReset, object: terminal)
+    }
+
+    @objc private func updateControl() {
+        let active = terminal?.controlModifier == true
+        controlButton?.isSelected = active
+        controlButton?.backgroundColor = active ? UIColor(CrowTheme.bg3) : .clear
+    }
+
+    private func sendArrow(_ direction: UInt8) {
+        guard let terminal else { return }
+        terminal.send([0x1b, terminal.getTerminal().applicationCursor ? 0x4f : 0x5b, direction])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit { NotificationCenter.default.removeObserver(self) }
 }
 #endif
 

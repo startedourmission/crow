@@ -4,7 +4,8 @@ import SwiftUI
 #if os(macOS)
 struct SidebarTopBar: View {
     @Environment(AppModel.self) private var model
-    var height: CGFloat = 40
+    // Match the workspace tab header so its divider continues across the window.
+    static let height: CGFloat = 36
     // Traffic-light clearance, horizontal padding, and the reopen button.
     static let collapsedWidth: CGFloat = 36 + 24 + 28
 
@@ -25,7 +26,7 @@ struct SidebarTopBar: View {
         .crowForeground(CrowTheme.textDim)
         .padding(.horizontal, 12)
         .padding(.leading, 36) // Leave room for the native traffic lights.
-        .frame(height: height)
+        .frame(height: Self.height)
         .background(CrowTheme.bg1)
         .windowDragBackground()
     }
@@ -34,6 +35,7 @@ struct SidebarTopBar: View {
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.crowPhoneLayout) private var phoneLayout
     @State private var naming = false
     @State private var entryName = ""
     @State private var renameEntry: FileEntry?
@@ -48,7 +50,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
+            sidebarHeader
             #if !os(macOS)
             CrowDivider()
             #endif
@@ -99,7 +101,7 @@ struct SidebarView: View {
         } message: { _ in Text("The saved credentials will be removed from this device. Server files will not be changed.") }
     }
 
-    private var header: some View {
+    private var sidebarHeader: some View {
         HStack {
             if model.sidebarPane == .hosts {
                 Text("HOSTS")
@@ -110,10 +112,20 @@ struct SidebarView: View {
             if model.sidebarPane == .files {
                 toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
                 toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
+                #if os(iOS)
+                Button {
+                    if model.hasWorkspace && model.selectedWorkspace.isRemote { choosingProject = true }
+                    else { model.folderImporterVisible = true }
+                } label: { toolbarIcon("folder") }
+                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Choose Folder")
+                    .accessibilityIdentifier("crow.files.choose-folder")
+                    .disabled(model.selectedWorkspace.connection == .connecting)
+                #else
                 if model.hasWorkspace && model.selectedWorkspace.isRemote {
                     toolbarButton("Choose Remote Project Folder", symbol: "folder") { choosingProject = true }
                         .disabled(model.selectedWorkspace.connection == .connecting)
                 }
+                #endif
                 Spacer(minLength: 0)
                     #if os(macOS)
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
@@ -129,21 +141,31 @@ struct SidebarView: View {
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
                     #endif
                 #if os(iOS)
-                Button { model.editHost() } label: { Label("Add Host", systemImage: "plus") }
-                    .buttonStyle(CrowButtonStyle()).accessibilityIdentifier("crow.host.add")
+                Button { model.sshCommandVisible = true } label: { toolbarIcon("plus") }
+                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Add SSH Host")
+                    .accessibilityIdentifier("crow.host.add")
+                Button { model.folderImporterVisible = true } label: { toolbarIcon("folder.badge.plus") }
+                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Open Folder")
+                    .accessibilityIdentifier("crow.host.open-folder")
+                Button { model.settingsVisible = true } label: { toolbarIcon("gearshape") }
+                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Settings")
                 #else
                 Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.buttonStyle(CrowButtonStyle()).help("SSH Command").windowDragExcluded()
                 #endif
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 40)
+        .frame(height: phoneLayout ? 44 : 40)
+    }
+
+    private func toolbarIcon(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 14)).crowForeground(CrowTheme.textDim)
+            .frame(width: phoneLayout ? 44 : 28, height: phoneLayout ? 44 : 28).contentShape(Rectangle())
     }
 
     private func toolbarButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 14)).crowForeground(CrowTheme.textDim)
-                .frame(width: 28, height: 28).contentShape(Rectangle())
+            toolbarIcon(symbol)
         }
         .buttonStyle(CrowButtonStyle()).help(title).accessibilityLabel(title).disabled(!model.hasWorkspace)
         .windowDragExcluded()
@@ -247,6 +269,10 @@ struct SidebarView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(CrowButtonStyle())
+            #if os(iOS)
+            .listRowInsets(EdgeInsets(top: 5, leading: 4, bottom: 5, trailing: 8))
+            .listRowSeparator(.hidden)
+            #endif
             .overlay { if dropFolder == entry.path { RoundedRectangle(cornerRadius: 4).stroke(CrowTheme.accent, lineWidth: 1).allowsHitTesting(false) } }
             .listRowBackground((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? CrowTheme.fileSelection : Color.clear)
             .accessibilityAddTraits((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? .isSelected : [])
@@ -269,7 +295,12 @@ struct SidebarView: View {
             .windowDragExcluded()
             #endif
         }
+        #if os(iOS)
+        .listStyle(.plain)
+        .contentMargins(.horizontal, 0, for: .scrollContent)
+        #else
         .listStyle(.sidebar)
+        #endif
         .scrollContentBackground(.hidden)
         #if os(macOS)
         .overlay { NativeExplorerFileDrop(model: model, folder: $dropFolder) }
@@ -329,7 +360,62 @@ struct SidebarView: View {
     }
 
     private var hostsList: some View {
-        List(model.hosts) { (host: SSHHost) in
+        List {
+            #if os(iOS)
+            if !model.localWorkspaces.isEmpty {
+                Section("Workspaces") {
+                    ForEach(model.localWorkspaces) { workspace in
+                        HStack(spacing: 8) {
+                            Button {
+                                model.selectWorkspace(workspace.id, showFiles: false)
+                                model.compactSurface = .files
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder")
+                                        .crowForeground(CrowTheme.textDim)
+                                    Text(workspace.name).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                    if workspace.id == model.selectedWorkspaceID { Image(systemName: "checkmark") }
+                                }.frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(CrowButtonStyle())
+                            Menu {
+                                Button("New Terminal", systemImage: "terminal") { model.newTerminal(inWorkspace: workspace.id) }
+                                Button("Remove Workspace…", systemImage: "trash", role: .destructive) { model.requestWorkspaceRemoval(workspace.id) }
+                            } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                                .buttonStyle(CrowButtonStyle()).accessibilityLabel("Options for \(workspace.name)")
+                        }.listRowBackground(Color.clear)
+                    }
+                }
+            }
+            Section("SSH Hosts") {
+                if model.hosts.isEmpty {
+                    Text("Use + to add an SSH host.").font(.caption).crowForeground(CrowTheme.textDim)
+                        .listRowBackground(Color.clear)
+                }
+                hostRows
+            }
+            #else
+            hostRows
+            #endif
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .accessibilityIdentifier("crow.hosts.workspaces")
+        .safeAreaInset(edge: .bottom) {
+            #if os(iOS)
+            if !model.hosts.isEmpty {
+                Text("Tap a host to connect. Use its status icon to connect or disconnect.")
+                    .font(.caption).foregroundStyle(CrowTheme.textDim).padding(12)
+            }
+            #else
+            Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Click its status icon to connect or disconnect.")
+                .font(.system(size: 11)).crowForeground(CrowTheme.textDim).padding(12)
+            #endif
+        }
+    }
+
+    private var hostRows: some View {
+        ForEach(model.hosts) { (host: SSHHost) in
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Button {
@@ -373,6 +459,7 @@ struct SidebarView: View {
                         Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle())
                     }
                     .accessibilityLabel("Options for \(host.name)")
+                    .buttonStyle(.plain)
                     #endif
                 }
                 .contextMenu {
@@ -389,35 +476,6 @@ struct SidebarView: View {
             }
             .listRowBackground(Color.clear)
             .windowDragExcluded()
-        }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        #if os(iOS)
-        .overlay {
-            if model.hosts.isEmpty {
-                ContentUnavailableView {
-                    Label("No SSH Hosts", systemImage: "server.rack")
-                } description: {
-                    Text("Add a server with a password or import an SSH private key from Files.")
-                } actions: {
-                    Button("Add SSH Host") { model.editHost() }.buttonStyle(.borderedProminent)
-                    Button("Use SSH Command…") { model.sshCommandVisible = true }
-                }
-            }
-        }
-        #endif
-        .safeAreaInset(edge: .bottom) {
-            #if os(iOS)
-            if !model.hosts.isEmpty {
-                Text("Tap a host to open its terminal. Tap the green status icon to disconnect; use ••• to edit.")
-                    .font(.caption).foregroundStyle(CrowTheme.textDim).padding(12)
-            }
-            #else
-            Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Click its status icon to connect or disconnect.")
-                .font(.system(size: 11))
-                .crowForeground(CrowTheme.textDim)
-                .padding(12)
-            #endif
         }
     }
 

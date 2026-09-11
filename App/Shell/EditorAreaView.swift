@@ -5,15 +5,15 @@ import UniformTypeIdentifiers
 struct EditorAreaView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.crowPhoneLayout) private var phoneLayout
 
     var body: some View {
         VStack(spacing: 0) {
-            tabStrip
-            CrowDivider()
+            if !phoneLayout { tabStrip; CrowDivider() }
             if let buffer = model.selectedBuffer {
                 HStack(spacing: 1) {
                     CrowEditorView(buffer: buffer).id(buffer.id)
-                    if sizeClass != .compact, let splitID = model.current.snapshot.splitBufferID,
+                    if !phoneLayout, sizeClass != .compact, let splitID = model.current.snapshot.splitBufferID,
                        let split = model.buffers.first(where: { $0.id == splitID }) {
                         CrowEditorView(buffer: split).id("split-\(split.id.rawValue)")
                     }
@@ -105,6 +105,9 @@ struct CrowEditorView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     let buffer: OpenBuffer
     var isActive = false
+    #if os(iOS)
+    @State private var editorKeyboard = EditorKeyboardFocus()
+    #endif
     @State private var sourceForFind = false
     private var previewMarkdown: Bool {
         buffer.language == .markdown && model.markdownPreviewEnabled && !sourceForFind
@@ -148,23 +151,50 @@ struct CrowEditorView: View {
             .background(CrowTheme.bg0)
             .windowDragBackground()
 
-            if previewMarkdown, buffer.language == .markdown {
-                MarkdownPreviewView(text: textBinding, fontSize: model.settings.fontSize,
-                    onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest)
-            } else {
-                NativeEditor(text: textBinding, fontSize: model.settings.fontSize,
-                    indentWidth: model.settings.indentWidth, lineNumbers: model.settings.lineNumbers, findRequest: findRequest,
-                    onSave: { Task { await model.saveBuffer(buffer.id) } }, focused: isActive, locationRequest: locationRequest,
-                    findToggleRequest: findToggleRequest, onFindVisibility: {
-                        findVisible = $0
-                        if !$0 { sourceForFind = false }
-                    })
-                    .onAppear { if pendingFind { pendingFind = false; findRequest += 1 } }
+            #if os(iOS)
+            ZStack {
+                sourceEditor
+                    .opacity(previewMarkdown ? 0 : 1)
+                    .allowsHitTesting(!previewMarkdown)
+                    .accessibilityHidden(previewMarkdown)
+                    .environment(\.editorRendererActive, !previewMarkdown)
+                if buffer.language == .markdown {
+                    renderedEditor
+                        .opacity(previewMarkdown ? 1 : 0)
+                        .allowsHitTesting(previewMarkdown)
+                        .accessibilityHidden(!previewMarkdown)
+                        .environment(\.editorRendererActive, previewMarkdown)
+                        .environment(\.editorRendererPreview, true)
+                }
             }
+            .environment(\.editorKeyboardFocus, editorKeyboard)
+            .onChange(of: previewMarkdown, initial: true) { _, preview in
+                editorKeyboard.selectPreview(preview)
+                if !preview && pendingFind { pendingFind = false; findRequest += 1 }
+            }
+            #else
+            if previewMarkdown { renderedEditor } else { sourceEditor }
+            #endif
         }
         .onChange(of: model.documentFindRequest) { _, _ in
             if isActive { showFind() }
         }
+    }
+
+    private var renderedEditor: some View {
+        MarkdownPreviewView(text: textBinding, fontSize: model.settings.fontSize,
+            onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest)
+    }
+
+    private var sourceEditor: some View {
+        NativeEditor(text: textBinding, fontSize: model.settings.fontSize,
+            indentWidth: model.settings.indentWidth, lineNumbers: model.settings.lineNumbers, findRequest: findRequest,
+            onSave: { Task { await model.saveBuffer(buffer.id) } }, focused: isActive, locationRequest: locationRequest,
+            findToggleRequest: findToggleRequest, onFindVisibility: {
+                findVisible = $0
+                if !$0 { sourceForFind = false }
+            })
+            .onAppear { if pendingFind { pendingFind = false; findRequest += 1 } }
     }
 
     private func showFind() {
@@ -246,7 +276,7 @@ private struct WorkspaceSplitView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let available = max(0, (axis == .horizontal ? geometry.size.width : geometry.size.height) - 6)
+            let available = max(0, (axis == .horizontal ? geometry.size.width : geometry.size.height) - ResizeHandle.thickness)
             let minimum = min(100, available / 3)
             let size = min(max(minimum, liveSize ?? available * fraction), max(minimum, available - minimum))
             let handle = ResizeHandle(axis: axis == .horizontal ? .horizontal : .vertical, label: "Resize split", onDrag: { delta in

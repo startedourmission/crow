@@ -2,6 +2,97 @@ import XCTest
 import SwiftUI
 import CrowCore
 @testable import Crow
+#if os(iOS)
+import UIKit
+import WebKit
+
+final class IOSEditorIntegrationTests: XCTestCase {
+    @MainActor func testPhoneKeyboardRestoresSourceAndMarkdownEditor() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ios-editor-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        let id = try XCTUnwrap(model.selectedBufferID)
+        model.updateBufferText(id, "# Keyboard\n\nKeep this text.\n")
+        model.compactSurface = .editor
+        let keyboard = PhoneKeyboardFocus()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = UIHostingController(rootView: CompactWorkspaceView(keyboard: keyboard).environment(model))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        func descendants<T: UIView>(_ view: UIView, of type: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, of: type) }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let editor = try XCTUnwrap(descendants(window, of: NumberedTextView.self).first)
+        editor.selectedRange = NSRange(location: 5, length: 0)
+        for _ in 0..<2 {
+            keyboard.show(for: .editor)
+            XCTAssertTrue(editor.isFirstResponder)
+            XCTAssertEqual(editor.selectedRange.location, 5)
+            editor.resignFirstResponder()
+            XCTAssertFalse(editor.isFirstResponder)
+        }
+        keyboard.show(for: .editor)
+        try await Task.sleep(for: .milliseconds(400))
+        let terminalID = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        let terminal = try XCTUnwrap(model.current.terminals[terminalID])
+        let hidden = expectation(description: "Document/terminal switching must not hide the keyboard")
+        hidden.isInverted = true
+        let observer = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { _ in hidden.fulfill() }
+        model.compactSurface = .terminal
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(terminal.view.isFirstResponder)
+        XCTAssertFalse(editor.isFirstResponder)
+        model.compactSurface = .editor
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(editor.isFirstResponder)
+        XCTAssertEqual(editor.selectedRange.location, 5)
+        await fulfillment(of: [hidden], timeout: 0.2)
+        NotificationCenter.default.removeObserver(observer)
+        editor.resignFirstResponder()
+        model.compactSurface = .terminal
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(terminal.view.isFirstResponder, "A hidden keyboard must stay hidden when switching screens")
+        model.compactSurface = .editor
+        model.markdownPreviewEnabled = true
+        try await Task.sleep(for: .milliseconds(300))
+        let web = try XCTUnwrap(descendants(window, of: WKWebView.self).first)
+        for _ in 0..<100 {
+            if (try? await web.callAsyncJavaScript("return !!document.querySelector('[contenteditable=true]')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        for _ in 0..<2 {
+            keyboard.show(for: .editor)
+            let focused = try await web.callAsyncJavaScript("return document.activeElement?.isContentEditable", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+            XCTAssertEqual(focused, true)
+            _ = try await web.callAsyncJavaScript("document.activeElement.blur(); return true", arguments: [:], in: nil, contentWorld: .defaultClient)
+            window.endEditing(true)
+        }
+        keyboard.show(for: .editor)
+        try await Task.sleep(for: .milliseconds(300))
+        let modeHidden = expectation(description: "Switching Markdown render modes must not hide the keyboard")
+        modeHidden.isInverted = true
+        let modeObserver = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { _ in modeHidden.fulfill() }
+        for _ in 0..<2 {
+            model.markdownPreviewEnabled = false
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertTrue(editor.isFirstResponder, "Source mode must receive the existing keyboard focus")
+            model.markdownPreviewEnabled = true
+            try await Task.sleep(for: .milliseconds(200))
+            let focused = try await web.callAsyncJavaScript("return document.activeElement?.isContentEditable", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+            XCTAssertEqual(focused, true, "Rendered mode must receive the existing keyboard focus")
+        }
+        await fulfillment(of: [modeHidden], timeout: 0.2)
+        NotificationCenter.default.removeObserver(modeObserver)
+        window.endEditing(true)
+        model.markdownPreviewEnabled = false
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(editor.isFirstResponder, "Switching modes must not summon a keyboard the user hid")
+        XCTAssertEqual(model.selectedBuffer?.text, "# Keyboard\n\nKeep this text.\n")
+    }
+}
+#endif
 #if os(macOS)
 import AppKit
 import WebKit

@@ -1,27 +1,36 @@
 import CrowCore
 import SwiftUI
 
-#if os(macOS)
 struct InspectorPanel: View {
     @Environment(AppModel.self) private var model
     @State private var tab = "Summary"
     @State private var outline: [OutlineItem] = []
     @State private var outlineBufferID: BufferID?
     @State private var outlineSource = ""
+    #if os(macOS)
     @State private var repository: RepositorySnapshot?
     @State private var gitError: String?
     @State private var refreshing = false
     @State private var refreshID = UUID()
 
-    private var buffer: OpenBuffer? { model.inspectedBuffer }
     private var gitTaskID: String {
         "\(model.selectedWorkspaceID)-\(model.current.snapshot.rootPath)-\(model.selectedWorkspace.connection)-\(tab)-\(refreshID)"
+    }
+
+    #endif
+    private var buffer: OpenBuffer? { model.inspectedBuffer }
+    private var tabs: [String] {
+        #if os(macOS)
+        ["Summary", "Git"]
+        #else
+        ["Summary"]
+        #endif
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                ForEach(["Summary", "Git"], id: \.self) { item in
+                ForEach(tabs, id: \.self) { item in
                     Button { tab = item } label: {
                         Label(item, systemImage: item == "Summary" ? "list.bullet.indent" : "point.3.connected.trianglepath.dotted")
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
@@ -38,7 +47,11 @@ struct InspectorPanel: View {
             .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).frame(height: 36)
             .windowDragBackground()
             CrowDivider()
+            #if os(macOS)
             if tab == "Summary" { summary } else { git }
+            #else
+            summary
+            #endif
         }
         .background(CrowTheme.bg1)
         .crowForeground(CrowTheme.text)
@@ -52,6 +65,7 @@ struct InspectorPanel: View {
                 outline = items; outlineSource = buffer.text
             } catch {}
         }
+        #if os(macOS)
         .task(id: gitTaskID) {
             repository = nil; gitError = nil
             guard tab == "Git", model.hasWorkspace else { return }
@@ -71,6 +85,7 @@ struct InspectorPanel: View {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
+        #endif
     }
 
     private var summary: some View {
@@ -115,6 +130,7 @@ struct InspectorPanel: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    #if os(macOS)
     private var git: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -153,5 +169,5 @@ struct InspectorPanel: View {
             Spacer(minLength: 0)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
+    #endif
 }
-#endif

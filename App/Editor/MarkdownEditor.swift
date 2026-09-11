@@ -28,6 +28,8 @@ struct MarkdownPreviewView: View {
     var onSave: () -> Void = {}
     var failure: Binding<String?> = .constant(nil)
     var loaded = false
+    var readyForInput = false
+    var onReadyForInput: (Bool) -> Void = { _ in }
     var locationRequest: EditorLocationRequest?
     var lastLocation: UUID?
     private var renderTask: Task<Void, Never>?
@@ -57,6 +59,7 @@ struct MarkdownPreviewView: View {
             return
         }
         source = value
+        readyForInput = false; onReadyForInput(false)
         renderTask?.cancel()
         rendering = true
         let id = UUID(); renderID = id
@@ -81,7 +84,10 @@ struct MarkdownPreviewView: View {
                     guard let self, self.renderID == id else { return }
                     self.rendering = false; self.renderTask = nil
                     if case .failure(let error) = result { self.failure.wrappedValue = error.localizedDescription }
-                    else { self.navigate(webView) }
+                    else {
+                        self.readyForInput = true; self.onReadyForInput(true)
+                        self.navigate(webView)
+                    }
                 }
         }
     }
@@ -127,6 +133,11 @@ struct MarkdownPreviewView: View {
 }
 
 @MainActor private struct MarkdownWebView {
+    #if os(iOS)
+    @Environment(\.phoneKeyboardFocus) private var keyboard
+    @Environment(\.editorKeyboardFocus) private var editorKeyboard
+    @Environment(\.editorRendererActive) private var rendererActive
+    #endif
     @Binding var text: String
     let fontSize: Double
     var onSave: () -> Void
@@ -169,7 +180,16 @@ extension MarkdownWebView: NSViewRepresentable {
 #else
 extension MarkdownWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView { makeView(context.coordinator) }
-    func updateUIView(_ view: WKWebView, context: Context) { update(view, coordinator: context.coordinator) }
+    func updateUIView(_ view: WKWebView, context: Context) {
+        let focus: () -> Void = { [weak view] in
+            view?.becomeFirstResponder()
+            view?.evaluateJavaScript("document.querySelector('[contenteditable=true]')?.focus()", in: nil, in: .defaultClient)
+        }
+        editorKeyboard?.register(view, preview: true, ready: context.coordinator.readyForInput, focus: focus)
+        context.coordinator.onReadyForInput = { [weak editorKeyboard] in editorKeyboard?.renderedReady($0) }
+        if rendererActive { keyboard?.register(view, surface: .editor, focus: focus) }
+        update(view, coordinator: context.coordinator)
+    }
     static func dismantleUIView(_ view: WKWebView, coordinator: MarkdownNavigation) {
         coordinator.stop(); view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "markdown", contentWorld: .defaultClient)

@@ -97,6 +97,43 @@ private final class KoreanTerminalView: CrowIOSTerminalView {
 
 final class IOSTerminalIntegrationTests: XCTestCase {
     @MainActor
+    func testPhoneAccessorySendsTerminalKeysAndResetsControl() throws {
+        let view = CrowIOSTerminalView(frame: CGRect(x: 0, y: 0, width: 402, height: 400))
+        let original = view.inputAccessoryView
+        let coordinator = TerminalCoordinator()
+        view.terminalDelegate = coordinator
+        var sent: [UInt8] = []
+        coordinator.onBytes = { sent += $0 }
+        view.setPhoneAccessory(true)
+        let row = try XCTUnwrap(view.inputAccessoryView?.subviews.compactMap { $0 as? UIStackView }.first)
+        func button(_ label: String) throws -> UIButton {
+            try XCTUnwrap(row.arrangedSubviews.compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == label })
+        }
+        try button("Escape").sendActions(for: .touchUpInside)
+        try button("Tab").sendActions(for: .touchUpInside)
+        try button("Shift Tab").sendActions(for: .touchUpInside)
+        XCTAssertEqual(sent, [0x1b, 0x09, 0x1b, 0x5b, 0x5a])
+        sent = []
+        try button("Control").sendActions(for: .touchUpInside)
+        XCTAssertTrue(view.controlModifier)
+        view.insertText("c")
+        XCTAssertEqual(sent, [0x03])
+        XCTAssertFalse(view.controlModifier)
+        XCTAssertFalse(try button("Control").isSelected)
+        sent = []
+        try button("Left").sendActions(for: .touchUpInside)
+        try button("Right").sendActions(for: .touchUpInside)
+        XCTAssertEqual(sent, Array("\u{1b}[D\u{1b}[C".utf8))
+        sent = []
+        view.getTerminal().applicationCursor = true
+        try button("Up").sendActions(for: .touchUpInside)
+        try button("Down").sendActions(for: .touchUpInside)
+        XCTAssertEqual(sent, Array("\u{1b}OA\u{1b}OB".utf8))
+        view.setPhoneAccessory(false)
+        XCTAssertTrue(view.inputAccessoryView === original)
+    }
+
+    @MainActor
     func testVisibleSSHSessionReceivesPromptAndKeyboardInput() async throws {
         struct Fixture: Decodable {
             var port: Int
@@ -119,7 +156,8 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
         window.frame = scene.coordinateSpace.bounds
-        window.rootViewController = UIHostingController(rootView: CompactWorkspaceView().environment(model))
+        let keyboard = PhoneKeyboardFocus()
+        window.rootViewController = UIHostingController(rootView: CompactWorkspaceView(keyboard: keyboard).environment(model))
         window.makeKeyAndVisible()
         defer {
             window.isHidden = true
@@ -154,6 +192,27 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         session.view.insertText("\n")
         try await wait("SSH terminal did not execute UIKit input (\(session.status))") { screen().contains("__IOS_WORKS__") }
         XCTAssertNotNil(session.view.window, "The working terminal must be the one displayed on screen")
+        keyboard.show(for: .terminal)
+        model.compactSurface = .hosts
+        try await wait("Leaving Terminal did not release keyboard focus") { !session.view.isFirstResponder }
+        XCTAssertTrue(session.running, "Opening another screen must keep the SSH shell alive")
+        model.compactSurface = .terminal
+        XCTAssertNotNil(session.view.window, "Keep the terminal mounted so switching screens can transfer keyboard focus")
+        XCTAssertTrue(model.current.terminals[id] === session)
+        keyboard.show(for: .terminal)
+        XCTAssertTrue(session.view.isFirstResponder)
+        let accessory = try XCTUnwrap(session.view.inputAccessoryView)
+        let row = try XCTUnwrap(accessory.subviews.compactMap { $0 as? UIStackView }.first)
+        let hide = try XCTUnwrap(row.arrangedSubviews.compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Hide Keyboard" })
+        for _ in 0..<2 {
+            hide.sendActions(for: .touchUpInside)
+            XCTAssertFalse(session.view.isFirstResponder)
+            keyboard.show(for: .terminal)
+            XCTAssertTrue(session.view.isFirstResponder, "The bottom keyboard button must restore the displayed SSH terminal")
+        }
+        session.view.insertText("printf '__IOS_%s__\\n' RETURNED")
+        session.view.insertText("\n")
+        try await wait("Restored SSH terminal lost keyboard input") { screen().contains("__IOS_RETURNED__") }
     }
 
     @MainActor
