@@ -1,0 +1,15 @@
+# Template only. Generate from the final signed, notarized, stapled ZIP.
+cask "crow" do
+  version "@@VERSION@@"
+  sha256 "@@SHA256@@"
+
+  url "https://github.com/startedourmission/crow/releases/download/v#{version}/Crow-#{version}-arm64.zip"
+  name "Crow"
+  desc "SSH workspace with a terminal and text editor"
+  homepage "https://github.com/startedourmission/crow"
+
+  depends_on arch: :arm64
+  depends_on macos: ">= :sequoia"
+
+  app "Crow.app"
+end
