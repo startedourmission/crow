@@ -83,13 +83,14 @@ xcrun stapler validate /Applications/Crow.app
 
 `scripts/release-macos.sh` runs the same archive, notarization, stapling, and
 packaging process outside CI. It expects the signing certificate to already be in
-the active keychain and the five documented environment variables to be set:
+the active keychain. This Mac already has the reusable `oh-my-opensnap`
+`notarytool` keychain profile, so a local release can use it directly:
 
 ```sh
-APPLE_TEAM_ID=XXXXXXXXXX \
-NOTARY_KEY_PATH="$PWD/AuthKey_XXXXXXXXXX.p8" \
-NOTARY_KEY_ID=XXXXXXXXXX \
-NOTARY_ISSUER_ID=00000000-0000-0000-0000-000000000000 \
 SPARKLE_PUBLIC_ED_KEY=base64-public-key \
+NOTARY_PROFILE=oh-my-opensnap \
 scripts/release-macos.sh 0.1.0 dist
 ```
+
+CI may instead provide `NOTARY_KEY_PATH`, `NOTARY_KEY_ID`, and
+`NOTARY_ISSUER_ID` as described above.

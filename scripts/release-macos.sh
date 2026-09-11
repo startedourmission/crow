@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: APPLE_TEAM_ID=... NOTARY_KEY_PATH=... NOTARY_KEY_ID=... NOTARY_ISSUER_ID=... SPARKLE_PUBLIC_ED_KEY=... $0 <version> [output-directory]" >&2
+  echo "Usage: SPARKLE_PUBLIC_ED_KEY=... [NOTARY_PROFILE=oh-my-opensnap] $0 <version> [output-directory]" >&2
 }
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -34,17 +34,45 @@ for command_name in xcodebuild xcrun ditto codesign spctl shasum hdiutil; do
   fi
 done
 
-for variable_name in APPLE_TEAM_ID NOTARY_KEY_PATH NOTARY_KEY_ID NOTARY_ISSUER_ID SPARKLE_PUBLIC_ED_KEY; do
+APPLE_TEAM_ID="${APPLE_TEAM_ID:-M7NU9F8CZN}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+
+for variable_name in APPLE_TEAM_ID SPARKLE_PUBLIC_ED_KEY; do
   if [[ -z "${!variable_name:-}" ]]; then
     echo "Required environment variable is not set: $variable_name" >&2
     exit 64
   fi
 done
 
-if [[ ! -f "$NOTARY_KEY_PATH" ]]; then
-  echo "Notary API key not found: $NOTARY_KEY_PATH" >&2
-  exit 66
+if [[ -z "$NOTARY_PROFILE" ]]; then
+  for variable_name in NOTARY_KEY_PATH NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+    if [[ -z "${!variable_name:-}" ]]; then
+      echo "Set NOTARY_PROFILE, or provide $variable_name for API-key notarization." >&2
+      exit 64
+    fi
+  done
+  if [[ ! -f "$NOTARY_KEY_PATH" ]]; then
+    echo "Notary API key not found: $NOTARY_KEY_PATH" >&2
+    exit 66
+  fi
 fi
+
+submit_for_notarization() {
+  local artifact="$1"
+  if [[ -n "$NOTARY_PROFILE" ]]; then
+    xcrun notarytool submit "$artifact" \
+      --keychain-profile "$NOTARY_PROFILE" \
+      --wait \
+      --timeout 30m
+  else
+    xcrun notarytool submit "$artifact" \
+      --key "$NOTARY_KEY_PATH" \
+      --key-id "$NOTARY_KEY_ID" \
+      --issuer "$NOTARY_ISSUER_ID" \
+      --wait \
+      --timeout 30m
+  fi
+}
 
 mkdir -p "$project_root/build" "$output_directory"
 rm -rf "$archive_path" "$staging_directory" "$dmg_staging_directory"
@@ -106,12 +134,7 @@ fi
 ditto -c -k --keepParent "$app_path" "$submission_zip"
 
 echo "Submitting Crow to Apple's notary service..."
-xcrun notarytool submit "$submission_zip" \
-  --key "$NOTARY_KEY_PATH" \
-  --key-id "$NOTARY_KEY_ID" \
-  --issuer "$NOTARY_ISSUER_ID" \
-  --wait \
-  --timeout 30m
+submit_for_notarization "$submission_zip"
 
 echo "Stapling and validating the notarization ticket..."
 xcrun stapler staple "$app_path"
@@ -136,12 +159,7 @@ codesign \
   --sign 'Developer ID Application' \
   --timestamp \
   "$output_directory/$dmg_name"
-xcrun notarytool submit "$output_directory/$dmg_name" \
-  --key "$NOTARY_KEY_PATH" \
-  --key-id "$NOTARY_KEY_ID" \
-  --issuer "$NOTARY_ISSUER_ID" \
-  --wait \
-  --timeout 30m
+submit_for_notarization "$output_directory/$dmg_name"
 xcrun stapler staple "$output_directory/$dmg_name"
 xcrun stapler validate "$output_directory/$dmg_name"
 codesign --verify --verbose=2 "$output_directory/$dmg_name"
