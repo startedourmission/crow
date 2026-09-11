@@ -1,3 +1,5 @@
+<img src="App/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-256.png" alt="Crow app icon" width="128" height="128">
+
 # Crow
 
 Mac, iPhone, iPad에서 로컬 폴더와 SSH 서버를 한곳에서 다루는 개발 작업 공간입니다.
