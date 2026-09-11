@@ -25,6 +25,7 @@ style.textContent = `
 `;
 document.head.append(style);
 let source = '', records = [], loading = false, initialized = false, pending = null;
+let modifiers = {control: false, shift: false};
 const send = body => window.webkit.messageHandlers.markdown.postMessage(body);
 const shortcuts = Extension.create({
   name: 'crowShortcuts',
@@ -114,6 +115,14 @@ const editor = new Editor({
       editor.commands.insertContent(text, {contentType: 'markdown'}); return true;
     },
     handleDOMEvents: {
+      beforeinput(_view, event) {
+        if (event.isComposing || event.inputType !== 'insertText' || !event.data || (!modifiers.control && !modifiers.shift)) return false;
+        event.preventDefault();
+        const stroke = {key: event.data, ...modifiers};
+        modifiers = {control: false, shift: false};
+        send({action: 'keyboardModifiersConsumed'});
+        keyboardKey(stroke); return true;
+      },
       compositionend() {
         setTimeout(() => { if (pending) { const args = pending; pending = null; receive(...args); } }, 0);
         return false;
@@ -176,4 +185,33 @@ function jumpHeading(index) {
 function setFontSize(fontSize) {
   document.body.style.fontSize = Math.min(32, Math.max(11, fontSize)) + 'px';
 }
-window.crowMarkdown = { receive, jumpHeading, setFontSize };
+function insertText(text) {
+  editor.view.dispatch(editor.state.tr.insertText(text));
+}
+function keyboardKey(key) {
+  const name = key.key;
+  if ((key.control || key.command) && ['c', 'x', 'v'].includes(name.toLowerCase())) {
+    send({action: 'keyboardClipboard', key: name.toLowerCase(), text: window.getSelection()?.toString() ?? ''});
+    if (name.toLowerCase() === 'x') editor.commands.deleteSelection();
+    return;
+  }
+  if (name.startsWith('Arrow')) {
+    const selection = window.getSelection();
+    const direction = name === 'ArrowLeft' || name === 'ArrowUp' ? 'backward' : 'forward';
+    const granularity = name === 'ArrowUp' || name === 'ArrowDown' ? 'line' : key.option || key.control ? 'word' : 'character';
+    selection.modify(key.shift ? 'extend' : 'move', direction, granularity);
+    if (selection.anchorNode && selection.focusNode && editor.view.dom.contains(selection.anchorNode) && editor.view.dom.contains(selection.focusNode)) {
+      editor.commands.setTextSelection({from: editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset), to: editor.view.posAtDOM(selection.focusNode, selection.focusOffset)});
+    }
+    return;
+  }
+  const shortcut = (key.control || key.command ? 'Mod-' : '') + (key.option ? 'Alt-' : '') + (key.shift ? 'Shift-' : '') + name;
+  if (name === 'Tab') {
+    if (key.shift) { if (!editor.commands.liftListItem('listItem')) editor.commands.liftListItem('taskItem'); }
+    else if (!editor.commands.sinkListItem('listItem') && !editor.commands.sinkListItem('taskItem')) insertText('    ');
+  } else if (!editor.commands.keyboardShortcut(shortcut) && !key.control && !key.command && name.length === 1) {
+    insertText(key.shift ? name.toUpperCase() : name);
+  }
+}
+window.crowMarkdown = { receive, jumpHeading, setFontSize, insertText, key: keyboardKey,
+  setModifiers(control, shift) { modifiers = {control, shift}; } };

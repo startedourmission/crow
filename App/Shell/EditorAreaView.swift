@@ -116,6 +116,7 @@ struct CrowEditorView: View {
     @State private var pendingFind = false
     @State private var findToggleRequest = 0
     @State private var findVisible = false
+    @State private var confirmReload = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -151,6 +152,19 @@ struct CrowEditorView: View {
             .background(CrowTheme.bg0)
             .windowDragBackground()
 
+            if model.externallyChangedBuffers.contains(buffer.id) {
+                HStack {
+                    Label("Changed externally. Your edits are kept.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                    Spacer(minLength: 4)
+                    Button("Reload…") { confirmReload = true }.font(.caption)
+                }.padding(8).background(CrowTheme.bg1)
+            }
+            if let error = model.externalFileErrors[buffer.id] {
+                Text(error).font(.caption).foregroundStyle(CrowTheme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
+
             #if os(iOS)
             ZStack {
                 sourceEditor
@@ -178,6 +192,12 @@ struct CrowEditorView: View {
         }
         .onChange(of: model.documentFindRequest) { _, _ in
             if isActive { showFind() }
+        }
+        .task(id: buffer.path) { await model.observeBuffer(buffer.id) }
+        .confirmationDialog("Discard your edits and reload this file?", isPresented: $confirmReload, titleVisibility: .visible) {
+            Button("Discard Edits and Reload", role: .destructive) {
+                Task { await model.refreshBufferFromSource(buffer.id, discardChanges: true) }
+            }
         }
     }
 
@@ -488,6 +508,7 @@ private struct WorkspacePaneView: View {
                     session.view.window?.makeFirstResponder(session.view)
                     #endif
                 }
+            ImagePasteStatusView(session: session)
             Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
         }

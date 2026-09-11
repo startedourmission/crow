@@ -10,14 +10,17 @@
 		02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
 		038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 797792777CAD6CD2D456EBF8 /* SwiftTerm */; };
 		0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
+		0E711C041E0E67C8F8E62F44 /* InputToolsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */; };
 		109F8BFCD513C3877A0507F4 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
 		14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
 		167B5EB84C67FE7E6C59CE40 /* SystemSFTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */; };
 		196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
 		1B2340F02DCCA944C5F62B8D /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */; };
 		229AD114289C014C78DDE79A /* TerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */; };
+		253F8C86D5287A39C215DF77 /* SSHKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624990E2268E1F485C34E974 /* SSHKeyStore.swift */; };
 		26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
 		271182EE8B959D21CC270333 /* SSHCommandView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A093E56E71878F7439A35214 /* SSHCommandView.swift */; };
+		281688703B0CD69F2388B850 /* ExternalFileRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */; };
 		2AB4FD069ED3F003092DA0D9 /* markdown-editor.js in Resources */ = {isa = PBXBuildFile; fileRef = 7FACD1BCE145D0783FF32A74 /* markdown-editor.js */; };
 		2C65D5FA8F68B3A1C10435D2 /* EchoTerminalFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */; };
 		2D1746D6365899CA104A2172 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */; };
@@ -27,11 +30,15 @@
 		39F5CBE7547B34B6416D0A08 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B3B2623FE25570F04A96B0 /* GitRepository.swift */; };
 		3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
 		3BD61F6E38C75029D729A6EA /* SystemSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */; };
+		431248865C8AACDEC12ADDF7 /* SSHKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624990E2268E1F485C34E974 /* SSHKeyStore.swift */; };
+		431A6D4C0D162573EEA7D7C8 /* SSHKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F192DCE11FE3F8039758CB /* SSHKeyStoreTests.swift */; };
 		4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32992D5A11A39787F52729 /* CrowRootView.swift */; };
 		48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3281820F331A8C3742CC86D3 /* RemoteConnection.swift */; };
 		48EF039C2F38D4BE74C798F0 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B3B2623FE25570F04A96B0 /* GitRepository.swift */; };
 		49630C707BCE221ECA00E8CA /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18B58CEDCD01E6C219105813 /* InspectorPanel.swift */; };
 		52F0C7DCC3DE13464614DBBC /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
+		5874B115554064B2200ADF03 /* FloatingWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 339F8BF0F81F188A4D8C5EB2 /* FloatingWorkspaceView.swift */; };
+		5BDCD19C97620FB6671759C7 /* SSHKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F192DCE11FE3F8039758CB /* SSHKeyStoreTests.swift */; };
 		5BF82CF74F73CF09F2B2A893 /* TerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */; };
 		625238F79BADC8151633A02F /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */; };
 		62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
@@ -43,16 +50,25 @@
 		73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
 		75C51A84756BB865D20F817B /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */; };
 		767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6FE655559409CAEE08CABB /* CrowTheme.swift */; };
+		7CB37409839299CC9E07C7BC /* ClipboardImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92E1A835A396F92CE325D051 /* ClipboardImage.swift */; };
 		7D1F42A42AE8999100EAE27A /* SystemSFTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */; };
+		7FC5DFA40E531A3B34244973 /* InputToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1060A874F96F1D04933A95A4 /* InputToolsTests.swift */; };
 		7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = CC5D04CB9ACC760C88D98F53 /* CrowCore */; };
+		89BFA1C55D992D8B5A873757 /* KeyboardAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59A3074AF3C2BC650FA1DB1 /* KeyboardAccessory.swift */; };
+		8A17E1C119C88F637133B6A2 /* FloatingWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 339F8BF0F81F188A4D8C5EB2 /* FloatingWorkspaceView.swift */; };
 		8AC360405C5CEAF39BD15D74 /* CrowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */; };
 		8B146E0D24489865E8F69A92 /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
+		8D99C0C0E2E1C51ABFC932D9 /* ExternalFileRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */; };
 		8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
+		91CF967F77B61D395D04BE86 /* ClipboardImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92E1A835A396F92CE325D051 /* ClipboardImage.swift */; };
+		9431E53536BC25C12D9F5AAB /* SSHKeysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B742B462C9437666459DC7 /* SSHKeysView.swift */; };
 		9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
+		9CB1043741E0F4CF0B113E73 /* InputToolsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */; };
 		9D1F73D97BC4699A52439627 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 8A57E5BB59B15020241DAD01 /* Sparkle */; };
 		A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
 		A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
 		A53E1FCC6B5BFFA376DF6273 /* SSHCommandView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A093E56E71878F7439A35214 /* SSHCommandView.swift */; };
+		A77F3CB51D3FE4976052D994 /* SSHKeysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B742B462C9437666459DC7 /* SSHKeysView.swift */; };
 		AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
 		AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
 		ABACF798FB51E0E27B5574D6 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */; };
@@ -62,6 +78,7 @@
 		B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
 		B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
 		BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2095F40A89154572BBF0B9AA /* CrowCore */; };
+		BF6A37C016DE363A14BF9C1A /* FileRevision.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B0182A2707E63DEF43B27F /* FileRevision.swift */; };
 		C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */; };
 		C3266AD20FD3C67651ECE542 /* InspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18B58CEDCD01E6C219105813 /* InspectorPanel.swift */; };
 		C4453DC4CAB73D14F3EC557F /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA822D65A1861321E1F582 /* TerminalSession.swift */; };
@@ -72,11 +89,14 @@
 		D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
 		DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = DE53485A258DA8FF8E438A1C /* Citadel */; };
 		DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 22349BC58B8FD19F9A28CF2B /* Citadel */; };
+		DD4F6B69AAD6938989797A11 /* FileRevision.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B0182A2707E63DEF43B27F /* FileRevision.swift */; };
+		DD79F454BF6855023C332AF5 /* InputToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1060A874F96F1D04933A95A4 /* InputToolsTests.swift */; };
 		DFACF071DF461B8E8B3D7DE6 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
 		E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
 		E37F3C5FF7993AB42B933D31 /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA822D65A1861321E1F582 /* TerminalSession.swift */; };
 		E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */; };
 		EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */; };
+		F075436F4BBAC56896666DE8 /* KeyboardAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59A3074AF3C2BC650FA1DB1 /* KeyboardAccessory.swift */; };
 		F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */; };
 		F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
 		F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */; };
@@ -102,28 +122,35 @@
 /* Begin PBXFileReference section */
 		04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHIntegrationTests.swift; sourceTree = "<group>"; };
 		0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CrowMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1060A874F96F1D04933A95A4 /* InputToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputToolsTests.swift; sourceTree = "<group>"; };
 		172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "MarkdownEditor-LICENSES.txt"; sourceTree = "<group>"; };
 		18B58CEDCD01E6C219105813 /* InspectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPanel.swift; sourceTree = "<group>"; };
 		2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalTests.swift; sourceTree = "<group>"; };
 		2C603D2C1525D197887432FC /* WindowDragRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDragRegion.swift; sourceTree = "<group>"; };
 		3281820F331A8C3742CC86D3 /* RemoteConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConnection.swift; sourceTree = "<group>"; };
+		339F8BF0F81F188A4D8C5EB2 /* FloatingWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingWorkspaceView.swift; sourceTree = "<group>"; };
 		37FA822D65A1861321E1F582 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
 		3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostEditorView.swift; sourceTree = "<group>"; };
 		61B3B2623FE25570F04A96B0 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitRepository.swift; sourceTree = "<group>"; };
+		624990E2268E1F485C34E974 /* SSHKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyStore.swift; sourceTree = "<group>"; };
 		624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalFixture.swift; sourceTree = "<group>"; };
 		643351A73DF6ED8D3D6E4193 /* Crow.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputToolsSettingsView.swift; sourceTree = "<group>"; };
+		6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalFileRefreshTests.swift; sourceTree = "<group>"; };
 		6F615327A09249D69F58FB1F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		736A91B1AC75EDEE2EC70D47 /* Crow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		75FF130C71180BF8D69923FE /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
 		7FACD1BCE145D0783FF32A74 /* markdown-editor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-editor.js"; sourceTree = "<group>"; };
 		81CDA3E505278504B945809C /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceState.swift; sourceTree = "<group>"; };
+		92E1A835A396F92CE325D051 /* ClipboardImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardImage.swift; sourceTree = "<group>"; };
 		97A032C53156473E97D0B162 /* Crow-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-macOS.entitlements"; sourceTree = "<group>"; };
 		9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAreaView.swift; sourceTree = "<group>"; };
 		9D32992D5A11A39787F52729 /* CrowRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowRootView.swift; sourceTree = "<group>"; };
 		9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorIntegrationTests.swift; sourceTree = "<group>"; };
 		9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowApp.swift; sourceTree = "<group>"; };
 		A093E56E71878F7439A35214 /* SSHCommandView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCommandView.swift; sourceTree = "<group>"; };
+		A3F192DCE11FE3F8039758CB /* SSHKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyStoreTests.swift; sourceTree = "<group>"; };
 		A572F4E00B3F5144359E22C0 /* CrowCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CrowCore; path = Packages/CrowCore; sourceTree = SOURCE_ROOT; };
 		A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemSSH.swift; sourceTree = "<group>"; };
 		A9F91460E98231B14EB73C47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -131,8 +158,11 @@
 		BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReverseSSH.swift; sourceTree = "<group>"; };
 		BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemSFTP.swift; sourceTree = "<group>"; };
 		C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeEditor.swift; sourceTree = "<group>"; };
+		C7B742B462C9437666459DC7 /* SSHKeysView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeysView.swift; sourceTree = "<group>"; };
 		CB9788339A1AB51301E2DF81 /* CrowTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CrowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D2B0182A2707E63DEF43B27F /* FileRevision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileRevision.swift; sourceTree = "<group>"; };
 		D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegrationTests.swift; sourceTree = "<group>"; };
+		D59A3074AF3C2BC650FA1DB1 /* KeyboardAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardAccessory.swift; sourceTree = "<group>"; };
 		D8A85DB8385B70D7E310D980 /* Crow-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Crow-iOS.entitlements"; sourceTree = "<group>"; };
 		DC6FE655559409CAEE08CABB /* CrowTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowTheme.swift; sourceTree = "<group>"; };
 		DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
@@ -173,10 +203,13 @@
 				75FF130C71180BF8D69923FE /* ActivityBar.swift */,
 				9D32992D5A11A39787F52729 /* CrowRootView.swift */,
 				9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */,
+				339F8BF0F81F188A4D8C5EB2 /* FloatingWorkspaceView.swift */,
 				3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */,
+				661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */,
 				18B58CEDCD01E6C219105813 /* InspectorPanel.swift */,
 				81CDA3E505278504B945809C /* SidebarView.swift */,
 				A093E56E71878F7439A35214 /* SSHCommandView.swift */,
+				C7B742B462C9437666459DC7 /* SSHKeysView.swift */,
 				F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */,
 				E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */,
 			);
@@ -186,6 +219,7 @@
 		0FEEE4A3561B20E2D72EF908 /* Editor */ = {
 			isa = PBXGroup;
 			children = (
+				D59A3074AF3C2BC650FA1DB1 /* KeyboardAccessory.swift */,
 				7FACD1BCE145D0783FF32A74 /* markdown-editor.js */,
 				172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */,
 				DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */,
@@ -211,7 +245,10 @@
 				624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */,
 				2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */,
 				9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */,
+				6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */,
+				1060A874F96F1D04933A95A4 /* InputToolsTests.swift */,
 				04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */,
+				A3F192DCE11FE3F8039758CB /* SSHKeyStoreTests.swift */,
 				D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */,
 			);
 			path = Tests;
@@ -257,10 +294,12 @@
 		91C366062BEB5F0931B98A25 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				D2B0182A2707E63DEF43B27F /* FileRevision.swift */,
 				61B3B2623FE25570F04A96B0 /* GitRepository.swift */,
 				AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */,
 				3281820F331A8C3742CC86D3 /* RemoteConnection.swift */,
 				BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */,
+				624990E2268E1F485C34E974 /* SSHKeyStore.swift */,
 				BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */,
 				A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */,
 				2C603D2C1525D197887432FC /* WindowDragRegion.swift */,
@@ -279,6 +318,7 @@
 		D67619DC9395E8FEEB0213E8 /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				92E1A835A396F92CE325D051 /* ClipboardImage.swift */,
 				37FA822D65A1861321E1F582 /* TerminalSession.swift */,
 				E659A052178F6AD11B43C616 /* TerminalViewHost.swift */,
 			);
@@ -438,19 +478,26 @@
 			files = (
 				73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */,
 				8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */,
+				91CF967F77B61D395D04BE86 /* ClipboardImage.swift in Sources */,
 				315E43CF31430E0E18AA565C /* CrowApp.swift in Sources */,
 				14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */,
 				767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */,
 				3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */,
+				BF6A37C016DE363A14BF9C1A /* FileRevision.swift in Sources */,
+				8A17E1C119C88F637133B6A2 /* FloatingWorkspaceView.swift in Sources */,
 				39F5CBE7547B34B6416D0A08 /* GitRepository.swift in Sources */,
 				B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */,
+				9CB1043741E0F4CF0B113E73 /* InputToolsSettingsView.swift in Sources */,
 				C3266AD20FD3C67651ECE542 /* InspectorPanel.swift in Sources */,
+				F075436F4BBAC56896666DE8 /* KeyboardAccessory.swift in Sources */,
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
 				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
 				ABACF798FB51E0E27B5574D6 /* ReverseSSH.swift in Sources */,
 				271182EE8B959D21CC270333 /* SSHCommandView.swift in Sources */,
+				253F8C86D5287A39C215DF77 /* SSHKeyStore.swift in Sources */,
+				A77F3CB51D3FE4976052D994 /* SSHKeysView.swift in Sources */,
 				CE002A44D5FC2441C3CC3240 /* SidebarView.swift in Sources */,
 				167B5EB84C67FE7E6C59CE40 /* SystemSFTP.swift in Sources */,
 				F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */,
@@ -471,7 +518,10 @@
 				2C65D5FA8F68B3A1C10435D2 /* EchoTerminalFixture.swift in Sources */,
 				EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */,
 				360C0A7D789693230AC287A7 /* EditorIntegrationTests.swift in Sources */,
+				281688703B0CD69F2388B850 /* ExternalFileRefreshTests.swift in Sources */,
+				7FC5DFA40E531A3B34244973 /* InputToolsTests.swift in Sources */,
 				A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */,
+				431A6D4C0D162573EEA7D7C8 /* SSHKeyStoreTests.swift in Sources */,
 				229AD114289C014C78DDE79A /* TerminalIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -482,19 +532,26 @@
 			files = (
 				D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */,
 				B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */,
+				7CB37409839299CC9E07C7BC /* ClipboardImage.swift in Sources */,
 				8B146E0D24489865E8F69A92 /* CrowApp.swift in Sources */,
 				4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */,
 				6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */,
 				E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */,
+				DD4F6B69AAD6938989797A11 /* FileRevision.swift in Sources */,
+				5874B115554064B2200ADF03 /* FloatingWorkspaceView.swift in Sources */,
 				48EF039C2F38D4BE74C798F0 /* GitRepository.swift in Sources */,
 				26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */,
+				0E711C041E0E67C8F8E62F44 /* InputToolsSettingsView.swift in Sources */,
 				49630C707BCE221ECA00E8CA /* InspectorPanel.swift in Sources */,
+				89BFA1C55D992D8B5A873757 /* KeyboardAccessory.swift in Sources */,
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
 				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
 				1B2340F02DCCA944C5F62B8D /* ReverseSSH.swift in Sources */,
 				A53E1FCC6B5BFFA376DF6273 /* SSHCommandView.swift in Sources */,
+				431248865C8AACDEC12ADDF7 /* SSHKeyStore.swift in Sources */,
+				9431E53536BC25C12D9F5AAB /* SSHKeysView.swift in Sources */,
 				F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */,
 				7D1F42A42AE8999100EAE27A /* SystemSFTP.swift in Sources */,
 				3BD61F6E38C75029D729A6EA /* SystemSSH.swift in Sources */,
@@ -515,7 +572,10 @@
 				67E2475B239B9403EBB7E291 /* EchoTerminalFixture.swift in Sources */,
 				0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */,
 				D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */,
+				8D99C0C0E2E1C51ABFC932D9 /* ExternalFileRefreshTests.swift in Sources */,
+				DD79F454BF6855023C332AF5 /* InputToolsTests.swift in Sources */,
 				6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */,
+				5BDCD19C97620FB6671759C7 /* SSHKeyStoreTests.swift in Sources */,
 				5BF82CF74F73CF09F2B2A893 /* TerminalIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -56,10 +56,19 @@ import SwiftUI
 
 struct WindowCloseGuard: NSViewRepresentable {
     let model: AppModel
-    func makeNSView(context: Context) -> GuardView { GuardView(model: model) }
-    func updateNSView(_ view: GuardView, context: Context) {}
+    var floating = false
+    func makeNSView(context: Context) -> GuardView {
+        let view = GuardView(model: model); view.floating = floating; return view
+    }
+    func updateNSView(_ view: GuardView, context: Context) {
+        view.floating = floating
+        // Apply after SwiftUI has updated the content's minimum size.
+        Task { @MainActor [weak view] in view?.applyFloatingMode() }
+    }
     final class GuardView: NSView, NSWindowDelegate {
         let model: AppModel
+        var floating = false
+        let floatingController = FloatingWindowController()
         // NSObject's forwarding hooks are nonisolated. AppKit invokes these
         // window-delegate hooks on the main thread, like the assignment below.
         nonisolated(unsafe) weak var previous: NSWindowDelegate?
@@ -79,6 +88,23 @@ struct WindowCloseGuard: NSViewRepresentable {
                 window.isMovable = true
             }
             if let window, window.delegate !== self { previous = window.delegate; window.delegate = self }
+            applyFloatingMode()
+        }
+        func applyFloatingMode() {
+            guard let window else { return }
+            if floating && window.styleMask.contains(.fullScreen) {
+                if !floatingController.waitingForFullscreenExit {
+                    floatingController.waitingForFullscreenExit = true
+                    window.toggleFullScreen(nil)
+                }
+                return
+            }
+            floatingController.apply(floating, to: window)
+        }
+        func windowDidExitFullScreen(_ notification: Notification) {
+            floatingController.waitingForFullscreenExit = false
+            applyFloatingMode()
+            previous?.windowDidExitFullScreen?(notification)
         }
         override func responds(to selector: Selector!) -> Bool {
             if super.responds(to: selector) { return true }
@@ -97,6 +123,63 @@ struct WindowCloseGuard: NSViewRepresentable {
             case .alertThirdButtonReturn: model.persist(); return true
             default: return false
             }
+        }
+    }
+}
+
+private struct CrowFloatingModeKey: EnvironmentKey {
+    static let defaultValue: Binding<Bool> = .constant(false)
+}
+extension EnvironmentValues {
+    var crowFloatingMode: Binding<Bool> {
+        get { self[CrowFloatingModeKey.self] }
+        set { self[CrowFloatingModeKey.self] = newValue }
+    }
+}
+
+struct CrowMacSceneView: View {
+    let model: AppModel
+    @State private var floating = false
+    var body: some View {
+        CrowRootView().environment(model).environment(\.crowFloatingMode, $floating)
+            .frame(minWidth: floating ? 360 : 640, minHeight: floating ? 280 : 400)
+            .background(WindowCloseGuard(model: model, floating: floating))
+    }
+}
+
+@MainActor final class FloatingWindowController {
+    private struct Original {
+        var frame: NSRect
+        var level: NSWindow.Level
+        var behavior: NSWindow.CollectionBehavior
+        var minimum: NSSize
+        var hidesOnDeactivate: Bool
+    }
+    private var original: Original?
+    var waitingForFullscreenExit = false
+
+    func apply(_ floating: Bool, to window: NSWindow) {
+        if floating {
+            guard original == nil else { return }
+            original = Original(frame: window.frame, level: window.level, behavior: window.collectionBehavior,
+                minimum: window.minSize, hidesOnDeactivate: window.hidesOnDeactivate)
+            window.level = .floating
+            var behavior = window.collectionBehavior
+            behavior.subtract([.moveToActiveSpace, .fullScreenPrimary, .fullScreenAuxiliary, .canJoinAllSpaces])
+            behavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
+            window.collectionBehavior = behavior
+            window.hidesOnDeactivate = false
+            window.minSize = NSSize(width: 360, height: 280)
+            let visible = window.screen?.visibleFrame ?? window.frame
+            let size = NSSize(width: min(420, visible.width), height: min(560, visible.height))
+            let frame = NSRect(x: max(visible.minX, min(window.frame.maxX - size.width, visible.maxX - size.width)),
+                y: max(visible.minY, min(window.frame.maxY - size.height, visible.maxY - size.height)), width: size.width, height: size.height)
+            window.setFrame(frame, display: true)
+        } else if let original {
+            window.level = original.level; window.collectionBehavior = original.behavior
+            window.minSize = original.minimum; window.hidesOnDeactivate = original.hidesOnDeactivate
+            window.setFrame(original.frame, display: true)
+            self.original = nil
         }
     }
 }

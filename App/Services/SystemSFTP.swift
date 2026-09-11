@@ -50,6 +50,28 @@ final class SystemSFTP: @unchecked Sendable {
     func close() { wire.close() }
     deinit { close() }
 
+    func uploadClipboardImage(_ data: Data) async throws -> String {
+        try ClipboardImage.validate(data)
+        return try await run { wire in
+            let directory = "/tmp/crow-clipboard-" + UUID().uuidString
+            let path = directory + "/image.png"
+            _ = try wire.request(14, .string(directory) + .u32(4) + .u32(0o700))
+            do {
+                let handle = try wire.open(path, flags: 2 | 8 | 32, permissions: 0o600)
+                do {
+                    for offset in stride(from: 0, to: data.count, by: 32_768) {
+                        _ = try wire.request(6, .bytes(handle) + .u64(UInt64(offset)) + .bytes(data.subdata(in: offset..<min(offset + 32_768, data.count))))
+                    }
+                    try wire.close(handle)
+                } catch { try? wire.close(handle); throw error }
+                return path
+            } catch {
+                _ = try? wire.request(13, .string(path)); _ = try? wire.request(15, .string(directory))
+                throw error
+            }
+        }
+    }
+
     static func protectWrites(to handle: FileHandle) throws {
         // Convert a closed reader into EPIPE instead of killing Crow with SIGPIPE.
         // This is descriptor-local: do not change signal behavior in users' child shells.
@@ -83,6 +105,12 @@ final class SystemSFTP: @unchecked Sendable {
                 if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
+        }
+    }
+    func revision(_ path: String) async throws -> FileRevision {
+        try await run {
+            let attributes = try $0.stat(path)
+            return FileRevision(size: attributes.size, modified: attributes.modified.map { Date(timeIntervalSince1970: Double($0)) })
         }
     }
     func read(_ path: String, maximumSize: Int = TextFiles.sizeLimit) async throws -> String {
@@ -412,7 +440,7 @@ final class SystemSFTP: @unchecked Sendable {
             return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
-    private struct Attributes { var size: UInt64?; var permissions: UInt32? }
+    private struct Attributes { var size: UInt64?; var permissions: UInt32?; var modified: UInt32? }
     private struct Packet {
         let data: Data
         var offset = 0
@@ -436,7 +464,7 @@ final class SystemSFTP: @unchecked Sendable {
             if flags & 1 != 0 { attrs.size = try uint64() }
             if flags & 2 != 0 { _ = try uint32(); _ = try uint32() }
             if flags & 4 != 0 { attrs.permissions = try uint32() }
-            if flags & 8 != 0 { _ = try uint32(); _ = try uint32() }
+            if flags & 8 != 0 { _ = try uint32(); attrs.modified = try uint32() }
             if flags & 0x80000000 != 0 {
                 let count = try uint32(); guard count < 1000 else { throw CommandError("Invalid SFTP attributes.") }
                 for _ in 0..<count { _ = try bytes(); _ = try bytes() }

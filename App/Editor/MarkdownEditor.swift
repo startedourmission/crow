@@ -107,6 +107,13 @@ struct MarkdownPreviewView: View {
             source = value; text.wrappedValue = value
         case "render": render(view, force: true)
         case "save": onSave()
+        #if os(iOS)
+        case "keyboardModifiersConsumed": (view as? CrowMarkdownWebView)?.keyboardAccessory.resetModifiers()
+        case "keyboardClipboard":
+            if body["key"] as? String == "v" {
+                if let text = UIPasteboard.general.string { (view as? CrowMarkdownWebView)?.insertSnippet(text) }
+            } else if let text = body["text"] as? String { UIPasteboard.general.string = text }
+        #endif
         case "openLink":
             guard let value = body["url"] as? String, let url = URL(string: value), MarkdownPreview.isExternalLink(url) else { return }
             #if os(macOS)
@@ -137,6 +144,7 @@ struct MarkdownPreviewView: View {
     @Environment(\.phoneKeyboardFocus) private var keyboard
     @Environment(\.editorKeyboardFocus) private var editorKeyboard
     @Environment(\.editorRendererActive) private var rendererActive
+    @Environment(\.keyboardBarItems) private var keyboardBarItems
     #endif
     @Binding var text: String
     let fontSize: Double
@@ -153,7 +161,11 @@ struct MarkdownPreviewView: View {
         configuration.userContentController.add(coordinator, contentWorld: .defaultClient, name: "markdown")
         configuration.userContentController.addUserScript(WKUserScript(source: MarkdownLiveEditing.script,
             injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        #if os(iOS)
+        let view = CrowMarkdownWebView(frame: .zero, configuration: configuration)
+        #else
         let view = WKWebView(frame: .zero, configuration: configuration)
+        #endif
         view.navigationDelegate = coordinator
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.fontSize = fontSize; coordinator.failure = $failure
         coordinator.locationRequest = locationRequest
@@ -181,6 +193,7 @@ extension MarkdownWebView: NSViewRepresentable {
 extension MarkdownWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView { makeView(context.coordinator) }
     func updateUIView(_ view: WKWebView, context: Context) {
+        (view as? CrowMarkdownWebView)?.configureKeyboard(keyboardBarItems)
         let focus: () -> Void = { [weak view] in
             view?.becomeFirstResponder()
             view?.evaluateJavaScript("document.querySelector('[contenteditable=true]')?.focus()", in: nil, in: .defaultClient)

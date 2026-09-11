@@ -16,6 +16,7 @@ struct TerminalViewHost: PlatformTerminalViewRepresentable {
     let fontSize: Double
     #if os(iOS)
     @Environment(\.phoneKeyboardFocus) private var keyboard
+    @Environment(\.keyboardBarItems) private var keyboardBarItems
     func makeUIView(context: Context) -> SwiftTerm.TerminalView {
         session.view
     }
@@ -25,7 +26,8 @@ struct TerminalViewHost: PlatformTerminalViewRepresentable {
         let background = UIColor(CrowTheme.bg0)
         view.backgroundColor = background
         view.nativeBackgroundColor = background
-        (view as? CrowIOSTerminalView)?.setPhoneAccessory(phoneLayout)
+        (view as? CrowIOSTerminalView)?.setPhoneAccessory(true)
+        (view.inputAccessoryView as? CrowKeyboardAccessory)?.configure(keyboardBarItems)
     }
     #else
     func makeNSView(context: Context) -> SwiftTerm.TerminalView {
@@ -35,4 +37,29 @@ struct TerminalViewHost: PlatformTerminalViewRepresentable {
         session.setFontSize(fontSize)
     }
     #endif
+}
+
+struct ImagePasteStatusView: View {
+    let session: TerminalSession
+    var body: some View {
+        if let message = session.imagePasteMessage {
+            HStack(spacing: 8) {
+                if session.imagePasteInProgress { ProgressView().controlSize(.small) }
+                Text(message).font(.caption).lineLimit(3).textSelection(.enabled)
+                Spacer(minLength: 0)
+                if !session.imagePasteInProgress {
+                    Button { session.imagePasteMessage = nil } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Dismiss image paste message")
+                }
+            }.padding(8).background(CrowTheme.bg1)
+        }
+    }
+}
+
+@MainActor extension SwiftTerm.TerminalView {
+    func pasteLiteralText(_ text: String) {
+        let bracketed = getTerminal().bracketedPasteMode
+        let bytes = (bracketed ? "\u{1b}[200~" : "") + text + (bracketed ? "\u{1b}[201~" : "")
+        send(data: Array(bytes.utf8)[...])
+    }
 }

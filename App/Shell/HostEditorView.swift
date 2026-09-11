@@ -8,6 +8,7 @@ struct HostEditorView: View {
     @State private var host: SSHHost
     @State private var credential = HostCredential()
     @State private var importKey = false
+    @State private var choosingKey = false
     @State private var keyFilename: String?
     @State private var loadedCredential = false
     @State private var error: String?
@@ -39,23 +40,36 @@ struct HostEditorView: View {
                     if host.authentication == .password {
                         SecureField("Password", text: $credential.password)
                     } else {
-                        Button { importKey = true } label: {
-                            Label(credential.privateKey.isEmpty ? "Import Private Key from Files…" : "Replace Private Key…", systemImage: "square.and.arrow.down")
+                        Button { choosingKey = true } label: {
+                            Label(credential.keyID == nil ? "Choose or Create SSH Key…" : (keyFilename ?? "Saved SSH Key"), systemImage: "key")
                         }
-                        .accessibilityIdentifier("crow.host.import-key")
-                        if !credential.privateKey.isEmpty {
-                            Label(keyFilename ?? "Saved private key", systemImage: "key.fill")
-                                .foregroundStyle(CrowTheme.ok)
-                                .lineLimit(1).truncationMode(.middle)
+                        .accessibilityIdentifier("crow.host.choose-key")
+                        if credential.keyID == nil {
+                            Button { importKey = true } label: {
+                                Label(credential.privateKey.isEmpty ? "Import Private Key from Files…" : "Replace Private Key…", systemImage: "square.and.arrow.down")
+                            }
+                            .accessibilityIdentifier("crow.host.import-key")
+                            if !credential.privateKey.isEmpty {
+                                Label(keyFilename ?? "Saved private key", systemImage: "key.fill")
+                                    .foregroundStyle(CrowTheme.ok)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            SecureField("Key passphrase (if set)", text: $credential.passphrase)
+                        } else {
+                            Button("Use a Different Private Key File…") { importKey = true }
                         }
-                        SecureField("Key passphrase (if set)", text: $credential.passphrase)
                     }
                 } header: {
                     Text("Authentication")
                 } footer: {
                     Text(host.authentication == .password
                         ? "Credentials are saved in this device’s Keychain."
-                        : "Choose your private key (id_ed25519 or id_rsa), not the .pub file. The key and passphrase are saved in this device’s Keychain.")
+                        : "Choose a saved key, create one, or import a private key file. Private keys stay in this device’s Keychain.")
+                    #if os(macOS)
+                    if credential.keyID != nil && host.commandArguments != nil {
+                        Text("This key connects directly to the hostname and port above. Saved SSH command options will be replaced.")
+                    }
+                    #endif
                 }
                 Section("Optional") {
                     hostField("Display name", text: $host.name, prompt: "My server")
@@ -106,7 +120,27 @@ struct HostEditorView: View {
         .onAppear {
             guard !loadedCredential else { return }
             loadedCredential = true
-            do { credential = try SecureStore.credential(host) } catch { self.error = error.localizedDescription }
+            do {
+                credential = try SecureStore.credential(host)
+                if let id = credential.keyID { keyFilename = try SSHKeyStore.shared.identity(id).name }
+            } catch { self.error = error.localizedDescription }
+        }
+        .sheet(isPresented: $choosingKey, onDismiss: {
+            if let id = credential.keyID {
+                do { keyFilename = try SSHKeyStore.shared.identity(id).name }
+                catch { self.error = error.localizedDescription }
+            }
+        }) {
+            SSHKeysView { key in
+                host.authentication = key.authentication
+                credential = HostCredential(keyID: key.id)
+                keyFilename = key.name; error = nil
+            }.environment(model)
+        }
+        .onChange(of: host.authentication) { _, next in
+            if let id = credential.keyID, (try? SSHKeyStore.shared.identity(id).authentication) != next {
+                credential.keyID = nil; keyFilename = nil
+            }
         }
         .fileImporter(isPresented: $importKey, allowedContentTypes: [.data]) { result in
             do {
@@ -117,6 +151,7 @@ struct HostEditorView: View {
                     throw CommandError("Choose an OpenSSH private key such as id_ed25519 or id_rsa, not the .pub public key.")
                 }
                 credential.privateKey = key
+                credential.keyID = nil
                 keyFilename = url.lastPathComponent
                 error = nil
             } catch { self.error = error.localizedDescription }
@@ -140,10 +175,17 @@ struct HostEditorView: View {
 struct CrowSettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var showingKeys = false
+    @State private var showingSnippets = false
     var body: some View {
         @Bindable var model = model
         NavigationStack {
             Form {
+                Button { showingKeys = true } label: { Label("SSH Keys", systemImage: "key") }
+                Button { showingSnippets = true } label: { Label("Snippets", systemImage: "text.badge.plus") }
+                #if os(iOS)
+                NavigationLink("Keyboard Bar") { KeyboardBarSettingsView().environment(model) }
+                #endif
                 Stepper("Editor font: \(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32)
                 Stepper("Terminal font: \(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32)
                 Stepper("Indent: \(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8)
@@ -155,6 +197,8 @@ struct CrowSettingsView: View {
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+        .sheet(isPresented: $showingKeys) { SSHKeysView().environment(model) }
+        .sheet(isPresented: $showingSnippets) { SnippetsView().environment(model) }
         #if os(macOS)
         .frame(minWidth: 320, idealWidth: 440, minHeight: 340)
         #endif

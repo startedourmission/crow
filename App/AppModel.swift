@@ -70,6 +70,8 @@ final class AppModel {
     var draggedFile: ExplorerFileDrag?
     var workspaceRemovalRequest: WorkspaceID?
     var conflictRequest: BufferID?
+    var externallyChangedBuffers: Set<BufferID> = []
+    var externalFileErrors: [BufferID: String] = [:]
     var deleteRequest: FileEntry?
     var hostKeyChallenge: HostKeyChallenge?
     var folderImporterVisible = false
@@ -78,6 +80,7 @@ final class AppModel {
     var pendingHostEditor = false
     var pendingHostConnection: SSHHost?
     var settingsVisible = false
+    var sshKeysVisible = false
     var sshCommandVisible = false
     var credentialRequest: SSHHost?
     var pendingCredentialRequest: SSHHost?
@@ -89,6 +92,9 @@ final class AppModel {
     let sessionURL: URL
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private var saving: Set<BufferID> = []
+    @ObservationIgnored private var refreshingBuffers: Set<BufferID> = []
+    @ObservationIgnored private var observedFileRevisions: [BufferID: ObservedFileRevision] = [:]
+    @ObservationIgnored private var fileRefreshPaused = false
     @ObservationIgnored private var persistenceAvailable = true
     // A presentation-only fallback: never persisted or used for file operations.
     private let emptyState = WorkspaceState(.init(
@@ -538,11 +544,80 @@ final class AppModel {
 
     func updateBufferText(_ id: BufferID, _ text: String) {
         guard let (state, index) = locate(id) else { return }
+        let wasDirty = state.snapshot.buffers[index].isDirty
         state.snapshot.buffers[index].text = text
         state.snapshot.buffers[index].isDirty = text != state.snapshot.buffers[index].savedText
+        if wasDirty && !state.snapshot.buffers[index].isDirty { observedFileRevisions.removeValue(forKey: id) }
         schedulePersist()
     }
     func saveSelectedBuffer() { if let id = selectedBufferID { Task { _ = await saveBuffer(id) } } }
+
+    /// Runs only for mounted editors, including split panes. Rechecks edits after each asynchronous read.
+    func observeBuffer(_ id: BufferID) async {
+        while !Task.isCancelled {
+            await refreshBufferFromSource(id)
+            do { try await Task.sleep(for: .milliseconds(750)) } catch { return }
+        }
+    }
+
+    func refreshBufferFromSource(_ id: BufferID, discardChanges: Bool = false, force: Bool = false) async {
+        guard !fileRefreshPaused, !refreshingBuffers.contains(id), !saving.contains(id), let (state, index) = locate(id) else { return }
+        let buffer = state.snapshot.buffers[index]
+        guard !state.movingPaths.contains(where: { buffer.path == $0 || buffer.path.hasPrefix($0 + "/") }) else { return }
+        let connection = state.remote
+        if buffer.isRemote && connection?.isConnected != true { return }
+        refreshingBuffers.insert(id); defer { refreshingBuffers.remove(id) }
+        do {
+            let revision: FileRevision
+            if let connection, buffer.isRemote { revision = try await connection.revision(buffer.path) }
+            else { revision = try await Task.detached { try FileRevision.local(buffer.path) }.value }
+            let previous = observedFileRevisions[id]
+            // SFTP timestamps have second precision. Verify a newly observed revision on the next
+            // tick as well; occasional content checks also handle tools that preserve timestamps.
+            let contentInterval: TimeInterval = (revision.size ?? 0) > 262_144 ? 30 : 5
+            if !force, !discardChanges, let previous, previous.path == buffer.path, previous.revision == revision,
+               !previous.verifyAgain, Date().timeIntervalSince(previous.checkedAt) < contentInterval { return }
+            let text: String
+            let after: FileRevision
+            if let connection, buffer.isRemote {
+                text = try await connection.read(buffer.path)
+                after = try await connection.revision(buffer.path)
+            } else {
+                (text, after) = try await Task.detached {
+                    (try TextFiles.read(URL(fileURLWithPath: buffer.path)), try FileRevision.local(buffer.path))
+                }.value
+            }
+            guard !Task.isCancelled, !fileRefreshPaused, after == revision, !saving.contains(id),
+                  let (currentState, currentIndex) = locate(id), currentState === state,
+                  state.remote === connection,
+                  !state.movingPaths.contains(where: { buffer.path == $0 || buffer.path.hasPrefix($0 + "/") }) else { return }
+            let currentBuffer = state.snapshot.buffers[currentIndex]
+            guard currentBuffer.path == buffer.path, currentBuffer.text == buffer.text,
+                  currentBuffer.savedText == buffer.savedText, currentBuffer.isDirty == buffer.isDirty else { return }
+            observedFileRevisions[id] = ObservedFileRevision(path: buffer.path, revision: revision, checkedAt: Date(),
+                verifyAgain: buffer.isRemote && previous?.revision != revision)
+            externalFileErrors.removeValue(forKey: id)
+            if buffer.isDirty && !discardChanges {
+                if text != buffer.savedText { externallyChangedBuffers.insert(id) }
+                else { externallyChangedBuffers.remove(id) }
+                return
+            }
+            externallyChangedBuffers.remove(id)
+            if text != buffer.text || buffer.savedText != text || buffer.isDirty {
+                state.snapshot.buffers[currentIndex].text = text
+                state.snapshot.buffers[currentIndex].savedText = text
+                state.snapshot.buffers[currentIndex].isDirty = false
+                schedulePersist()
+            }
+        } catch is CancellationError { }
+        catch {
+            guard !Task.isCancelled, let (currentState, currentIndex) = locate(id), currentState === state,
+                  state.snapshot.buffers[currentIndex].path == buffer.path, state.remote === connection else { return }
+            observedFileRevisions.removeValue(forKey: id)
+            let message = "Could not refresh this file. Your open text is kept. \(error.localizedDescription)"
+            if externalFileErrors[id] != message { externalFileErrors[id] = message }
+        }
+    }
 
     @discardableResult func saveBuffer(_ id: BufferID, overwrite: Bool = false) async -> Bool {
         guard let (state, index) = locate(id), !saving.contains(id) else { return false }
@@ -559,6 +634,8 @@ final class AppModel {
             if let index = state.snapshot.buffers.firstIndex(where: { $0.id == id }) {
                 state.snapshot.buffers[index].savedText = buffer.text
                 state.snapshot.buffers[index].isDirty = state.snapshot.buffers[index].text != buffer.text
+                observedFileRevisions.removeValue(forKey: id)
+                externallyChangedBuffers.remove(id); externalFileErrors.removeValue(forKey: id)
             }
             statusMessage = "Saved \(buffer.title)"; schedulePersist()
             // A remote save can finish after another edit. Do not let a pending
@@ -581,6 +658,8 @@ final class AppModel {
     func discardBuffer(_ id: BufferID) {
         guard let (state, _) = locate(id) else { return }
         state.snapshot.buffers.removeAll { $0.id == id }
+        observedFileRevisions.removeValue(forKey: id)
+        externallyChangedBuffers.remove(id); externalFileErrors.removeValue(forKey: id)
         state.snapshot.layout?.remove(.file(id))
         if state.snapshot.selectedBufferID == id { state.snapshot.selectedBufferID = state.snapshot.buffers.last?.id }
         if state.snapshot.splitBufferID == id { state.snapshot.splitBufferID = nil }
@@ -743,12 +822,19 @@ final class AppModel {
 
     func saveHostFromEditor(_ proposed: SSHHost, credential: HostCredential, connectAfterSaving: Bool) throws {
         var host = proposed
+        var credential = credential
+        if host.authentication == .password { credential.keyID = nil }
+        if credential.keyID != nil {
+            credential.privateKey = ""; credential.passphrase = ""; credential.password = ""
+            // A library key uses in-app authentication instead of the saved system SSH command.
+            host.commandArguments = nil; host.commandDirectory = nil
+        }
         host.hostname = host.hostname.trimmingCharacters(in: .whitespacesAndNewlines)
         host.username = host.username.trimmingCharacters(in: .whitespacesAndNewlines)
         host.name = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if host.name.isEmpty { host.name = host.hostname }
         if host.remotePath.isEmpty { host.remotePath = "~" }
-        if host.authentication != .password { try credential.validatePrivateKey(for: host.authentication) }
+        if host.authentication != .password { try credential.resolved(for: host.authentication).validatePrivateKey(for: host.authentication) }
         try storeHost(host, credential: credential)
         showHosts()
         statusMessage = "Saved \(host.name) — tap the host to connect."
@@ -992,6 +1078,27 @@ final class AppModel {
         #endif
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: state.snapshot.rootPath,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
+        session.imagePasteContext = { [weak self, weak state] in
+            guard let self, let state else { return nil }
+            return self.imagePasteContext(for: id, in: state)
+        }
+        session.uploadImage = { [weak self, weak state] data, context in
+            guard let self, let state, self.imagePasteContext(for: id, in: state) == context else { throw FileFailure.disconnected }
+            if state.snapshot.workspace.isRemote {
+                guard let remote = state.remote else { throw FileFailure.disconnected }
+                return try await remote.uploadClipboardImage(data)
+            }
+            #if os(macOS)
+            let bridge = try self.bridge()
+            let spec = try await bridge.imagePasteConnection(socket: context)
+            guard bridge.activeSocket(for: id) == context else { throw FileFailure.disconnected }
+            let files = try SystemSFTP(spec: spec)
+            defer { files.close() }
+            return try await files.uploadClipboardImage(data)
+            #else
+            throw FileFailure.disconnected
+            #endif
+        }
         #if os(macOS)
         session.systemSSH = state.systemSSH
         if state.snapshot.workspace.kind == .local {
@@ -1000,6 +1107,20 @@ final class AppModel {
         #endif
         state.terminals[id] = session
         return session
+    }
+    private func imagePasteContext(for terminalID: UUID, in state: WorkspaceState) -> String? {
+        if state.snapshot.workspace.isRemote {
+            guard let remote = state.remote, remote.isConnected else { return nil }
+            #if os(macOS)
+            if let socket = state.systemSSH?.socket { return socket }
+            #endif
+            return String(describing: ObjectIdentifier(remote))
+        }
+        #if os(macOS)
+        return sshBridge?.activeSocket(for: terminalID)
+        #else
+        return nil
+        #endif
     }
     func newTerminal() {
         guard hasWorkspace else { folderImporterVisible = true; return }
@@ -1028,14 +1149,16 @@ final class AppModel {
             selectedWorkspaceID: selectedWorkspaceID, settings: settings), to: sessionURL) }
         catch { report(error) }
     }
-    func suspend() { persist() }
+    func suspend() { fileRefreshPaused = true; persist() }
     func resume() {
+        fileRefreshPaused = false; observedFileRevisions.removeAll()
         refreshFiles()
         for state in states where state.snapshot.workspace.isRemote {
             if state.remote?.isConnected == false { disconnect(state) }
         }
     }
     func shutdown() {
+        fileRefreshPaused = true
         #if os(macOS)
         reverseSSHConnections.values.forEach { $0.stop() }
         sshBridge?.stop(); sshBridge = nil

@@ -36,6 +36,7 @@ struct TerminalPanelView: View {
             TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
                 .id(session.instanceID)
                 .task(id: session.instanceID) { session.start() }
+            ImagePasteStatusView(session: session)
             if !phoneLayout {
                 Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)

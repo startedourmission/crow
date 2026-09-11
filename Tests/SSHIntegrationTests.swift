@@ -26,7 +26,12 @@ final class SSHIntegrationTests: XCTestCase {
         let hostKey = root.appendingPathComponent("host-key").path
         let userKey = root.appendingPathComponent("user-key").path
         try run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", hostKey])
-        try run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", userKey])
+        let keys = SSHKeyStore(account: "test-loopback-keys-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        let identity = try keys.generate(name: "Loopback")
+        try Data((identity.publicKeyLine + "\n").utf8).write(to: URL(fileURLWithPath: userKey + ".pub"))
+        XCTAssertTrue(FileManager.default.createFile(atPath: userKey,
+            contents: Data(identity.credential.privateKey.utf8), attributes: [.posixPermissions: 0o600]))
         let port = Int.random(in: 23000...45000)
         let config = """
         Port \(port)
@@ -59,7 +64,7 @@ final class SSHIntegrationTests: XCTestCase {
         }
         var host = SSHHost(name: "Integration", hostname: "127.0.0.1", port: port, username: NSUserName(), remotePath: root.path)
         host.authentication = .ed25519
-        let credential = HostCredential(privateKey: try String(contentsOfFile: userKey, encoding: .utf8))
+        let credential = try HostCredential(keyID: identity.id).resolved(for: .ed25519, keys: keys)
         let account = "host-key:127.0.0.1:\(port)"
         let priorPin = try SecureStore.data(for: account)
         defer {
@@ -81,6 +86,16 @@ final class SSHIntegrationTests: XCTestCase {
         defer { Task { await connection.disconnect() } }
         let resolved = try await connection.realPath(root.path)
         XCTAssertEqual(URL(fileURLWithPath: resolved).resolvingSymlinksInPath(), root.resolvingSymlinksInPath())
+        func verifyImage(_ path: String) throws {
+            let url = URL(fileURLWithPath: path)
+            defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+            XCTAssertEqual(try Data(contentsOf: url), InputToolsTests.png)
+            let file = try FileManager.default.attributesOfItem(atPath: path)
+            let directory = try FileManager.default.attributesOfItem(atPath: url.deletingLastPathComponent().path)
+            XCTAssertEqual((file[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+            XCTAssertEqual((directory[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        }
+        try verifyImage(await connection.uploadClipboardImage(InputToolsTests.png))
         let path = root.appendingPathComponent("remote.txt").path
         try await connection.create(path, directory: false)
         let largeText = String(repeating: "한글-remote-data\n", count: 5000)
@@ -167,6 +182,8 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertEqual(model.hosts.first?.port, port)
         XCTAssertFalse(model.hostEditorVisible)
         let native = try XCTUnwrap(imported.remote)
+        try verifyImage(await native.uploadClipboardImage(InputToolsTests.png))
+        XCTAssertNotNil(localTerminal.imagePasteContext?(), "A manually typed SSH command must associate image paste with its own terminal")
         let closedChannel = try SystemSFTP(spec: XCTUnwrap(imported.systemSSH))
         _ = try await closedChannel.list(root.path)
         closedChannel.close()
@@ -216,7 +233,8 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(quickModel.current.terminals.values.contains(where: \.running))
         XCTAssertFalse(quickModel.hostEditorVisible)
         XCTAssertNil(quickModel.credentialRequest, "Mac authentication stays inside OpenSSH, not an app password form")
-        XCTAssertEqual(quickModel.sidebarPane, .files, "Connecting from the host list must show the file explorer")
+        XCTAssertEqual(quickModel.sidebarPane, .hosts, "Connecting must preserve the selected sidebar pane")
+        XCTAssertEqual(quickModel.compactSurface, .terminal, "An explicit SSH connection opens the terminal")
         let tree = quickModel.current.explorer
         for _ in 0..<100 where tree.children[quickModel.current.snapshot.rootPath] == nil {
             try await Task.sleep(for: .milliseconds(20))
@@ -240,6 +258,20 @@ final class SSHIntegrationTests: XCTestCase {
         }
         XCTAssertEqual(tree.rootPath, projectPath)
         XCTAssertTrue(tree.rows.contains { $0.entry.name == "note.md" })
+        let note = try XCTUnwrap(tree.rows.first { $0.entry.name == "note.md" }?.entry)
+        quickModel.openFile(note)
+        try await wait { quickModel.selectedBuffer?.path == note.path }
+        let noteID = try XCTUnwrap(quickModel.selectedBufferID)
+        try Data("# Changed by remote agent".utf8).write(to: project.appendingPathComponent("note.md"), options: .atomic)
+        await quickModel.refreshBufferFromSource(noteID, force: true)
+        XCTAssertEqual(quickModel.selectedBuffer?.text, "# Changed by remote agent")
+        quickModel.updateBufferText(noteID, "my unsaved remote draft")
+        try Data("# Second remote change".utf8).write(to: project.appendingPathComponent("note.md"), options: .atomic)
+        await quickModel.refreshBufferFromSource(noteID, force: true)
+        XCTAssertEqual(quickModel.selectedBuffer?.text, "my unsaved remote draft")
+        XCTAssertTrue(quickModel.externallyChangedBuffers.contains(noteID))
+        await quickModel.refreshBufferFromSource(noteID, discardChanges: true)
+        XCTAssertEqual(quickModel.selectedBuffer?.text, "# Second remote change")
         for (id, session) in sessions { XCTAssertTrue(quickModel.current.terminals[id] === session); XCTAssertTrue(session.running) }
 
         // SFTP can fail independently of the authenticated terminal; file browsing repairs that channel.

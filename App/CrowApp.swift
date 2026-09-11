@@ -9,14 +9,15 @@ struct CrowApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if os(macOS)
+            CrowMacSceneView(model: model)
+                .preferredColorScheme(.light)
+                .onAppear { appDelegate.model = model }
+            #else
             CrowRootView()
                 .environment(model)
                 .preferredColorScheme(.light)
-                #if os(macOS)
-                .frame(minWidth: 640, minHeight: 400)
-                .background(WindowCloseGuard(model: model))
-                .onAppear { appDelegate.model = model }
-                #endif
+            #endif
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
@@ -46,6 +47,7 @@ struct CrowApp: App {
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { model.settingsVisible = true }.keyboardShortcut(",", modifiers: .command)
+                Button("SSH Keys…") { model.sshKeysVisible = true }
             }
             CommandGroup(after: .textEditing) {
                 Button("Find and Replace…") {

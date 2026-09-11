@@ -10,6 +10,14 @@ struct HostCredential: Codable, Sendable {
     var password = ""
     var privateKey = ""
     var passphrase = ""
+    var keyID: UUID?
+
+    func resolved(for authentication: SSHAuthenticationKind, keys: SSHKeyStore = .shared) throws -> HostCredential {
+        guard authentication != .password, let keyID else { return self }
+        let key = try keys.identity(keyID)
+        guard key.authentication == authentication else { throw CommandError("The selected SSH key type does not match this host.") }
+        return key.credential
+    }
 
     func validatePrivateKey(for authentication: SSHAuthenticationKind) throws {
         guard !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -126,6 +134,7 @@ final class RemoteConnection {
     }
 
     func connect(_ host: SSHHost, credential: HostCredential) async throws {
+        let credential = try credential.resolved(for: host.authentication)
         let keyAccount = "host-key:\(host.hostname.lowercased()):\(host.port)"
         let trusted = try SecureStore.data(for: keyAccount).flatMap { String(data: $0, encoding: .utf8) }
         let check = HostKeyCheck(host: host, trusted: trusted)
@@ -194,6 +203,40 @@ final class RemoteConnection {
         return entries.sorted { left, right in
             if left.isDirectory != right.isDirectory { return left.isDirectory }
             return left.name.localizedStandardCompare(right.name) == .orderedAscending
+        }
+    }
+
+    func revision(_ path: String) async throws -> FileRevision {
+        #if os(macOS)
+        if let system { return try await system.revision(path) }
+        #endif
+        let attributes = try await files().getAttributes(at: path)
+        return FileRevision(size: attributes.size, modified: attributes.accessModificationTime?.modificationTime)
+    }
+
+    func uploadClipboardImage(_ data: Data) async throws -> String {
+        try ClipboardImage.validate(data)
+        #if os(macOS)
+        if let system { return try await system.uploadClipboardImage(data) }
+        #endif
+        let sftp = try await files()
+        let directory = "/tmp/crow-clipboard-" + UUID().uuidString
+        let path = directory + "/image.png"
+        var directoryAttributes = SFTPFileAttributes(); directoryAttributes.permissions = 0o700
+        var fileAttributes = SFTPFileAttributes(); fileAttributes.permissions = 0o600
+        try await sftp.createDirectory(atPath: directory, attributes: directoryAttributes)
+        do {
+            try await sftp.withFile(filePath: path, flags: [.write, .create, .forceCreate], attributes: fileAttributes) { file in
+                for offset in stride(from: 0, to: data.count, by: 32_768) {
+                    try Task.checkCancellation()
+                    try await file.write(ByteBuffer(bytes: data[offset..<min(offset + 32_768, data.count)]), at: UInt64(offset))
+                }
+            }
+            return path
+        } catch {
+            try? await sftp.remove(at: path)
+            try? await sftp.rmdir(at: directory)
+            throw error
         }
     }
 

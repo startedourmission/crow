@@ -4,14 +4,20 @@ import SwiftUI
 #if os(macOS)
 struct SidebarTopBar: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.crowFloatingMode) private var floating
     // Match the workspace tab header so its divider continues across the window.
     static let height: CGFloat = 36
     // Traffic-light clearance, horizontal padding, and the reopen button.
-    static let collapsedWidth: CGFloat = 36 + 24 + 28
+    static let collapsedWidth: CGFloat = 36 + 24 + 28 + 36
 
     var body: some View {
         HStack(spacing: 8) {
             if model.sidebarVisible { Spacer(minLength: 0) }
+            Button { floating.wrappedValue = true } label: {
+                Image(systemName: "pip.enter").frame(width: 28, height: 28).contentShape(Rectangle())
+            }
+            .help("Float Window").accessibilityLabel("Float Window")
+            .accessibilityIdentifier("crow.window.float").windowDragExcluded()
             Button { model.sidebarVisible.toggle() } label: {
                 Image(systemName: "sidebar.left").frame(width: 28, height: 28).contentShape(Rectangle())
             }
@@ -152,6 +158,9 @@ struct SidebarView: View {
                 #else
                 Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.buttonStyle(CrowButtonStyle()).help("SSH Command").windowDragExcluded()
                 #endif
+                Button { model.sshKeysVisible = true } label: { toolbarIcon("key") }
+                    .buttonStyle(CrowButtonStyle()).help("SSH Keys").accessibilityLabel("SSH Keys")
+                    .accessibilityIdentifier("crow.keys.open").windowDragExcluded()
             }
         }
         .padding(.horizontal, 12)

@@ -138,6 +138,28 @@ final class CrowAppTests: XCTestCase {
         """
     }
 
+    @MainActor func testSavingManagedKeyHostStoresReferenceAndReplacesSystemCommand() throws {
+        let model = fixture()
+        let key = try SSHKeyStore.shared.generate(name: "Crow test " + UUID().uuidString)
+        var host = SSHHost(name: "Managed key", hostname: "example.invalid", username: "test")
+        host.authentication = .ed25519
+        host.commandArguments = ["-i", "/old/key", "test@example.invalid"]
+        host.commandDirectory = "/old/directory"
+        defer {
+            try? SecureStore.remove(host.id.rawValue.uuidString)
+            try? SSHKeyStore.shared.remove(key.id, hosts: [])
+        }
+        try model.saveHostFromEditor(host, credential: HostCredential(keyID: key.id), connectAfterSaving: false)
+        let savedHost = try XCTUnwrap(model.hosts.first(where: { $0.id == host.id }))
+        XCTAssertNil(savedHost.commandArguments)
+        XCTAssertNil(savedHost.commandDirectory)
+        let saved = try SecureStore.credential(savedHost)
+        XCTAssertEqual(saved.keyID, key.id)
+        XCTAssertTrue(saved.privateKey.isEmpty)
+        try saved.resolved(for: .ed25519).validatePrivateKey(for: .ed25519)
+        XCTAssertThrowsError(try SSHKeyStore.shared.remove(key.id, hosts: model.hosts))
+    }
+
     @MainActor func testSavingKeyHostRevealsHostsAndRestoresSavedCredentials() throws {
         let model = fixture(), selectedID = model.selectedWorkspaceID
         model.sidebarVisible = false

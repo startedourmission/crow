@@ -30,6 +30,7 @@ swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos15 -emit-libr
 swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos15 -I "$crow_build" -L "$crow_build" -lCrowCore \
   -Xlinker -rpath -Xlinker "$crow_build" \
   "$crow_root/App/Services/SystemSSH.swift" "$crow_root/App/Services/SystemSFTP.swift" \
+  "$crow_root/App/Services/FileRevision.swift" "$crow_root/App/Terminal/ClipboardImage.swift" \
   "$crow_root/App/Services/ReverseSSH.swift" "$crow_root/Tools/NativeSmoke/ReverseSSHSmoke.swift" \
   -o "$crow_build/ReverseSSHSmoke"
 "$crow_build/ReverseSSHSmoke" "${crow_live_args[@]}"

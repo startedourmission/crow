@@ -11,6 +11,9 @@ struct CrowRootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @Environment(\.crowFloatingMode) private var floating
+    #endif
 
     var body: some View {
         Group {
@@ -21,10 +24,14 @@ struct CrowRootView: View {
                 RegularWorkspaceView()
             }
             #else
-            RegularWorkspaceView()
+            if floating.wrappedValue { FloatingWorkspaceView() }
+            else { RegularWorkspaceView() }
             #endif
         }
         .background(CrowTheme.bg0)
+        #if os(iOS)
+        .environment(\.keyboardBarItems, model.settings.effectiveKeyboardBarItems)
+        #endif
         .tint(CrowTheme.accent)
         .fileImporter(isPresented: Bindable(model).folderImporterVisible, allowedContentTypes: [.folder]) { result in
             do { model.openFolder(try result.get()) } catch { model.report(error) }
@@ -33,6 +40,7 @@ struct CrowRootView: View {
             model.finishHostEditorDismissal()
         }) { HostEditorView(host: model.editingHost).environment(model) }
         .sheet(isPresented: Bindable(model).settingsVisible) { CrowSettingsView().environment(model) }
+        .sheet(isPresented: Bindable(model).sshKeysVisible) { SSHKeysView().environment(model) }
         .sheet(isPresented: Bindable(model).sshCommandVisible, onDismiss: {
             if model.pendingHostEditor { model.pendingHostEditor = false; model.hostEditorVisible = true }
             if let pending = model.pendingCredentialRequest { model.pendingCredentialRequest = nil; model.credentialRequest = pending }
@@ -86,7 +94,7 @@ struct CrowRootView: View {
             Button("Cancel", role: .cancel) {}
         } message: { challenge in Text(challenge.localizedDescription) }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.resume() } else { model.suspend() }
+            if phase == .active { model.resume() } else if phase == .background { model.suspend() }
         }
         .buttonStyle(CrowButtonStyle(kind: .filled))
     }
@@ -126,6 +134,9 @@ struct RegularWorkspaceView: View {
               let sidebarAvailable = workspaceGeometry.size.width - (model.inspectorVisible ? inspectorWidth + ResizeHandle.thickness : 0)
               HStack(spacing: 0) {
                 ActivityBar()
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(CrowTheme.border).frame(width: 1).allowsHitTesting(false)
+                    }
                     #if os(macOS)
                     .padding(.top, SidebarTopBar.height)
                     .background(CrowTheme.bg1)
@@ -149,13 +160,6 @@ struct RegularWorkspaceView: View {
                     }
                         .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: sidebarAvailable))
                         .background(CrowTheme.bg1)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(CrowTheme.border).frame(width: 1)
-                                #if os(macOS)
-                                .padding(.top, SidebarTopBar.height)
-                                #endif
-                                .allowsHitTesting(false)
-                        }
                     ResizeHandle(axis: .horizontal, label: "Resize file explorer", onDrag: { translation in
                         if sidebarDragStart == nil {
                             sidebarDragStart = SplitSizing.sidebarWidth(sidebarWidth, available: sidebarAvailable)
@@ -232,6 +236,11 @@ extension EnvironmentValues {
         return view.becomeFirstResponder()
     }
 
+    @discardableResult func insert(_ text: String, for surface: CompactSurface) -> Bool {
+        guard let view = inputs[surface]?.view, view.window != nil, let target = view as? any SnippetInput else { return false }
+        target.insertSnippet(text); return true
+    }
+
     func transition(from previous: CompactSurface, to next: CompactSurface) {
         guard let view = inputs[previous]?.view, containsFirstResponder(view) else { return }
         // Both input views remain mounted, so UIKit can transfer focus without
@@ -298,6 +307,9 @@ private struct PhoneWorkspaceBar: View {
     @Environment(AppModel.self) private var model
     @Environment(\.phoneKeyboardFocus) private var keyboard
     @State private var keyboardVisible = false
+    @State private var showingSnippets = false
+    @State private var snippetSurface: CompactSurface = .editor
+    @State private var restoreSnippetKeyboard = false
 
     private var title: String {
         switch model.compactSurface {
@@ -364,6 +376,17 @@ private struct PhoneWorkspaceBar: View {
             .accessibilityIdentifier("crow.phone.session")
 
             ForEach(otherSurfaces, id: \.self) { surfaceButton($0) }
+            Button {
+                snippetSurface = model.compactSurface; restoreSnippetKeyboard = keyboardVisible
+                showingSnippets = true
+            } label: { controlIcon("text.badge.plus") }
+                .accessibilityLabel("Snippets").accessibilityIdentifier("crow.phone.snippets")
+                .popover(isPresented: $showingSnippets) {
+                    SnippetsView(onInsert: canShowKeyboard ? { text in _ = keyboard?.insert(text, for: snippetSurface) } : nil)
+                        .environment(model).frame(width: 320, height: 420)
+                        .presentationCompactAdaptation(.popover)
+                        .onDisappear { if restoreSnippetKeyboard { keyboard?.show(for: snippetSurface) } }
+                }
             if canShowKeyboard && !keyboardVisible {
                 Button { keyboard?.show(for: model.compactSurface) } label: { controlIcon("keyboard") }
                     .accessibilityLabel("Show Keyboard").accessibilityIdentifier("crow.phone.keyboard")

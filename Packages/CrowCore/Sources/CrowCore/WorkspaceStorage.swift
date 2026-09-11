@@ -69,6 +69,9 @@ public struct EditorSettings: Codable, Equatable, Sendable {
     public var terminalFraction: Double = 0.34
     public var sidebarVisible = true
     public var terminalVisible = true
+    public var keyboardBarItems: [KeyboardBarKey]?
+    public var textSnippets: [TextSnippet]?
+    public var effectiveKeyboardBarItems: [KeyboardBarKey] { keyboardBarItems ?? KeyboardBarKey.defaults }
     public init() {}
 }
 

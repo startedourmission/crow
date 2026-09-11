@@ -90,6 +90,18 @@ final class IOSEditorIntegrationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertFalse(editor.isFirstResponder, "Switching modes must not summon a keyboard the user hid")
         XCTAssertEqual(model.selectedBuffer?.text, "# Keyboard\n\nKeep this text.\n")
+        model.markdownPreviewEnabled = true
+        try await Task.sleep(for: .milliseconds(200))
+        keyboard.show(for: .editor)
+        let markdown = try XCTUnwrap(web as? CrowMarkdownWebView)
+        XCTAssertTrue(markdown.inputAccessoryView is CrowKeyboardAccessory)
+        _ = try await web.callAsyncJavaScript("window.crowMarkdown.jumpHeading(0); return true", arguments: [:], in: nil, contentWorld: .defaultClient)
+        XCTAssertTrue(keyboard.insert("Snippet ", for: .editor))
+        for _ in 0..<100 where model.selectedBuffer?.text.contains("Snippet") != true { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.selectedBuffer?.text, "# Snippet Keyboard\n\nKeep this text.\n")
+        markdown.keyboardAccessory.press(KeyboardBarKey(key: "Tab"))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.selectedBuffer?.text.contains("Snippet     Keyboard") == true)
     }
 }
 #endif

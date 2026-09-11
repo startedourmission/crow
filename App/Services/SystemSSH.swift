@@ -36,7 +36,7 @@ struct SystemSSHSpec: Sendable {
             if file == ".zshrc" {
                 text += """
                 function ssh() {
-                  local crow_request crow_option
+                  local crow_request crow_option crow_exit=0
                   for crow_option in "$@"; do
                     case "$crow_option" in
                       -N|-f|-fN|-Nf|-G|-V|-T|-s|-M|-O*|-S*|-W*|-Q*|*ControlPath=*|*ControlMaster=*|*ControlPersist=*)
@@ -45,7 +45,10 @@ struct SystemSSHSpec: Sendable {
                   done
                   crow_request=$(/usr/bin/mktemp -d \(Self.quote(root.path + "/r.XXXXXXXX"))) || { command /usr/bin/ssh "$@"; return $?; }
                   (umask 077; builtin printf '%s\\0' "$@" > "$crow_request/args"; builtin printf '%s' "$PWD" > "$crow_request/cwd")
-                  command /usr/bin/ssh -o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$crow_request/s" "$@"
+                  (umask 077; builtin printf '%s' "$CROW_TERMINAL_ID" > "$crow_request/terminal-id"; : > "$crow_request/active")
+                  command /usr/bin/ssh -o ControlMaster=auto -o ControlPersist=60 -o "ControlPath=$crow_request/s" "$@" || crow_exit=$?
+                  /bin/rm -f -- "$crow_request/active"
+                  return $crow_exit
                 }
 
                 """
@@ -68,6 +71,24 @@ struct SystemSSHSpec: Sendable {
         env["ZDOTDIR"] = root.path; env["TERM"] = "xterm-256color"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
         return env.map { "\($0.key)=\($0.value)" }
+    }
+
+    func activeSocket(for terminalID: UUID) -> String? {
+        guard let requests = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return nil }
+        let active = requests.filter { request in
+            request.lastPathComponent.hasPrefix("r.") &&
+            FileManager.default.fileExists(atPath: request.appendingPathComponent("active").path) &&
+            FileManager.default.fileExists(atPath: request.appendingPathComponent("s").path) &&
+            (try? String(contentsOf: request.appendingPathComponent("terminal-id"), encoding: .utf8)) == terminalID.uuidString
+        }
+        guard active.count == 1 else { return nil }
+        return active[0].appendingPathComponent("s").path
+    }
+
+    func imagePasteConnection(socket: String) async throws -> SystemSSHSpec {
+        await poll()
+        guard let spec = owned.last(where: { $0.socket == socket }) else { throw CommandError("Wait for this SSH connection to finish opening before pasting an image.") }
+        return spec
     }
 
     func prepare(_ arguments: [String], directory: String) async throws -> SystemSSHSpec {

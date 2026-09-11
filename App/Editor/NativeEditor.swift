@@ -410,6 +410,7 @@ extension EnvironmentValues {
 }
 
 struct NativeEditor: UIViewRepresentable {
+    @Environment(\.keyboardBarItems) private var keyboardBarItems
     @Environment(\.phoneKeyboardFocus) private var keyboard
     @Environment(\.editorKeyboardFocus) private var editorKeyboard
     @Environment(\.editorRendererActive) private var rendererActive
@@ -437,6 +438,12 @@ struct NativeEditor: UIViewRepresentable {
         return editor
     }
     func updateUIView(_ editor: NumberedTextView, context: Context) {
+        if editor.inputAccessoryView == nil {
+            let accessory = CrowKeyboardAccessory()
+            accessory.onKey = { [weak editor] key in editor?.performKeyboardKey(key) }
+            editor.inputAccessoryView = accessory
+        }
+        (editor.inputAccessoryView as? CrowKeyboardAccessory)?.configure(keyboardBarItems)
         editorKeyboard?.register(editor, preview: rendererPreview)
         if rendererActive { keyboard?.register(editor, surface: .editor) }
         context.coordinator.parent = self
@@ -477,10 +484,69 @@ struct NativeEditor: UIViewRepresentable {
     }
 }
 
-final class NumberedTextView: UITextView {
+final class NumberedTextView: UITextView, SnippetInput {
     var showNumbers = true
     var indentWidth = 4
     var onSave: (() -> Void)?
+    override func insertText(_ text: String) {
+        if let key = (inputAccessoryView as? CrowKeyboardAccessory)?.typedKey(text) { performKeyboardKey(key); return }
+        super.insertText(text)
+    }
+    func insertSnippet(_ text: String) {
+        (inputAccessoryView as? CrowKeyboardAccessory)?.resetModifiers()
+        super.insertText(text)
+    }
+    func performKeyboardKey(_ key: KeyboardBarKey) {
+        if key.control || key.command {
+            switch key.key.lowercased() {
+            case "a": selectAll(nil); return
+            case "c": copy(nil); return
+            case "x": cut(nil); return
+            case "v": paste(nil); return
+            case "z": if key.shift { undoManager?.redo() } else { undoManager?.undo() }; return
+            case "s": onSave?(); return
+            default: break
+            }
+        }
+        let directions: [String: UITextLayoutDirection] = ["ArrowLeft": .left, "ArrowRight": .right, "ArrowUp": .up, "ArrowDown": .down]
+        if let direction = directions[key.key], let selection = selectedTextRange {
+            let start = direction == .left || direction == .up ? selection.start : selection.end
+            guard let target = position(from: start, in: direction, offset: 1) else { return }
+            selectedTextRange = key.shift ? textRange(from: minPosition(selection.start, target), to: maxPosition(selection.end, target)) : textRange(from: target, to: target)
+            scrollRangeToVisible(selectedRange); return
+        }
+        switch key.key {
+        case "Escape": findInteraction?.dismissFindNavigator()
+        case "Tab":
+            if key.shift {
+                let source = text as NSString, lines = source.lineRange(for: selectedRange)
+                let value = source.substring(with: lines).components(separatedBy: "\n").map { line -> String in
+                    if line.hasPrefix("\t") { return String(line.dropFirst()) }
+                    return String(line.dropFirst(line.prefix(indentWidth).prefix(while: { $0 == " " }).count))
+                }.joined(separator: "\n")
+                if let start = position(from: beginningOfDocument, offset: lines.location),
+                   let end = position(from: start, offset: lines.length), let range = textRange(from: start, to: end) {
+                    replace(range, withText: value); delegate?.textViewDidChange?(self)
+                }
+            } else { super.insertText(String(repeating: " ", count: indentWidth)) }
+        case "Enter": super.insertText("\n")
+        case "Backspace": deleteBackward()
+        case "Delete":
+            if selectedRange.length == 0, let next = position(from: selectedTextRange?.end ?? endOfDocument, offset: 1) {
+                selectedTextRange = textRange(from: selectedTextRange?.start ?? endOfDocument, to: next)
+            }
+            if selectedRange.length > 0 { deleteBackward() }
+        case "Home", "End":
+            let target = key.key == "Home" ? beginningOfDocument : endOfDocument
+            selectedTextRange = key.shift ? textRange(from: minPosition(selectedTextRange?.start ?? target, target), to: maxPosition(selectedTextRange?.end ?? target, target)) : textRange(from: target, to: target)
+        case "PageUp", "PageDown":
+            let y = contentOffset.y + (key.key == "PageUp" ? -bounds.height : bounds.height)
+            setContentOffset(CGPoint(x: contentOffset.x, y: max(0, min(y, contentSize.height - bounds.height))), animated: false)
+        default: if !key.control && !key.command { super.insertText(key.shift ? key.key.uppercased() : key.key) }
+        }
+    }
+    private func minPosition(_ a: UITextPosition, _ b: UITextPosition) -> UITextPosition { compare(a, to: b) == .orderedAscending ? a : b }
+    private func maxPosition(_ a: UITextPosition, _ b: UITextPosition) -> UITextPosition { compare(a, to: b) == .orderedDescending ? a : b }
     override var keyCommands: [UIKeyCommand]? {
         (super.keyCommands ?? []) + [UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(indent)),
             UIKeyCommand(input: "s", modifierFlags: .command, action: #selector(save))]

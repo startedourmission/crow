@@ -105,29 +105,32 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         var sent: [UInt8] = []
         coordinator.onBytes = { sent += $0 }
         view.setPhoneAccessory(true)
-        let row = try XCTUnwrap(view.inputAccessoryView?.subviews.compactMap { $0 as? UIStackView }.first)
+        let accessory = try XCTUnwrap(view.inputAccessoryView as? CrowKeyboardAccessory)
+        accessory.configure(KeyboardBarKey.defaults + [KeyboardBarKey(key: "Tab", shift: true)])
+        let scroll = try XCTUnwrap(accessory.subviews.compactMap { $0 as? UIScrollView }.first)
+        let row = try XCTUnwrap(scroll.subviews.compactMap { $0 as? UIStackView }.first)
         func button(_ label: String) throws -> UIButton {
             try XCTUnwrap(row.arrangedSubviews.compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == label })
         }
-        try button("Escape").sendActions(for: .touchUpInside)
-        try button("Tab").sendActions(for: .touchUpInside)
-        try button("Shift Tab").sendActions(for: .touchUpInside)
+        try button("esc").sendActions(for: .touchUpInside)
+        try button("tab").sendActions(for: .touchUpInside)
+        try button("shift+tab").sendActions(for: .touchUpInside)
         XCTAssertEqual(sent, [0x1b, 0x09, 0x1b, 0x5b, 0x5a])
         sent = []
-        try button("Control").sendActions(for: .touchUpInside)
+        try button("ctrl").sendActions(for: .touchUpInside)
         XCTAssertTrue(view.controlModifier)
         view.insertText("c")
         XCTAssertEqual(sent, [0x03])
         XCTAssertFalse(view.controlModifier)
-        XCTAssertFalse(try button("Control").isSelected)
+        XCTAssertFalse(try button("ctrl").isSelected)
         sent = []
-        try button("Left").sendActions(for: .touchUpInside)
-        try button("Right").sendActions(for: .touchUpInside)
+        try button("←").sendActions(for: .touchUpInside)
+        try button("→").sendActions(for: .touchUpInside)
         XCTAssertEqual(sent, Array("\u{1b}[D\u{1b}[C".utf8))
         sent = []
         view.getTerminal().applicationCursor = true
-        try button("Up").sendActions(for: .touchUpInside)
-        try button("Down").sendActions(for: .touchUpInside)
+        try button("↑").sendActions(for: .touchUpInside)
+        try button("↓").sendActions(for: .touchUpInside)
         XCTAssertEqual(sent, Array("\u{1b}OA\u{1b}OB".utf8))
         view.setPhoneAccessory(false)
         XCTAssertTrue(view.inputAccessoryView === original)
@@ -201,11 +204,8 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         XCTAssertTrue(model.current.terminals[id] === session)
         keyboard.show(for: .terminal)
         XCTAssertTrue(session.view.isFirstResponder)
-        let accessory = try XCTUnwrap(session.view.inputAccessoryView)
-        let row = try XCTUnwrap(accessory.subviews.compactMap { $0 as? UIStackView }.first)
-        let hide = try XCTUnwrap(row.arrangedSubviews.compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Hide Keyboard" })
         for _ in 0..<2 {
-            hide.sendActions(for: .touchUpInside)
+            session.view.resignFirstResponder()
             XCTAssertFalse(session.view.isFirstResponder)
             keyboard.show(for: .terminal)
             XCTAssertTrue(session.view.isFirstResponder, "The bottom keyboard button must restore the displayed SSH terminal")
