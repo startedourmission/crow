@@ -21,8 +21,78 @@ import AppKit
     #endif
 
     static func run() async {
-        do { try await test(); print("PASS Reverse SSH: execution, file edits, authentication, live revocation, cleanup, reconnect"); exit(0) }
+        do {
+            if CommandLine.arguments.dropFirst().first == "--existing-connection" {
+                try await existingConnection()
+                print("PASS existing-connection Reverse SSH integration")
+            } else {
+                try await test()
+                print("PASS Reverse SSH: execution, file edits, authentication, live revocation, cleanup, reconnect")
+            }
+            exit(0)
+        }
         catch { print("FAIL", error.localizedDescription); exit(1) }
+    }
+
+    /// Opt-in integration check: a separate temporary reverse endpoint on an already
+    /// authenticated connection. No app activation or SSH/server setting changes.
+    @MainActor static func existingConnection() async throws {
+        let args = CommandLine.arguments
+        guard args.count == 6, let port = Int(args[5]), (1...65535).contains(port) else {
+            throw CommandError("Usage: --existing-connection control-socket username hostname port")
+        }
+        let spec = SystemSSHSpec(host: SSHHost(name: "Integration test", hostname: args[4], port: port, username: args[3]),
+            socket: args[2], arguments: [], directory: FileManager.default.temporaryDirectory.path)
+        _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
+        let session = ReverseSSHSession()
+        defer { session.stop() }
+        session.start { spec }
+        try await wait("Live reverse endpoint did not become ready") { session.connectCommand != nil || !session.isEnabled }
+        guard let command = session.connectCommand else {
+            let message = session.status
+            await session.stopAndWait()
+            throw CommandError(message)
+        }
+        do {
+            let wrapper = try await ReverseSSHCommand.remote(spec, command: "cat " + command)
+            let result = try await ReverseSSHCommand.remote(spec, command: command + " -T 'printf CROW_LIVE_OK'")
+            try require(result.contains("CROW_LIVE_OK"), "Authenticated reverse command failed")
+            print("PASS existing connection: authenticated server → Mac execution")
+            // Exercise binary stdin/EOF as well as output, without writing user files.
+            let payload = "한글 👋 quoted ' text"
+            let echo = try await ReverseSSHCommand.remote(spec,
+                command: "printf '%s' " + SystemSSHBridge.quote(payload) + " | " + command + " -T cat")
+            try require(echo.contains(payload), "Reverse bridge corrupted input or failed to forward EOF")
+            print("PASS existing connection: UTF-8 stdin/output and EOF")
+            await session.stopAndWait()
+            var cleaned = false
+            for _ in 0..<60 {
+                if (try? await ReverseSSHCommand.remote(spec, command: "test ! -e " + command)) != nil { cleaned = true; break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            try require(cleaned, "Temporary reverse credentials were not removed")
+            if wrapper.contains("ProxyCommand="), let portText = wrapper.components(separatedBy: " -p ").last?.split(separator: " ").first,
+               let reversePort = Int(portText) {
+                let probe = """
+                $crowProbe = [Net.Sockets.TcpClient]::new()
+                try { if ($crowProbe.ConnectAsync('127.0.0.1', \(reversePort)).Wait(1500) -and $crowProbe.Connected) { exit 1 } }
+                catch { } finally { $crowProbe.Dispose() }
+                exit 0
+                """
+                _ = try await ReverseSSHCommand.remote(spec, command: "powershell.exe -NoProfile -NonInteractive -Command " + SystemSSHBridge.quote(probe))
+                print("PASS existing connection: Windows reverse listener closed on Off")
+            }
+            _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
+            print("PASS existing connection: temporary endpoint removed, original SSH master preserved")
+        } catch {
+            await session.stopAndWait()
+            // Give owned asynchronous cleanup time to revoke this test's temporary bundle.
+            for _ in 0..<60 {
+                if (try? await ReverseSSHCommand.remote(spec, command: "test ! -e " + command)) != nil { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            throw error
+        }
     }
 
     @MainActor static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
@@ -38,6 +108,17 @@ import AppKit
     }
 
     @MainActor static func test() async throws {
+        func isListening(_ port: Int) -> Bool {
+            let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else { return false }
+            defer { Darwin.close(fd) }
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); address.sin_family = sa_family_t(AF_INET)
+            address.sin_addr.s_addr = inet_addr("127.0.0.1"); address.sin_port = UInt16(port).bigEndian
+            return withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }
+            }
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-smoke-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -141,6 +222,7 @@ import AppKit
         try await wait("Off left an authenticated client connection open") { !live.isRunning }
         try require(Date().timeIntervalSince(stoppedAt) < 2, "Revoking a live connection took more than two seconds")
         try await wait("Off left client credentials on the server") { !FileManager.default.fileExists(atPath: bundle.path) }
+        try await wait("Off left the allocated reverse listener open") { !isListening(Int(reversePort)!) }
         let normal = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments + ["printf NORMAL_SSH_ALIVE"])
         try require(normal == "NORMAL_SSH_ALIVE", "Off interrupted ordinary SSH")
         print("PASS Off closes authenticated sessions, removes credentials, preserves normal SSH")
@@ -152,6 +234,17 @@ import AppKit
         do { try await wait("Restart did not finish") { session.connectCommand != nil || !session.isEnabled } }
         catch { throw CommandError("Restart did not finish: \(session.status)") }
         try require(session.connectCommand != nil && session.connectCommand != command, "Restart reused revoked credentials")
+        let restartedBundle = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .first { $0.lastPathComponent.hasPrefix(".crow-client-") }!
+        try Data("#!/bin/sh\nexit 42\n".utf8).write(to: restartedBundle.appendingPathComponent("connect"))
+        try await wait("Broken reverse route stayed On while the master remained alive") { !session.isEnabled }
+        try require(session.connectCommand == nil, "A broken reverse route still advertised a command")
+        await session.stopAndWait()
+        _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
+        print("PASS reverse-path health check detects failure independently of the SSH master")
+        session.start { spec }
+        try await wait("Restart after health failure did not finish") { session.connectCommand != nil || !session.isEnabled }
+        try require(session.connectCommand != nil, "Health failure prevented a fresh toggle")
         #if CROW_APP_TEST
         var savedHost = host
         savedHost.commandArguments = ["-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
@@ -170,14 +263,26 @@ import AppKit
         model.hosts = [host]; model.sidebarPane = .hosts
         let session = ReverseSSHSession(bundleBasePath: root.path)
         model.reverseSSHConnections[host.id] = session
+        let commandLine = "ssh " + host.commandArguments!.map(SystemSSHBridge.quote).joined(separator: " ")
+        try await model.connectCommand(commandLine)
+        try require(model.sidebarPane == .hosts, "Starting SSH switched to the file explorer")
+        try await wait("Ordinary SSH did not connect") { model.current.snapshot.workspace.connection == .connected }
+        try require(model.sidebarPane == .hosts, "SSH completion switched to the file explorer")
+        try await model.connectCommand(commandLine)
+        try require(model.sidebarPane == .hosts, "Selecting an already connected SSH host switched the sidebar")
+        model.disconnectCurrent()
+        try await Task.sleep(for: .milliseconds(300))
+        print("PASS SSH sidebar selection: start, connection completion, already-connected host")
         for attempt in 0..<2 {
             // Both a new connection and a previously disconnected workspace must work from one toggle.
+            let selectedPane: SidebarPane = attempt == 0 ? .hosts : .files
+            model.sidebarPane = selectedPane
             model.setReverseSSH(true, for: host)
             try await wait("App toggle did not finish") { session.connectCommand != nil || !session.isEnabled }
             guard let command = session.connectCommand, let spec = model.current.systemSSH else {
                 throw CommandError("App toggle failed: \(session.status)")
             }
-            try require(model.sidebarPane == .hosts, "Enabling Reverse SSH moved away from the SSH list")
+            try require(model.sidebarPane == selectedPane, "Enabling Reverse SSH changed the selected sidebar pane")
             let result = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments + [command + " 'printf APP_TOGGLE_OK'"])
             try require(result == "APP_TOGGLE_OK", "App toggle did not enable client execution")
             model.setReverseSSH(false, for: host)

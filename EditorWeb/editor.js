@@ -1,4 +1,4 @@
-import { Editor, Extension, generateJSON } from '@tiptap/core';
+import { Editor, Extension, createNodeFromContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import { TableKit } from '@tiptap/extension-table';
@@ -96,7 +96,7 @@ function serialize() {
 }
 
 const editor = new Editor({
-  element: main, extensions, content: '', injectCSS: false,
+  element: main, extensions, content: '', injectCSS: false, editable: false,
   editorProps: {
     attributes: { 'aria-label': 'Markdown editor', spellcheck: 'false' },
     handleClickOn(_view, _pos, node, _nodePos, event) {
@@ -138,7 +138,9 @@ function receive(value, blocks, fontSize) {
     const nodes = []; records = [];
     let offset = 0;
     for (const block of blocks) {
-      const parsed = generateJSON(block.html, extensions).content ?? [];
+      // generateJSON rebuilds every extension/schema for every block. Reuse the
+      // live editor's schema and its cached DOM parser for the whole document.
+      const parsed = createNodeFromContent(block.html, editor.schema, {slice: false}).toJSON().content ?? [];
       // Keep unrendered content editable and recoverable rather than silently dropping it.
       if (!parsed.length) parsed.push({type: 'paragraph', ...(block.source.trim() ? {content: [{type: 'text', text: block.source}]} : {})});
       const holder = document.createElement('div'); holder.innerHTML = block.html;
@@ -159,6 +161,7 @@ function receive(value, blocks, fontSize) {
     let index = 0; const normalized = editor.getJSON().content ?? [];
     for (const record of records) { record.nodes = normalized.slice(index, index + record.nodes.length); record.signature = signature(record.nodes); index += record.nodes.length; }
     source = value; initialized = true;
+    editor.setEditable(true, false);
   } finally { loading = false; }
 }
 function jumpHeading(index) {
@@ -170,4 +173,7 @@ function jumpHeading(index) {
   editor.chain().setTextSelection(target).focus().scrollIntoView().run();
   return true;
 }
-window.crowMarkdown = { receive, jumpHeading };
+function setFontSize(fontSize) {
+  document.body.style.fontSize = Math.min(32, Math.max(11, fontSize)) + 'px';
+}
+window.crowMarkdown = { receive, jumpHeading, setFontSize };

@@ -107,6 +107,19 @@ import CrowCore
         try check(document.text == source, "Opening preview mutated fixture \(index)")
         try check((try await js("return document.querySelector('textarea') === null")) as? Bool == true, "Preview introduced a source textarea")
         if index == 0 {
+            let benchmarkSource = (0..<200).map { "## Heading \($0)\n\nParagraph **bold** 한글 \($0).\n\n" }.joined()
+            let parseStart = Date()
+            let benchmarkBlocks = MarkdownPreview.editingBlocks(benchmarkSource).map { ["source": $0.source, "html": $0.html] }
+            let parseMS = Date().timeIntervalSince(parseStart) * 1000
+            let renderMS = try await web.callAsyncJavaScript("""
+                const start = performance.now();
+                window.crowMarkdown.receive(source, blocks, 15);
+                return performance.now() - start;
+                """, arguments: ["source": benchmarkSource, "blocks": benchmarkBlocks], in: nil, contentWorld: .defaultClient)
+            print("BENCH 400 Markdown blocks: native parse \(Int(parseMS)) ms; JS receive \(renderMS ?? "unknown") ms")
+            _ = try await web.callAsyncJavaScript("window.crowMarkdown.receive(source, blocks, 15)",
+                arguments: ["source": source, "blocks": MarkdownPreview.editingBlocks(source).map { ["source": $0.source, "html": $0.html] }],
+                in: nil, contentWorld: .defaultClient)
             _ = try await js("""
                 window.beforeBody = document.body; window.beforeEditor = document.querySelector('.tiptap');
                 window.beforeEditor.focus();
@@ -159,6 +172,44 @@ import CrowCore
             try check(document.text == original.replacingOccurrences(of: "bold", with: "한글입력").replacingOccurrences(of: "let x = 1", with: "let x = 1!"),
                       "Editing the last code line changed its fence separator: \(document.text.debugDescription)")
             print("PASS code block has no synthetic trailing line; last-line edits preserve fences")
+            let edited = document.text
+            _ = try await js("window.editorBeforeFont = document.querySelector('.tiptap'); return true")
+            func updateHost(fontSize: Double = 15) {
+                host.rootView = MarkdownPreviewView(
+                    text: Binding(get: { document.text }, set: { document.text = $0 }),
+                    fontSize: fontSize, onSave: { document.saves += 1 })
+                host.layoutSubtreeIfNeeded()
+            }
+            updateHost(fontSize: 20)
+            try await Task.sleep(for: .milliseconds(100))
+            try check((try await js("return document.body.style.fontSize === '20px' && document.querySelector('.tiptap') === window.editorBeforeFont")) as? Bool == true,
+                      "Font size change rebuilt the rich editor or failed to update")
+            try check(document.text == edited, "Font adjustment changed the source")
+            // Supersede an in-flight background parse; its old source map must never
+            // replace the latest document, even if that slower parse finishes last.
+            document.text = String(repeating: "# Slow\n\n**paragraph** 한글\n\n", count: 2000)
+            updateHost()
+            try await Task.sleep(for: .milliseconds(10))
+            document.text = "# Latest\n\n**최신** source\n"
+            updateHost()
+            var latest = false
+            for _ in 0..<100 {
+                latest = (try? await js("return document.querySelector('h1')?.textContent === 'Latest'")) as? Bool == true
+                if latest { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try check(latest, "Latest source did not replace the superseded parse")
+            try await Task.sleep(for: .milliseconds(500))
+            try check((try await js("return document.querySelector('h1')?.textContent")) as? String == "Latest",
+                      "A stale asynchronous parse overwrote the latest source")
+            _ = try await js("""
+                const range = document.createRange(); range.selectNodeContents(document.querySelector('strong'));
+                const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+                document.querySelector('.tiptap').focus(); document.execCommand('insertText', false, '새로운'); return true;
+                """)
+            try await Task.sleep(for: .milliseconds(100))
+            try check(document.text == "# Latest\n\n**새로운** source\n", "Latest source map was stale after cancellation")
+            print("PASS font-only update reuses editor; stale background parse rejected; latest source mapping edits correctly")
         }
         if source.hasPrefix("~~~~swift") {
             try check((try await js("return document.querySelector('pre code').textContent")) as? String == "swift\n",

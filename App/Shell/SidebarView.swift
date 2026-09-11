@@ -389,14 +389,7 @@ private struct ReverseSSHHostToggle: View {
                 .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
             if let session {
                 if let command = session.connectCommand {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(command, forType: .string)
-                    } label: {
-                        Label("Copy Client Command", systemImage: "doc.on.doc")
-                            .font(.system(size: 11))
-                    }.buttonStyle(CrowButtonStyle())
-                        .help("Run this command on the SSH server. Append a command to execute it on this Mac.")
+                    CopyClientCommandButton(command: command)
                 } else if session.status != "Off" {
                     Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
@@ -405,6 +398,38 @@ private struct ReverseSSHHostToggle: View {
         }
         .padding(.bottom, 5)
         .windowDragExcluded()
+    }
+}
+
+struct CopyClientCommandButton: View {
+    let command: String
+    var pasteboard: NSPasteboard = .general
+    @State private var copied: Bool?
+    @State private var feedbackID: UUID?
+
+    private var title: String { copied.map { $0 ? "Copied!" : "Copy Failed" } ?? "Copy Client Command" }
+    var body: some View {
+        Button {
+            pasteboard.clearContents()
+            copied = pasteboard.setString(command, forType: .string)
+            feedbackID = UUID()
+        } label: {
+            ZStack(alignment: .leading) {
+                Label("Copy Client Command", systemImage: "doc.on.doc").hidden()
+                Label(title, systemImage: copied.map { $0 ? "checkmark" : "exclamationmark.triangle" } ?? "doc.on.doc")
+            }
+            .font(.system(size: 11))
+            .crowForeground(CrowTheme.textDim)
+        }
+        .buttonStyle(CrowButtonStyle())
+        .accessibilityLabel(title).accessibilityIdentifier("crow.reverse-ssh-copy")
+        .help("Run this command on the SSH server. Append a command to execute it on this Mac.")
+        .task(id: feedbackID) {
+            guard feedbackID != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(1600)); copied = nil }
+            catch { /* A new click restarts the feedback interval. */ }
+        }
+        .onChange(of: command) { _, _ in copied = nil; feedbackID = nil }
     }
 }
 #endif

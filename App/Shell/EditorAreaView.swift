@@ -105,7 +105,10 @@ struct CrowEditorView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     let buffer: OpenBuffer
     var isActive = false
-    @State private var previewMarkdown = false
+    @State private var sourceForFind = false
+    private var previewMarkdown: Bool {
+        buffer.language == .markdown && model.markdownPreviewEnabled && !sourceForFind
+    }
     @State private var findRequest = 0
     @State private var pendingFind = false
     @State private var findToggleRequest = 0
@@ -119,7 +122,10 @@ struct CrowEditorView: View {
                     .crowForeground(CrowTheme.textDim)
                 Spacer()
                 if buffer.language == .markdown {
-                    Button { previewMarkdown.toggle() } label: {
+                    Button {
+                        model.markdownPreviewEnabled = !previewMarkdown
+                        sourceForFind = false
+                    } label: {
                         Image(systemName: previewMarkdown ? "chevron.left.forwardslash.chevron.right" : "book")
                     }
                     .help(previewMarkdown ? "Markdown Source" : "Live Preview")
@@ -149,7 +155,10 @@ struct CrowEditorView: View {
                 NativeEditor(text: textBinding, fontSize: model.settings.fontSize,
                     indentWidth: model.settings.indentWidth, lineNumbers: model.settings.lineNumbers, findRequest: findRequest,
                     onSave: { Task { await model.saveBuffer(buffer.id) } }, focused: isActive, locationRequest: locationRequest,
-                    findToggleRequest: findToggleRequest, onFindVisibility: { findVisible = $0 })
+                    findToggleRequest: findToggleRequest, onFindVisibility: {
+                        findVisible = $0
+                        if !$0 { sourceForFind = false }
+                    })
                     .onAppear { if pendingFind { pendingFind = false; findRequest += 1 } }
             }
         }
@@ -159,7 +168,7 @@ struct CrowEditorView: View {
     }
 
     private func showFind() {
-        if previewMarkdown { pendingFind = true; previewMarkdown = false }
+        if previewMarkdown { pendingFind = true; sourceForFind = true }
         else { findRequest += 1 }
     }
 

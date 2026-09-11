@@ -43,6 +43,12 @@ including unchanged tab heights when toggling the sidebar in single and split pa
 and the reopen button remaining clear of the tabs.
 It also clicks summary headings/functions in the right sidebar and checks the native
 insertion caret, scrolling, rendered Markdown selection, and active-file switching.
+Markdown checks also cover mode retention between notes and through code files,
+explicit source-mode retention, and temporary source search without changing the
+rendering preference. The native editor fixture checks font-only updates without
+view replacement and rejects superseded asynchronous parses, then edits the latest
+source to verify its mapping. It prints native parse and JavaScript receive timings
+for a 400-block document (not end-to-end window startup time).
 Search checks cover prefix completion with a window-local Tab event, find-bar toggling,
 the Match Case checkbox, case-sensitive/insensitive replacement, and Replace All undo.
 They also verify the absence of find-bar X buttons, current/total match navigation,
@@ -52,11 +58,32 @@ moving the desktop pointer), compare rendered pixels for plain/filled/disabled
 buttons, and require a clearly visible color change for explorer toolbar actions,
 sidebar toggles, and summary headings. They also check that file/tab hover regions
 do not intercept native input and the collapsed sidebar's reopen button is on the left.
+Copy-command checks use a private test pasteboard, verify rendered confirmation,
+repeat-click timeout extension and reset, without replacing the user's clipboard.
 
 Both fixtures override `performDrag(with:)` to record the request without entering
 Window Server pointer tracking. They verify routing and that OS window movement is
 enabled, not end-to-end physical dragging, snapping, or macOS keyboard shortcuts.
 Those require a separate manual check; these tests never take over the user's cursor.
+
+`zsh Tools/run-reverse-ssh-smoke.sh` checks authenticated reverse execution, file edits,
+rejected unrelated keys, live revocation, actual listener removal, reverse-path health
+failure while the SSH master is still alive, cleanup, and reconnect. Passing the built
+DerivedData directory also checks the production app's toggle workflow.
+It also verifies that ordinary SSH startup/completion, selecting an already
+connected host, and reverse-SSH startup/reconnect preserve the current sidebar
+selection rather than automatically opening Files or Hosts.
+
+An **explicitly opt-in** live check can use an existing authenticated control socket:
+
+```sh
+zsh Tools/run-reverse-ssh-smoke.sh --existing-connection /path/to/control-socket user host 22
+```
+
+This creates a separate temporary reverse listener and private connection bundle on
+that server, exercises the production direct/Windows-loopback selection and UTF-8
+stdin/output/EOF, then removes its bundle and forward. It preserves the original SSH
+master and does not change server configuration or activate the user's Crow.
 
 `zsh Tools/run-reverse-ssh-smoke.sh` exercises a real loopback OpenSSH master,
 Crow's private per-connection SSH server, generated client credentials, command execution,

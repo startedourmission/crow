@@ -263,16 +263,67 @@ import WebKit
         try require(heading == "두번째", "Summary click did not place the caret inside the rendered heading")
         try require(model.inspectedBuffer?.text == note, "Outline navigation edited the document")
         print("PASS inspector: visible heading hover via window events, native/rich caret navigation, source unchanged")
+        let firstNoteID = model.inspectedBuffer!.id
+        let otherNoteURL = root.appendingPathComponent("other.md")
+        let otherNote = "# Other note\n\nA **different** document.\n"
+        try Data(otherNote.utf8).write(to: otherNoteURL)
+        model.openFile(FileEntry(name: "other.md", path: otherNoteURL.path, isDirectory: false))
+        func requireRendered(_ heading: String) async throws {
+            for _ in 0..<80 {
+                hosting.layoutSubtreeIfNeeded()
+                if let web = views(hosting, WKWebView.self).first,
+                   (try? await web.callAsyncJavaScript("return document.querySelector('.tiptap h1')?.textContent",
+                       arguments: [:], in: nil, contentWorld: .defaultClient)) as? String == heading {
+                    try require(views(hosting, CodeTextView.self).isEmpty, "Markdown unexpectedly fell back to source")
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try require(false, "Markdown mode was not retained for \(heading)")
+        }
+        try await requireRendered("Other note")
+        try require(model.markdownPreviewEnabled && model.inspectedBuffer?.text == otherNote,
+                    "Opening another Markdown file reset the preference or changed its contents")
+        // Find temporarily uses the source editor, without changing the next note's mode.
+        model.findInCurrentDocument()
+        try await Task.sleep(for: .milliseconds(200)); hosting.layoutSubtreeIfNeeded()
+        try require(views(hosting, CodeTextView.self).first?.enclosingScrollView?.isFindBarVisible == true,
+                    "Find from rendered Markdown did not open its search bar")
+        try require(model.markdownPreviewEnabled, "Find silently changed the Markdown preference")
+        let paneID = model.current.snapshot.layout!.activePane!.id
+        model.selectTab(.file(firstNoteID), in: paneID)
+        try await requireRendered("First")
+        try require(model.inspectedBuffer?.text == note, "Switching rendered notes leaked the other document")
+        print("PASS Markdown mode retained across file selection and temporary source search")
         let codeURL = root.appendingPathComponent("outline.swift")
         let code = "// 👋 한글\nfunc first() {}\n\nfunc second(\n value: Int\n) {}\n"
         try Data(code.utf8).write(to: codeURL)
         model.openFile(FileEntry(name: "outline.swift", path: codeURL.path, isDirectory: false))
         try await Task.sleep(for: .milliseconds(500)); hosting.layoutSubtreeIfNeeded()
         try await clickLastOutline()
-        let functionEditor = views(hosting, CodeTextView.self).first!
+        var functionEditor = views(hosting, CodeTextView.self).first!
         try require(functionEditor.selectedRange().location == (code as NSString).range(of: "second").location,
                     "Function summary did not navigate in the newly selected code file")
         print("PASS inspector: code declarations, Unicode offset, and active-file switching")
+        let codeID = model.inspectedBuffer!.id
+        model.selectTab(.file(firstNoteID), in: paneID)
+        try await requireRendered("First")
+        // An explicit Source choice must also survive selecting another file.
+        NSApp.sendEvent(event(.leftMouseDown, previewPoint)); NSApp.sendEvent(event(.leftMouseUp, previewPoint))
+        try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+        try require(!model.markdownPreviewEnabled && !views(hosting, CodeTextView.self).isEmpty,
+                    "Explicit source mode did not take effect")
+        model.selectTab(.file(codeID), in: paneID)
+        try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+        model.selectTab(.file(firstNoteID), in: paneID)
+        try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+        try require(views(hosting, WKWebView.self).isEmpty && !views(hosting, CodeTextView.self).isEmpty,
+                    "Explicit source preference was not retained")
+        model.selectTab(.file(codeID), in: paneID)
+        try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+        // Remaining search checks must target the current native view after tab recreation.
+        functionEditor = views(hosting, CodeTextView.self).first!
+        print("PASS Markdown preference survives code-file round trips; explicit Source persists")
         for visible in [false, true] {
             let actions = views(hosting, WindowMoveAnchorView.self).filter { anchor in
                 let rect = anchor.convert(anchor.activeRect, to: nil)
@@ -385,6 +436,7 @@ import WebKit
         try require(model.current.snapshot.layout!.activePane?.selected == rightPane.tabs[1], "Numbered tab shortcut did not select the second tab")
         print("PASS shortcut actions: explorer focus/query preservation, current-document find, font size, pane-local numbered tabs, contents search")
         try await verifyHover()
+        try await verifyCopyFeedback()
         try require(!NSApp.isActive, "Fixture stole app focus")
     }
     @MainActor static func verifyHover() async throws {
@@ -427,6 +479,43 @@ import WebKit
         await move(310)
         try require(try bitmap() == baseline, "Disabled button reacted to hover")
         print("PASS hover rendering via window mouse events: plain label, filled background, exit, disabled; no pointer movement")
+    }
+    @MainActor static func verifyCopyFeedback() async throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let command = "'/private/test client/connect'"
+        let view = NSHostingView(rootView: CopyClientCommandButton(command: command, pasteboard: pasteboard)
+            .padding(20).background(CrowTheme.bg0))
+        let window = FixtureWindow(contentRect: NSRect(x: -22000, y: -22000, width: 220, height: 70),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderBack(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        func pixels() -> Data {
+            view.layoutSubtreeIfNeeded()
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: rep)
+            return Data(bytes: rep.bitmapData!, count: rep.bytesPerRow * rep.pixelsHigh)
+        }
+        func click() async {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                NSApp.sendEvent(NSEvent.mouseEvent(with: type, location: NSPoint(x: 110, y: 35), modifierFlags: [],
+                    timestamp: 1, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        let baseline = pixels()
+        await click()
+        try require(pasteboard.string(forType: .string) == command, "Copy button wrote the wrong command")
+        let confirmation = pixels()
+        try require(confirmation != baseline, "Copy button has no visible confirmation")
+        try await Task.sleep(for: .milliseconds(800))
+        await click()
+        try await Task.sleep(for: .milliseconds(800))
+        try require(pixels() == confirmation, "Repeated click did not extend confirmation")
+        try await Task.sleep(for: .milliseconds(900))
+        try require(pixels() == baseline, "Copy confirmation did not reset")
+        print("PASS Copy Client Command: clipboard, confirmation, repeated-click timer, reset; private test clipboard only")
     }
     static func require(_ value: Bool, _ message: String) throws {
         if !value { throw NSError(domain: "CrowWindowSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }

@@ -2,6 +2,11 @@
 set -euo pipefail
 crow_root="${0:A:h:h}"
 crow_build=$(mktemp -d /tmp/crow-reverse-smoke-build.XXXXXX)
+crow_live_args=()
+if [[ "${1:-}" == "--existing-connection" ]]; then
+  crow_live_args=("$@")
+  set --
+fi
 if [[ $# -gt 0 ]]; then
   crow_derived="$1"
   crow_products="$crow_derived/Build/Products/Debug"
@@ -27,4 +32,4 @@ swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos15 -I "$crow_
   "$crow_root/App/Services/SystemSSH.swift" "$crow_root/App/Services/SystemSFTP.swift" \
   "$crow_root/App/Services/ReverseSSH.swift" "$crow_root/Tools/NativeSmoke/ReverseSSHSmoke.swift" \
   -o "$crow_build/ReverseSSHSmoke"
-"$crow_build/ReverseSSHSmoke"
+"$crow_build/ReverseSSHSmoke" "${crow_live_args[@]}"

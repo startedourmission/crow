@@ -139,7 +139,13 @@ import CrowCore
 
 /// Only bounded noninteractive commands. Credentials never enter process arguments or logs.
 enum ReverseSSHCommand {
-    static func run(_ executable: String = "/usr/bin/ssh", _ arguments: [String]) async throws -> String {
+    /// Use shell stdin, not SSH exec quoting (Windows DefaultShell may launch WSL).
+    static func remote(_ spec: SystemSSHSpec, command: String) async throws -> String {
+        let input = "exec sh -c " + SystemSSHBridge.quote(command) + "\n"
+        return try await run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments, input: Data(input.utf8))
+    }
+
+    static func run(_ executable: String = "/usr/bin/ssh", _ arguments: [String], input: Data? = nil) async throws -> String {
         let work = Task.detached {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-command-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -148,9 +154,13 @@ enum ReverseSSHCommand {
             for url in [outURL, errURL] { FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
             let output = try FileHandle(forWritingTo: outURL), errors = try FileHandle(forWritingTo: errURL)
             defer { try? output.close(); try? errors.close() }
+            let inputURL = root.appendingPathComponent("input")
+            try (input ?? Data()).write(to: inputURL)
+            let stdin = try FileHandle(forReadingFrom: inputURL)
+            defer { try? stdin.close() }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
-            process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = errors
+            process.standardInput = stdin; process.standardOutput = output; process.standardError = errors
             try Task.checkCancellation()
             try process.run()
             defer { if process.isRunning { process.terminate() } }
@@ -158,6 +168,11 @@ enum ReverseSSHCommand {
             while process.isRunning {
                 try Task.checkCancellation()
                 guard Date() < deadline else { throw CommandError("Reverse SSH timed out.") }
+                for url in [outURL, errURL] {
+                    guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) < 1024 * 1024 else {
+                        throw CommandError("Reverse SSH diagnostic output exceeded its limit.")
+                    }
+                }
                 try await Task.sleep(for: .milliseconds(25))
             }
             // isRunning is already false. An async task may resume on a different
@@ -169,6 +184,54 @@ enum ReverseSSHCommand {
             return try String(contentsOf: outURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+    }
+}
+
+/// Keep SSH authentication, keys and host verification in the POSIX environment.
+/// Only the raw TCP stream crosses to Windows when its loopback owns the forward.
+enum ReverseSSHConnector {
+    enum Route { case direct, windowsLoopback }
+
+    static func script(path: String, port: Int, username: String, route: Route) -> String {
+        let quote = SystemSSHBridge.quote
+        let proxy: String
+        switch route {
+        case .direct: proxy = ""
+        case .windowsLoopback:
+            let encoded = Data(windowsRelay(port: port).utf16.flatMap { [UInt8($0 & 255), UInt8($0 >> 8)] }).base64EncodedString()
+            proxy = " -o " + quote("ProxyCommand=powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded)
+        }
+        return """
+        #!/bin/sh
+        exec ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o UserKnownHostsFile=\(quote(path + "/known_hosts")) -i \(quote(path + "/identity"))\(proxy) -p \(port) -l \(quote(username)) 127.0.0.1 "$@"
+
+        """
+    }
+
+    private static func windowsRelay(port: Int) -> String {
+        // Binary .NET streams: PowerShell text pipelines would corrupt SSH packets.
+        // Fixed loopback destination; no new listener, firewall rule or credential copy.
+        """
+        $crowTCP = [Net.Sockets.TcpClient]::new()
+        try {
+          if (-not $crowTCP.ConnectAsync('127.0.0.1', \(port)).Wait(4000)) { throw 'Windows loopback connection timed out' }
+          $crowNetwork = $crowTCP.GetStream()
+          $crowInput = [Console]::OpenStandardInput()
+          $crowOutput = [Console]::OpenStandardOutput()
+          $crowSend = $crowInput.CopyToAsync($crowNetwork)
+          $crowReceive = $crowNetwork.CopyToAsync($crowOutput)
+          $crowFirst = [Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]@($crowSend, $crowReceive))
+          if ($crowFirst -eq 0) {
+            $crowSend.GetAwaiter().GetResult()
+            $crowTCP.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
+          }
+          $crowReceive.GetAwaiter().GetResult()
+          $crowOutput.Flush()
+        } catch {
+          [Console]::Error.WriteLine('Crow Windows loopback relay: ' + $_.Exception.Message)
+          exit 1
+        } finally { $crowTCP.Dispose() }
+        """
     }
 }
 
@@ -199,9 +262,12 @@ enum ReverseSSHCommand {
                 guard let self, self.operation === operation else { throw CancellationError() }
                 self.connectCommand = operation.connectCommand
                 self.status = "On · server can access this Mac"
+                var checks = 0
                 while true {
                     try await Task.sleep(for: .seconds(3))
                     _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
+                    checks += 1
+                    if checks % 5 == 0 { try await operation.verify() }
                 }
             } catch {
                 if let self, self.operation === operation {
@@ -218,6 +284,13 @@ enum ReverseSSHCommand {
         operation?.server?.stop()
         operation = nil; task?.cancel(); task = nil
         isEnabled = false; connectCommand = nil; status = "Off"
+    }
+
+    /// For lifecycle callers/tests that must wait for removal of this session's bundle.
+    func stopAndWait() async {
+        let running = task
+        stop()
+        await running?.value
     }
 
     @MainActor private final class Operation {
@@ -251,16 +324,39 @@ enum ReverseSSHCommand {
             let path = (base as NSString).appendingPathComponent(".crow-client-" + UUID().uuidString)
             // Remember the path even if the transfer fails, so partial credentials are removed.
             remoteDirectory = path
-            let quote = SystemSSHBridge.quote
-            let command = """
-            #!/bin/sh
-            exec ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\(quote(path + "/known_hosts")) -i \(quote(path + "/identity")) -p \(port) -l \(quote(server.username)) 127.0.0.1 "$@"
-
-            """
+            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .direct)
             try await files.installReverseSSHBundle(at: path, identity: server.privateKey,
                 knownHosts: "[127.0.0.1]:\(port) \(try server.hostPublicKey)", command: command)
             try Task.checkCancellation()
-            connectCommand = quote(path + "/connect")
+            connectCommand = SystemSSHBridge.quote(path + "/connect")
+            progress("Verifying server → Mac access…")
+            do { try await verify() }
+            catch {
+                try Task.checkCancellation()
+                let directError = error.localizedDescription
+                progress("Checking Windows loopback access…")
+                // Probe the bridge capability instead of assuming a host name, WSL distro or network mode.
+                do {
+                    _ = try await ReverseSSHCommand.remote(spec, command: "command -v powershell.exe >/dev/null")
+                    let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .windowsLoopback)
+                    try await files.write(bridged, path: path + "/connect", expected: command, overwrite: false)
+                    try Task.checkCancellation()
+                    try await verify()
+                } catch {
+                    try Task.checkCancellation()
+                    throw CommandError("Reverse SSH could not verify server → Mac access. The terminal was left open.\n\nDirect loopback: \(directError)\n\nWindows loopback bridge: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        func verify() async throws {
+            guard let spec, let connectCommand else { throw CommandError("Reverse SSH is not ready.") }
+            let marker = "CROW_REVERSE_OK_" + UUID().uuidString
+            let output = try await ReverseSSHCommand.remote(spec,
+                command: "exec " + connectCommand + " -T " + SystemSSHBridge.quote("printf '%s\\n' '" + marker + "'"))
+            guard output.components(separatedBy: .newlines).contains(marker) else {
+                throw CommandError("The reverse connection did not return its authenticated readiness response.")
+            }
         }
 
         func close() async {
@@ -269,8 +365,9 @@ enum ReverseSSHCommand {
             let files = files, path = remoteDirectory
             // Cleanup must outlive cancellation of the owning toggle's task.
             await Task.detached {
-                if let spec, let port, let localPort {
-                    _ = try? await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "cancel", "-R", "127.0.0.1:\(port):127.0.0.1:\(localPort)"] + spec.multiplexArguments)
+                if let spec, port != nil, let localPort {
+                    // Mux cancellation matches the original request, not its allocated port.
+                    _ = try? await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "cancel", "-R", "127.0.0.1:0:127.0.0.1:\(localPort)"] + spec.multiplexArguments)
                 }
                 if let files, let path { try? await files.removeReverseSSHBundle(at: path) }
                 files?.close()

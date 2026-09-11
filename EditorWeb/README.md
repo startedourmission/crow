@@ -16,4 +16,14 @@ Tiptap/ProseMirror owns rich-text selection, composition, undo and Markdown inpu
 The bridge preserves unmodified source blocks and source-mappable text edits; structural
 edits serialize only the changed blocks into Markdown.
 
+HTML blocks reuse the editor's existing schema/parser instead of rebuilding all
+extensions for each block. Native source-map parsing runs off the UI thread with
+stale-result rejection and an evictable 8-entry/8 MiB source-keyed cache. Font-only
+updates change CSS without parsing or resetting selection. Initial content is not
+editable until its source maps arrive.
+
+Markdown/source mode is an app-session preference, so selecting another Markdown
+file (including after visiting code files) keeps the selected mode. Document Find
+temporarily exposes source without changing that preference.
+
 Reference: https://tiptap.dev/docs/editor/markdown/getting-started/basic-usage

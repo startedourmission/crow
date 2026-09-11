@@ -40,7 +40,7 @@ public enum MarkdownPreview {
         // adjacent parsed blocks, so a horizontal rule inside fenced code is never split.
         for index in groups.indices where groups[index].line == nil {
             let lower = index == 0 ? 1 : (groups[index - 1].line ?? 1)
-            let upper = groups.dropFirst(index + 1).compactMap(\.line).first ?? lines.count
+            let upper = groups.dropFirst(index + 1).lazy.compactMap(\.line).first ?? lines.count
             if let line = (lower...max(lower, upper)).first(where: { number in
                 guard number <= lines.count else { return false }
                 let text = lines[number - 1].trimmingCharacters(in: .whitespaces)
@@ -51,7 +51,7 @@ public enum MarkdownPreview {
         var blocks: [EditingBlock] = []
         var cursor = source.startIndex
         for (index, group) in groups.enumerated() {
-            let nextLine = groups.dropFirst(index + 1).compactMap(\.line).first
+            let nextLine = groups.dropFirst(index + 1).lazy.compactMap(\.line).first
             let end = nextLine.flatMap { $0 > 0 && $0 <= starts.count ? starts[$0 - 1] : nil } ?? source.endIndex
             guard end >= cursor else { continue }
             blocks.append(EditingBlock(source: String(source[cursor..<end]), html: render(group.content, sourceMap: sourceMap)))

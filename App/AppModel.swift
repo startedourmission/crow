@@ -31,6 +31,8 @@ final class AppModel {
     var editorLocationBufferID: BufferID?
     var editorLocationRequest: EditorLocationRequest?
     var documentFindRequest = 0
+    // An editing preference, not ephemeral state owned by the selected file view.
+    var markdownPreviewEnabled = false
     var fileSearchFocusRequest = 0
 
     func focusFileSearch() {
@@ -196,9 +198,11 @@ final class AppModel {
     }
     var hasUnsavedChanges: Bool { states.contains { $0.snapshot.buffers.contains(where: \.isDirty) } }
 
-    func selectWorkspace(_ id: WorkspaceID) {
+    func selectWorkspace(_ id: WorkspaceID, showFiles: Bool = true) {
         guard states.contains(where: { $0.id == id }) else { return }
-        selectedWorkspaceID = id; sidebarPane = .files; ensureLayout(current); refreshFiles()
+        selectedWorkspaceID = id
+        if showFiles { sidebarPane = .files }
+        ensureLayout(current); refreshFiles()
         statusMessage = workspaceTitle; schedulePersist()
     }
 
@@ -745,7 +749,7 @@ final class AppModel {
         let state: WorkspaceState
         if let existing = states.first(where: { if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false }) {
             if existing.remote?.isConnected == true {
-                if !imported { selectWorkspace(existing.id); terminalVisible = true; compactSurface = .terminal }
+                if !imported { selectWorkspace(existing.id, showFiles: false); terminalVisible = true; compactSurface = .terminal }
                 return
             }
             state = existing; disconnect(state, stopReverseSSH: !preserveReverseSSH)
@@ -758,7 +762,7 @@ final class AppModel {
         state.systemSSH = spec; state.snapshot.workspace.name = host.name
         state.snapshot.workspace.connection = .connecting
         if !imported {
-            selectWorkspace(state.id); terminalVisible = true; compactSurface = .terminal
+            selectWorkspace(state.id, showFiles: false); terminalVisible = true; compactSurface = .terminal
             if state.snapshot.selectedTerminalID == nil {
                 let id = UUID(); state.snapshot.terminalIDs.append(id); state.snapshot.selectedTerminalID = id
                 state.snapshot.layout?.open(.terminal(id))
@@ -833,7 +837,7 @@ final class AppModel {
                 kind: .remote(hostID: host.id, path: host.remotePath), connection: .disconnected), rootPath: host.remotePath))
             states.append(state)
         }
-        selectWorkspace(state.id)
+        selectWorkspace(state.id, showFiles: false)
         if state.snapshot.workspace.connection == .connected || state.snapshot.workspace.connection == .connecting { return }
         state.snapshot.workspace.name = host.name; state.snapshot.workspace.connection = .connecting
         let connection = RemoteConnection(); state.remote = connection
@@ -888,7 +892,6 @@ final class AppModel {
                 throw CommandError("Connect this host with an SSH command once to enable Reverse SSH.")
             }
             try await connectCommand("ssh " + arguments.map(SystemSSHBridge.quote).joined(separator: " "), preserveReverseSSH: true)
-            sidebarPane = .hosts
             for _ in 0..<480 {
                 try Task.checkCancellation()
                 if let workspace = state() {
