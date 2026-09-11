@@ -2,6 +2,7 @@
 /.build
 /DerivedData
 /build
+/dist
 xcuserdata/
 *.xcuserstate
 .swiftpm/xcode/package.xcworkspace/xcuserdata/

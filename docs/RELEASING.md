@@ -1,96 +1,72 @@
-# Releasing Crow for macOS
+# Crow macOS 배포
 
-Crow's release workflow produces a universal, Developer ID-signed app, notarizes
-and staples both the app and DMG, publishes ZIP and DMG artifacts on GitHub,
-and updates the Homebrew cask and Sparkle appcast on `main`.
+Crow는 이 Mac에 이미 등록된 Apple Developer ID와 `notarytool` 키체인 프로필을
+사용해 로컬에서 배포합니다. 인증서를 GitHub Actions로 내보낼 필요가 없습니다.
 
-## One-time setup
+## 현재 사용하는 서명 정보
 
-1. Keep `startedourmission/crow` public so Homebrew and Sparkle can fetch its
-   release assets and update metadata without GitHub credentials.
-2. Export the **Developer ID Application** certificate and private key from
-   Keychain Access as a password-protected `.p12` file.
-3. Create a team App Store Connect API key with access to the notary service and
-   download its `.p8` private key. Record the key ID and issuer ID.
-4. Download the Sparkle 2 tools and generate the update-signing key once. Keep
-   the exported private key in a password manager; losing it prevents installed
-   copies from trusting future updates.
+- Developer ID: `Developer ID Application: Hyun Gyu Park (M7NU9F8CZN)`
+- 공증 프로필: `oh-my-opensnap`
+- Sparkle 키체인 계정: `startedourmission-crow`
+- Sparkle 공개키: GitHub Actions Secret에도 백업됨
 
-   ```sh
-   ./bin/generate_keys --account startedourmission-crow
-   ./bin/generate_keys --account startedourmission-crow -x sparkle-private-key
-   ```
-
-   The first command prints the public key. The second exports the private key.
-5. Add these GitHub Actions secrets to the `crow` repository:
-
-   | Secret | Value |
-   | --- | --- |
-   | `APPLE_TEAM_ID` | 10-character Apple Developer team ID |
-   | `DEVELOPER_ID_CERTIFICATE_BASE64` | Base64-encoded `.p12` file |
-   | `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` |
-   | `KEYCHAIN_PASSWORD` | A new random password used only for the CI keychain |
-   | `NOTARY_KEY_BASE64` | Base64-encoded App Store Connect `.p8` file |
-   | `NOTARY_KEY_ID` | App Store Connect API key ID |
-   | `NOTARY_ISSUER_ID` | App Store Connect API issuer ID |
-   | `SPARKLE_PUBLIC_ED_KEY` | Public EdDSA key printed by `generate_keys` |
-   | `SPARKLE_PRIVATE_KEY_BASE64` | Base64-encoded exported Sparkle private key file |
-
-   Encode each binary/key file on macOS with:
-
-   ```sh
-   base64 -i DeveloperID.p12 | pbcopy
-   base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
-   base64 -i sparkle-private-key | pbcopy
-   ```
-
-## Publish a release
-
-Update `MARKETING_VERSION` in `project.yml`, regenerate the Xcode project, commit
-the change, and run the tests. Then create and push the matching tag:
+공증 프로필은 다음 명령으로 확인할 수 있습니다.
 
 ```sh
-xcodegen generate
-git add project.yml Crow.xcodeproj
-git commit -m "Prepare Crow 0.1.0"
-git tag -s v0.1.0 -m "Crow 0.1.0"
-git push origin main v0.1.0
+xcrun notarytool history --keychain-profile oh-my-opensnap
 ```
 
-The `v0.1.0` tag becomes version `0.1.0` in the app and cask. The workflow also
-signs the release with Sparkle's EdDSA key and updates the signed `appcast.xml` in
-the tap repository. Installed copies check that feed automatically and expose
-**Crow → Check for Updates…**. The workflow refuses non-semantic release tags. Do
-not move a published release tag; publish a new patch version instead.
+## 새 버전 만들기
 
-After the workflow completes, install or upgrade Crow with:
-
-```sh
-brew tap startedourmission/crow https://github.com/startedourmission/crow
-brew install --cask crow
-brew upgrade --cask --greedy crow
-```
-
-To inspect the downloaded app independently:
+1. `project.yml`의 `MARKETING_VERSION`과 `CURRENT_PROJECT_VERSION`을 올립니다.
+2. `xcodegen generate`를 실행하고 테스트합니다.
+3. 변경을 커밋·푸시합니다.
+4. 다음 명령으로 서명·공증된 산출물을 만듭니다.
 
 ```sh
-codesign --verify --deep --strict --verbose=2 /Applications/Crow.app
-spctl --assess --type execute --verbose=2 /Applications/Crow.app
-xcrun stapler validate /Applications/Crow.app
-```
-
-## Local packaging
-
-`scripts/release-macos.sh` runs the same archive, notarization, stapling, and
-packaging process outside CI. It expects the signing certificate to already be in
-the active keychain. This Mac already has the reusable `oh-my-opensnap`
-`notarytool` keychain profile, so a local release can use it directly:
-
-```sh
-SPARKLE_PUBLIC_ED_KEY=base64-public-key \
+SPARKLE_PUBLIC_ED_KEY="$(build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys \
+  --account startedourmission-crow -p)" \
 NOTARY_PROFILE=oh-my-opensnap \
-scripts/release-macos.sh 0.1.0 dist
+APPLE_TEAM_ID=M7NU9F8CZN \
+BUILD_NUMBER=2 \
+scripts/release-macos.sh 0.1.1 dist
 ```
 
-CI may instead provide `NOTARY_KEY_PATH`, `NOTARY_KEY_ID`, and
-`NOTARY_ISSUER_ID` as described above.
+스크립트는 다음을 수행합니다.
+
+1. arm64와 x86_64 유니버설 Release Archive 생성
+2. Sparkle XPC·Updater·Autoupdate를 안쪽부터 Developer ID로 재서명
+3. 앱 ZIP 공증, 스테이플 및 Gatekeeper 검증
+4. Applications 바로가기가 포함된 DMG 생성
+5. DMG 자체 서명·공증·스테이플 및 Gatekeeper 검증
+6. ZIP·DMG와 SHA-256 파일 생성
+
+Apple 공증 결과가 `Accepted`가 아니면 스크립트는 즉시 실패합니다.
+
+## Sparkle과 Homebrew 갱신
+
+Sparkle의 `generate_appcast`로 배포 ZIP을 서명해 루트의 `appcast.xml`을 갱신하고,
+DMG SHA-256 값으로 `Casks/crow.rb`를 갱신합니다. 두 파일을 커밋한 뒤 해당
+커밋에 버전 태그를 만들고 GitHub Release에 다음 파일을 업로드합니다.
+
+- `Crow-macOS.dmg`
+- `Crow-macOS.dmg.sha256`
+- `Crow-<버전>-macOS.zip`
+- `Crow-<버전>-macOS.zip.sha256`
+
+README의 최신 DMG 링크는 고정 파일명 `Crow-macOS.dmg`를 사용하므로 새 버전에도
+자동으로 연결됩니다.
+
+## 최종 확인
+
+```sh
+codesign --verify --deep --strict --verbose=2 Crow.app
+spctl --assess --type execute --verbose=2 Crow.app
+xcrun stapler validate Crow.app
+
+codesign --verify --strict --verbose=2 Crow-macOS.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 Crow-macOS.dmg
+xcrun stapler validate Crow-macOS.dmg
+```
+
+앱과 DMG 모두 `accepted`와 `source=Notarized Developer ID`가 표시되어야 합니다.
