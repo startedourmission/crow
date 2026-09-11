@@ -56,7 +56,12 @@ final class AppModel {
         guard let pane = current.snapshot.layout?.activePane, number > 0, number <= pane.tabs.count else { return }
         selectTab(pane.tabs[number - 1], in: pane.id)
     }
-    var compactSurface: CompactSurface = .editor
+    var compactSurface: CompactSurface = .editor {
+        didSet {
+            if compactSurface == .hosts { sidebarPane = .hosts }
+            if compactSurface == .files { sidebarPane = .files }
+        }
+    }
     var statusMessage = "Ready"
     var errorMessage: String?
     var closeRequest: BufferID?
@@ -70,6 +75,8 @@ final class AppModel {
     var folderImporterVisible = false
     var hostEditorVisible = false
     var editingHost: SSHHost?
+    var pendingHostEditor = false
+    var pendingHostConnection: SSHHost?
     var settingsVisible = false
     var sshCommandVisible = false
     var credentialRequest: SSHHost?
@@ -201,7 +208,10 @@ final class AppModel {
     func selectWorkspace(_ id: WorkspaceID, showFiles: Bool = true) {
         guard states.contains(where: { $0.id == id }) else { return }
         selectedWorkspaceID = id
-        if showFiles { sidebarPane = .files }
+        if showFiles {
+            sidebarPane = .files
+            if compactSurface == .hosts { compactSurface = .files }
+        }
         ensureLayout(current); refreshFiles()
         statusMessage = workspaceTitle; schedulePersist()
     }
@@ -710,7 +720,36 @@ final class AppModel {
         }
     }
 
-    func editHost(_ host: SSHHost? = nil) { editingHost = host; hostEditorVisible = true }
+    func showHosts() {
+        sidebarPane = .hosts; sidebarVisible = true; compactSurface = .hosts
+    }
+
+    func editHost(_ host: SSHHost? = nil) {
+        editingHost = host
+        if sshCommandVisible {
+            pendingHostEditor = true; sshCommandVisible = false
+        } else { hostEditorVisible = true }
+    }
+
+    func saveHostFromEditor(_ proposed: SSHHost, credential: HostCredential, connectAfterSaving: Bool) throws {
+        var host = proposed
+        host.hostname = host.hostname.trimmingCharacters(in: .whitespacesAndNewlines)
+        host.username = host.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        host.name = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if host.name.isEmpty { host.name = host.hostname }
+        if host.remotePath.isEmpty { host.remotePath = "~" }
+        if host.authentication != .password { try credential.validatePrivateKey(for: host.authentication) }
+        try storeHost(host, credential: credential)
+        showHosts()
+        statusMessage = "Saved \(host.name) — tap the host to connect."
+        pendingHostConnection = connectAfterSaving ? host : nil
+    }
+
+    func finishHostEditorDismissal() {
+        guard let host = pendingHostConnection else { return }
+        pendingHostConnection = nil
+        connect(host)
+    }
     func connectCommand(_ line: String, password: String = "", preserveReverseSSH: Bool = false) async throws {
         let command = try SSHCommand(line)
         #if os(macOS)
@@ -721,10 +760,10 @@ final class AppModel {
         #else
         let (parsed, identity) = try command.portableHost(defaultUsername: "")
         var host = hosts.first { $0.hostname == parsed.hostname && $0.port == parsed.port && $0.username == parsed.username } ?? parsed
-        if identity != nil { throw CommandError("Private keys on iPhone/iPad must be imported from Files using Advanced settings. Mac reads -i paths directly.") }
+        if identity != nil { throw CommandError("Use Add SSH Host → Authentication → Import Private Key from Files on iPhone/iPad. Then connect from Hosts.") }
         host.commandArguments = command.arguments
         let saved = try SecureStore.credential(host)
-        if saved.password.isEmpty && password.isEmpty {
+        if host.authentication == .password && saved.password.isEmpty && password.isEmpty {
             if sshCommandVisible { pendingCredentialRequest = host } else { credentialRequest = host }
             return
         }
@@ -818,6 +857,23 @@ final class AppModel {
             schedulePersist()
         } catch { report(error) }
     }
+    func connectionState(for host: SSHHost) -> ConnectionState {
+        states.first {
+            if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }
+            return false
+        }?.snapshot.workspace.connection ?? .disconnected
+    }
+
+    func disconnect(_ host: SSHHost) {
+        for state in states {
+            if case .remote(let id, _) = state.snapshot.workspace.kind, id == host.id {
+                disconnect(state)
+            }
+        }
+        statusMessage = "Disconnected from \(host.userAtHost)"
+        schedulePersist()
+    }
+
     func connect(_ host: SSHHost) {
         #if os(macOS)
         if let arguments = host.commandArguments {
@@ -838,6 +894,9 @@ final class AppModel {
             states.append(state)
         }
         selectWorkspace(state.id, showFiles: false)
+        #if os(iOS)
+        compactSurface = .terminal; terminalVisible = true
+        #endif
         if state.snapshot.workspace.connection == .connected || state.snapshot.workspace.connection == .connecting { return }
         state.snapshot.workspace.name = host.name; state.snapshot.workspace.connection = .connecting
         let connection = RemoteConnection(); state.remote = connection
@@ -907,6 +966,7 @@ final class AppModel {
     private func disconnect(_ state: WorkspaceState, stopReverseSSH: Bool = true) {
         #if os(macOS)
         if stopReverseSSH, case .remote(let id, _) = state.snapshot.workspace.kind { reverseSSHConnections[id]?.stop() }
+        state.systemSSH = nil
         #endif
         state.explorer.stop()
         state.connectionTask?.cancel(); state.connectionTask = nil

@@ -12,6 +12,7 @@ struct WorkspaceSwitcher: View {
                 }
             }
             Divider()
+            Button("Saved SSH Hosts", systemImage: "server.rack") { model.showHosts() }
             Button("Open Folder…", systemImage: "folder.badge.plus") { model.folderImporterVisible = true }
             Button("SSH Command…", systemImage: "network") { model.sshCommandVisible = true }
             if model.hasWorkspace {

@@ -125,6 +125,98 @@ import CrowCore
 }
 
 final class CrowAppTests: XCTestCase {
+    // Generated solely for these tests; never used to access a server.
+    private var hostEditorKey: String {
+        """
+        -----BEGIN OPENSSH PRIVATE KEY-----
+        b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+        QyNTUxOQAAACB+ZtlrnrQOWQ7t30+V4g3eyzjAaFq+UV/0bEjSlxYpFAAAAKBOEKHkThCh
+        5AAAAAtzc2gtZWQyNTUxOQAAACB+ZtlrnrQOWQ7t30+V4g3eyzjAaFq+UV/0bEjSlxYpFA
+        AAAEA2G7Y2YbfhqyHtM9Gr2pplS61CSH15VcSwvB2Umix9Hn5m2WuetA5ZDu3fT5XiDd7L
+        OMBoWr5RX/RsSNKXFikUAAAAFmNyb3ctdGVzdC1maXh0dXJlLW9ubHkBAgMEBQYH
+        -----END OPENSSH PRIVATE KEY-----
+        """
+    }
+
+    @MainActor func testSavingKeyHostRevealsHostsAndRestoresSavedCredentials() throws {
+        let model = fixture(), selectedID = model.selectedWorkspaceID
+        model.sidebarVisible = false
+        var host = SSHHost(name: "  ", hostname: " server.example\n", username: " ubuntu ", remotePath: "")
+        host.authentication = .ed25519
+        defer { try? SecureStore.remove(host.id.rawValue.uuidString) }
+        try model.saveHostFromEditor(host, credential: HostCredential(privateKey: hostEditorKey), connectAfterSaving: false)
+        let saved = try XCTUnwrap(model.hosts.first)
+        XCTAssertEqual(saved.hostname, "server.example")
+        XCTAssertEqual(saved.name, "server.example")
+        XCTAssertEqual(saved.username, "ubuntu")
+        XCTAssertEqual(saved.remotePath, "~")
+        XCTAssertEqual(model.compactSurface, .hosts)
+        XCTAssertEqual(model.sidebarPane, .hosts)
+        XCTAssertTrue(model.sidebarVisible)
+        XCTAssertEqual(model.selectedWorkspaceID, selectedID)
+        XCTAssertEqual(model.connectionState(for: saved), .disconnected)
+        XCTAssertNil(model.pendingHostConnection)
+        model.persist()
+        let restored = AppModel(vaultURL: model.vaultURL)
+        defer { restored.shutdown() }
+        XCTAssertEqual(restored.hosts.first, saved)
+        XCTAssertEqual(try SecureStore.credential(saved).privateKey, hostEditorKey)
+        XCTAssertFalse(try String(contentsOf: model.sessionURL, encoding: .utf8).contains("PRIVATE KEY"))
+
+        try model.saveHostFromEditor(saved, credential: HostCredential(privateKey: hostEditorKey), connectAfterSaving: true)
+        XCTAssertEqual(model.hosts.count, 1)
+        XCTAssertEqual(model.pendingHostConnection, saved)
+        XCTAssertEqual(model.connectionState(for: saved), .disconnected) // Wait for the sheet to close before presenting trust prompts.
+    }
+
+    @MainActor func testHostEditorRejectsMissingPublicAndWrongTypeKeysBeforeSaving() {
+        let model = fixture()
+        var host = SSHHost(name: "Test", hostname: "server.example", username: "ubuntu")
+        host.authentication = .ed25519
+        defer { try? SecureStore.remove(host.id.rawValue.uuidString) }
+        for key in ["", "ssh-ed25519 AAAA public-key", "-----BEGIN OPENSSH PRIVATE KEY-----\ninvalid"] {
+            XCTAssertThrowsError(try model.saveHostFromEditor(host, credential: HostCredential(privateKey: key), connectAfterSaving: true))
+        }
+        host.authentication = .rsa
+        XCTAssertThrowsError(try model.saveHostFromEditor(host, credential: HostCredential(privateKey: hostEditorKey), connectAfterSaving: false))
+        XCTAssertTrue(model.hosts.isEmpty)
+        XCTAssertNil(model.pendingHostConnection)
+    }
+
+    @MainActor func testKeyEditorWaitsForCommandSheetDismissalAndHostsNavigationStaysConsistent() {
+        let model = fixture()
+        model.sshCommandVisible = true
+        model.editHost()
+        XCTAssertFalse(model.sshCommandVisible)
+        XCTAssertTrue(model.pendingHostEditor)
+        XCTAssertFalse(model.hostEditorVisible)
+        model.showHosts()
+        XCTAssertEqual(model.sidebarPane, .hosts)
+        model.compactSurface = .files
+        XCTAssertEqual(model.sidebarPane, .files)
+        model.showHosts()
+        model.selectWorkspace(model.selectedWorkspaceID)
+        XCTAssertEqual(model.compactSurface, .files)
+        XCTAssertEqual(model.sidebarPane, .files)
+    }
+
+    #if os(iOS)
+    @MainActor func testSSHCommandReusesSavedKeyWithoutRequestingPassword() async throws {
+        let model = fixture()
+        var host = SSHHost(name: "Saved key", hostname: "127.0.0.1", port: 1, username: "fixture")
+        host.authentication = .ed25519
+        defer { model.disconnect(host); try? SecureStore.remove(host.id.rawValue.uuidString) }
+        try model.storeHost(host, credential: HostCredential(privateKey: hostEditorKey))
+        model.sshCommandVisible = true
+        try await model.connectCommand("ssh fixture@127.0.0.1 -p 1")
+        XCTAssertNil(model.credentialRequest)
+        XCTAssertNil(model.pendingCredentialRequest)
+        XCTAssertEqual(model.selectedWorkspace.kind, .remote(hostID: host.id, path: host.remotePath))
+        XCTAssertEqual(model.compactSurface, .terminal)
+        XCTAssertEqual(try SecureStore.credential(host).privateKey, hostEditorKey)
+    }
+    #endif
+
     @MainActor func testExplorerMovePreservesDirtyBufferAndCanReturnToRoot() async throws {
         let model = fixture(), tree = model.current.explorer
         let root = model.vaultURL
@@ -506,6 +598,47 @@ final class CrowAppTests: XCTestCase {
         XCTAssertEqual(restored.current.snapshot.terminalIDs.count, 2)
         XCTAssertTrue(restored.current.snapshot.terminalSplit)
         XCTAssertFalse(try TextFiles.read(URL(fileURLWithPath: restored.selectedBuffer!.path)).contains("restored draft"))
+    }
+
+    @MainActor func testDisconnectHostOnlyStopsItsWorkspaceAndPreservesDrafts() throws {
+        let model = fixture()
+        let host = SSHHost(name: "Target", hostname: "target.example", username: "fixture")
+        let otherHost = SSHHost(name: "Other", hostname: "other.example", username: "fixture")
+        XCTAssertEqual(model.connectionState(for: host), .disconnected)
+        let target = WorkspaceState(.init(workspace: Workspace(name: host.name,
+            kind: .remote(hostID: host.id, path: "/project"), connection: .connected), rootPath: "/project"))
+        let other = WorkspaceState(.init(workspace: Workspace(name: otherHost.name,
+            kind: .remote(hostID: otherHost.id, path: "/other"), connection: .connected), rootPath: "/other"))
+        target.snapshot.buffers = [OpenBuffer(title: "draft.txt", path: "/project/draft.txt",
+            text: "unsaved remote draft", language: .plain, isRemote: true, isDirty: true)]
+        target.remote = RemoteConnection()
+        #if os(macOS)
+        target.systemSSH = SystemSSHSpec(host: host, socket: "/tmp/crow-test-unused.socket",
+            arguments: [host.userAtHost], directory: model.vaultURL.path)
+        #endif
+        let terminalID = try XCTUnwrap(target.snapshot.terminalIDs.first)
+        _ = model.terminal(terminalID, in: target)
+        let pending = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
+        target.connectionTask = pending
+        model.states.append(contentsOf: [target, other])
+        model.selectedWorkspaceID = other.id
+        XCTAssertEqual(model.connectionState(for: host), .connected)
+
+        model.disconnect(host)
+
+        XCTAssertEqual(model.connectionState(for: host), .disconnected)
+        XCTAssertNil(target.remote)
+        XCTAssertNil(target.connectionTask)
+        XCTAssertTrue(pending.isCancelled)
+        XCTAssertTrue(target.terminals.isEmpty)
+        XCTAssertEqual(target.snapshot.buffers.first?.text, "unsaved remote draft")
+        XCTAssertEqual(target.snapshot.buffers.first?.isDirty, true)
+        XCTAssertEqual(model.connectionState(for: otherHost), .connected)
+        XCTAssertEqual(model.selectedWorkspaceID, other.id)
+        #if os(macOS)
+        XCTAssertNil(target.systemSSH)
+        XCTAssertNil(model.terminal(terminalID, in: target).systemSSH)
+        #endif
     }
 
     @MainActor func testHostCredentialsUseKeychainNotSessionJSON() throws {

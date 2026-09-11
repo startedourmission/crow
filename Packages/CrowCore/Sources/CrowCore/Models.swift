@@ -255,6 +255,7 @@ public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
 }
 
 public enum CompactSurface: String, Hashable, Codable, Sendable, CaseIterable {
+    case hosts
     case editor
     case terminal
     case files

@@ -10,6 +10,25 @@ struct HostCredential: Codable, Sendable {
     var password = ""
     var privateKey = ""
     var passphrase = ""
+
+    func validatePrivateKey(for authentication: SSHAuthenticationKind) throws {
+        guard !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CommandError("Import your OpenSSH private key from Files before saving.")
+        }
+        guard privateKey.contains("-----BEGIN OPENSSH PRIVATE KEY-----") else {
+            throw CommandError("Choose an OpenSSH private key such as id_ed25519 or id_rsa, not the .pub public key.")
+        }
+        do {
+            let decryptionKey = passphrase.isEmpty ? nil : Data(passphrase.utf8)
+            switch authentication {
+            case .ed25519: _ = try Curve25519.Signing.PrivateKey(sshEd25519: privateKey, decryptionKey: decryptionKey)
+            case .rsa: _ = try Insecure.RSA.PrivateKey(sshRsa: privateKey, decryptionKey: decryptionKey)
+            case .password: break
+            }
+        } catch {
+            throw CommandError("Could not read the private key. Check the selected key type and passphrase.")
+        }
+    }
 }
 
 enum SecureStore {

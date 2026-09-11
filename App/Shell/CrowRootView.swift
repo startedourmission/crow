@@ -23,9 +23,12 @@ struct CrowRootView: View {
         .fileImporter(isPresented: Bindable(model).folderImporterVisible, allowedContentTypes: [.folder]) { result in
             do { model.openFolder(try result.get()) } catch { model.report(error) }
         }
-        .sheet(isPresented: Bindable(model).hostEditorVisible) { HostEditorView(host: model.editingHost).environment(model) }
+        .sheet(isPresented: Bindable(model).hostEditorVisible, onDismiss: {
+            model.finishHostEditorDismissal()
+        }) { HostEditorView(host: model.editingHost).environment(model) }
         .sheet(isPresented: Bindable(model).settingsVisible) { CrowSettingsView().environment(model) }
         .sheet(isPresented: Bindable(model).sshCommandVisible, onDismiss: {
+            if model.pendingHostEditor { model.pendingHostEditor = false; model.hostEditorVisible = true }
             if let pending = model.pendingCredentialRequest { model.pendingCredentialRequest = nil; model.credentialRequest = pending }
             #if os(macOS)
             if model.selectedWorkspace.isRemote, let id = model.current.snapshot.selectedTerminalID,
@@ -189,10 +192,8 @@ struct CompactWorkspaceView: View {
     var body: some View {
         VStack(spacing: 0) {
             WorkspaceSwitcher()
-            if !model.hasWorkspace {
-                EmptyWorkspaceView()
-            } else {
             Picker("Surface", selection: Bindable(model).compactSurface) {
+                Text("Hosts").tag(CompactSurface.hosts)
                 Text("Files").tag(CompactSurface.files)
                 Text("Editor").tag(CompactSurface.editor)
                 Text("Terminal").tag(CompactSurface.terminal)
@@ -203,17 +204,20 @@ struct CompactWorkspaceView: View {
             .background(CrowTheme.bg1)
 
             Group {
-                switch model.compactSurface {
-                case .files:
-                    SidebarView()
-                case .editor:
-                    EditorAreaView()
-                case .terminal:
-                    TerminalPanelView()
+                if !model.hasWorkspace && model.compactSurface != .hosts {
+                    EmptyWorkspaceView()
+                } else {
+                    switch model.compactSurface {
+                    case .hosts, .files:
+                        SidebarView()
+                    case .editor:
+                        EditorAreaView()
+                    case .terminal:
+                        TerminalPanelView()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
 
             StatusBarView()
                 .contextMenu { Button("Settings…") { model.settingsVisible = true } }

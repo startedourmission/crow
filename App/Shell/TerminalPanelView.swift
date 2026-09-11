@@ -35,7 +35,7 @@ struct TerminalPanelView: View {
         return VStack(spacing: 0) {
             TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
                 .id(session.instanceID)
-                .onAppear { session.start() }
+                .task(id: session.instanceID) { session.start() }
             Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
         }

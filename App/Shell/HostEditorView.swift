@@ -8,6 +8,8 @@ struct HostEditorView: View {
     @State private var host: SSHHost
     @State private var credential = HostCredential()
     @State private var importKey = false
+    @State private var keyFilename: String?
+    @State private var loadedCredential = false
     @State private var error: String?
     init(host: SSHHost?) {
         _host = State(initialValue: host ?? SSHHost(name: "", hostname: "", username: "", remotePath: "~"))
@@ -15,54 +17,122 @@ struct HostEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Name", text: $host.name)
-                TextField("Hostname / IP", text: $host.hostname)
-                TextField("Port", value: $host.port, format: .number.grouping(.never))
-                TextField("Username", text: $host.username)
-                TextField("Remote folder", text: $host.remotePath)
-                Picker("Authentication", selection: $host.authentication) {
-                    Text("Password").tag(SSHAuthenticationKind.password)
-                    Text("Ed25519 key").tag(SSHAuthenticationKind.ed25519)
-                    Text("RSA key").tag(SSHAuthenticationKind.rsa)
+                Section("Server") {
+                    hostField("Hostname / IP", text: $host.hostname, prompt: "192.168.1.10")
+                        .accessibilityIdentifier("crow.host.hostname")
+                    hostField("Username", text: $host.username, prompt: "ubuntu")
+                        .accessibilityIdentifier("crow.host.username")
+                    LabeledContent("Port") {
+                        TextField("Port", value: $host.port, format: .number.grouping(.never))
+                            .multilineTextAlignment(.trailing)
+                            #if os(iOS)
+                            .keyboardType(.numberPad)
+                            #endif
+                    }
                 }
-                if host.authentication == .password {
-                    SecureField("Password", text: $credential.password)
-                } else {
-                    Button(credential.privateKey.isEmpty ? "Import OpenSSH Private Key…" : "Replace Private Key…") { importKey = true }
-                    if !credential.privateKey.isEmpty { Label("Private key loaded", systemImage: "key.fill") }
-                    SecureField("Key passphrase (optional)", text: $credential.passphrase)
+                Section {
+                    Picker("Method", selection: $host.authentication) {
+                        Text("Password").tag(SSHAuthenticationKind.password)
+                        Text("SSH Key · Ed25519").tag(SSHAuthenticationKind.ed25519)
+                        Text("SSH Key · RSA").tag(SSHAuthenticationKind.rsa)
+                    }
+                    if host.authentication == .password {
+                        SecureField("Password", text: $credential.password)
+                    } else {
+                        Button { importKey = true } label: {
+                            Label(credential.privateKey.isEmpty ? "Import Private Key from Files…" : "Replace Private Key…", systemImage: "square.and.arrow.down")
+                        }
+                        .accessibilityIdentifier("crow.host.import-key")
+                        if !credential.privateKey.isEmpty {
+                            Label(keyFilename ?? "Saved private key", systemImage: "key.fill")
+                                .foregroundStyle(CrowTheme.ok)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
+                        SecureField("Key passphrase (if set)", text: $credential.passphrase)
+                    }
+                } header: {
+                    Text("Authentication")
+                } footer: {
+                    Text(host.authentication == .password
+                        ? "Credentials are saved in this device’s Keychain."
+                        : "Choose your private key (id_ed25519 or id_rsa), not the .pub file. The key and passphrase are saved in this device’s Keychain.")
                 }
-                Text("Credentials stay in this device’s Keychain. Server identity is checked on first connection.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if let error { Text(error).foregroundStyle(CrowTheme.danger) }
+                Section("Optional") {
+                    hostField("Display name", text: $host.name, prompt: "My server")
+                    hostField("Remote folder", text: $host.remotePath, prompt: "~")
+                }
+                if let error {
+                    Section {
+                        Label(error, systemImage: "exclamationmark.circle")
+                            .foregroundStyle(CrowTheme.danger)
+                            .accessibilityIdentifier("crow.host.error")
+                    }
+                }
             }
+            .autocorrectionDisabled()
+            #if os(iOS)
+            .textInputAutocapitalization(.never)
+            .scrollDismissesKeyboard(.interactively)
+            #endif
             .formStyle(.grouped)
-            .navigationTitle("SSH Host")
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 8) {
+                    Button { save(connect: true) } label: {
+                        Label("Save & Connect", systemImage: "network")
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("crow.host.save-connect")
+                    Text("Save keeps this host in Hosts for later.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(16).background(CrowTheme.bg1)
+            }
+            .navigationTitle(model.hosts.contains(where: { $0.id == host.id }) ? "Edit SSH Host" : "Add SSH Host")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        do {
-                            host.hostname = host.hostname.trimmingCharacters(in: .whitespacesAndNewlines)
-                            host.username = host.username.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if host.name.isEmpty { host.name = host.hostname }
-                            if host.remotePath.isEmpty { host.remotePath = "~" }
-                            try model.storeHost(host, credential: credential); dismiss()
-                        } catch { self.error = error.localizedDescription }
-                    }
+                    Button("Save") { save(connect: false) }
+                        .accessibilityIdentifier("crow.host.save")
                 }
             }
         }
         #if os(macOS)
-        .frame(minWidth: 320, idealWidth: 460, minHeight: 480)
+        .frame(minWidth: 360, idealWidth: 480, minHeight: 620)
         #endif
-        .onAppear { do { credential = try SecureStore.credential(host) } catch { self.error = error.localizedDescription } }
+        .onAppear {
+            guard !loadedCredential else { return }
+            loadedCredential = true
+            do { credential = try SecureStore.credential(host) } catch { self.error = error.localizedDescription }
+        }
         .fileImporter(isPresented: $importKey, allowedContentTypes: [.data]) { result in
             do {
                 let url = try result.get(), access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
-                credential.privateKey = try String(contentsOf: url, encoding: .utf8)
+                let key = try String(contentsOf: url, encoding: .utf8)
+                guard key.contains("-----BEGIN OPENSSH PRIVATE KEY-----") else {
+                    throw CommandError("Choose an OpenSSH private key such as id_ed25519 or id_rsa, not the .pub public key.")
+                }
+                credential.privateKey = key
+                keyFilename = url.lastPathComponent
+                error = nil
             } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func save(connect: Bool) {
+        do {
+            try model.saveHostFromEditor(host, credential: credential, connectAfterSaving: connect)
+            dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func hostField(_ title: String, text: Binding<String>, prompt: String) -> some View {
+        LabeledContent(title) {
+            TextField(title, text: text, prompt: Text(prompt)).multilineTextAlignment(.trailing)
         }
     }
 }

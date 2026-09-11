@@ -449,7 +449,7 @@ private struct WorkspacePaneView: View {
         let session = model.terminal(id, in: model.current)
         return VStack(spacing: 0) {
             TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
-                .id(session.instanceID).onAppear { session.start() }
+                .id(session.instanceID).task(id: session.instanceID) { session.start() }
                 .task(id: model.current.snapshot.layout?.activePaneID == pane.id) {
                     guard model.current.snapshot.layout?.activePaneID == pane.id else { return }
                     await Task.yield()

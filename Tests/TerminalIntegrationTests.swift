@@ -84,6 +84,7 @@ final class TerminalIntegrationTests: XCTestCase {
 
 #if os(iOS)
 import UIKit
+import SwiftUI
 
 private final class KoreanInputMode: UITextInputMode {
     override var primaryLanguage: String? { "ko-KR" }
@@ -95,6 +96,66 @@ private final class KoreanTerminalView: CrowIOSTerminalView {
 }
 
 final class IOSTerminalIntegrationTests: XCTestCase {
+    @MainActor
+    func testVisibleSSHSessionReceivesPromptAndKeyboardInput() async throws {
+        struct Fixture: Decodable {
+            var port: Int
+            var username: String
+            var privateKey: String
+            var directory: String
+        }
+        let fixtureURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("crow-ios-ssh-fixture.json")
+        guard FileManager.default.fileExists(atPath: fixtureURL.path) else {
+            throw XCTSkip("Run python3 scripts/test-ios-ssh.py SIMULATOR_UDID to provide an isolated SSH server")
+        }
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ios-terminal-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        var host = SSHHost(name: "Loopback", hostname: "127.0.0.1", port: fixture.port,
+            username: fixture.username, remotePath: fixture.directory)
+        host.authentication = .ed25519
+        let pin = "host-key:127.0.0.1:\(fixture.port)"
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = UIHostingController(rootView: CompactWorkspaceView().environment(model))
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            model.shutdown()
+            try? SecureStore.remove(host.id.rawValue.uuidString)
+            try? SecureStore.remove(pin)
+            try? FileManager.default.removeItem(at: root)
+        }
+        try SecureStore.remove(pin)
+        try model.storeHost(host, credential: HostCredential(privateKey: fixture.privateKey))
+        func wait(_ message: String, until condition: () -> Bool) async throws {
+            for _ in 0..<200 {
+                if condition() { return }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTFail(message + ": " + model.statusMessage)
+        }
+        model.connect(host)
+        try await wait("First connection must request host verification") { model.hostKeyChallenge != nil }
+        let challenge = try XCTUnwrap(model.hostKeyChallenge)
+        model.hostKeyChallenge = nil
+        model.trustHostKey(challenge)
+        try await wait("SSH connection did not finish") { model.connectionState(for: host) == .connected }
+        let id = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        try await wait("Visible terminal did not start") { model.current.terminals[id]?.running == true }
+        let session = try XCTUnwrap(model.current.terminals[id])
+        func screen() -> String {
+            let terminal = session.view.getTerminal()
+            return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined(separator: "\n")
+        }
+        session.view.insertText("printf '__IOS_%s__\\n' WORKS")
+        session.view.insertText("\n")
+        try await wait("SSH terminal did not execute UIKit input (\(session.status))") { screen().contains("__IOS_WORKS__") }
+        XCTAssertNotNil(session.view.window, "The working terminal must be the one displayed on screen")
+    }
+
     @MainActor
     func testCompoundVowelsUpdatePTYAndUIKitContext() {
         for (base, vowel, expected) in [

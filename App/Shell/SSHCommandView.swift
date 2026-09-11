@@ -23,9 +23,16 @@ struct SSHCommandView: View {
                 Text("Uses your OpenSSH config, keys and agent. Password and server verification prompts appear in the terminal.")
                     .font(.caption).foregroundStyle(.secondary)
                 #else
-                Text("Enter the command. A password is requested only if needed.")
+                Text("Saved hosts reuse their password or SSH key. For a new key connection, add an SSH host below.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Import key / Advanced…") { dismiss(); model.editHost() }.font(.caption)
+                Button {
+                    var host = (try? SSHCommand(command).portableHost(defaultUsername: "").0)
+                        ?? SSHHost(name: "", hostname: "", username: "", remotePath: "~")
+                    host.authentication = .ed25519
+                    model.editHost(host)
+                } label: {
+                    Label("Add Host with SSH Key…", systemImage: "key.fill")
+                }
                 #endif
                 if let error { Text(error).foregroundStyle(CrowTheme.danger).font(.caption) }
             }

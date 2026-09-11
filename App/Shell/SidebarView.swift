@@ -128,7 +128,12 @@ struct SidebarView: View {
                     #if os(macOS)
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
                     #endif
+                #if os(iOS)
+                Button { model.editHost() } label: { Label("Add Host", systemImage: "plus") }
+                    .buttonStyle(CrowButtonStyle()).accessibilityIdentifier("crow.host.add")
+                #else
                 Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.buttonStyle(CrowButtonStyle()).help("SSH Command").windowDragExcluded()
+                #endif
             }
         }
         .padding(.horizontal, 12)
@@ -326,39 +331,93 @@ struct SidebarView: View {
     private var hostsList: some View {
         List(model.hosts) { (host: SSHHost) in
             VStack(alignment: .leading, spacing: 4) {
-            Button {
-                model.connect(host)
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(host.name)
-                        .font(.system(size: 13, weight: .medium))
-                    Text("\(host.userAtHost):\(host.port)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .crowForeground(CrowTheme.textDim)
+                HStack(spacing: 8) {
+                    Button {
+                        model.connect(host)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(host.name)
+                                #if os(iOS)
+                                .font(.body.weight(.medium))
+                                #else
+                                .font(.system(size: 13, weight: .medium))
+                                #endif
+                            Text("\(host.userAtHost):\(host.port)")
+                                #if os(iOS)
+                                .font(.system(.caption, design: .monospaced))
+                                #else
+                                .font(.system(size: 11, design: .monospaced))
+                                #endif
+                                .crowForeground(CrowTheme.textDim)
+                            #if os(iOS)
+                            HStack(spacing: 8) {
+                                Label(host.authentication == .password ? "Password" : (host.authentication == .ed25519 ? "Ed25519 key" : "RSA key"),
+                                    systemImage: host.authentication == .password ? "lock" : "key")
+                                Text(model.connectionState(for: host).hostStatusText)
+                            }
+                            .font(.caption).foregroundStyle(CrowTheme.textDim)
+                            #endif
+                        }
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(CrowButtonStyle())
+                    HostConnectionButton(host: host)
+                    #if os(iOS)
+                    Menu {
+                        Button("Edit Host…", systemImage: "pencil") { model.editHost(host) }
+                        Button("Remove Host…", systemImage: "trash", role: .destructive) { removeHost = host }
+                    } label: {
+                        Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Options for \(host.name)")
+                    #endif
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            .buttonStyle(CrowButtonStyle())
-            .contextMenu {
-                Button("Connect") { model.connect(host) }
-                Button("Advanced…") { model.editHost(host) }
-                Button("Remove Host…", role: .destructive) { removeHost = host }
-            }
-            #if os(macOS)
-            ReverseSSHHostToggle(host: host)
-            #endif
+                .contextMenu {
+                    Button("Connect") { model.connect(host) }
+                    if model.connectionState(for: host) == .connected {
+                        Button("Disconnect") { model.disconnect(host) }
+                    }
+                    Button("Edit Host…") { model.editHost(host) }
+                    Button("Remove Host…", role: .destructive) { removeHost = host }
+                }
+                #if os(macOS)
+                ReverseSSHHostToggle(host: host)
+                #endif
             }
             .listRowBackground(Color.clear)
             .windowDragExcluded()
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
+        #if os(iOS)
+        .overlay {
+            if model.hosts.isEmpty {
+                ContentUnavailableView {
+                    Label("No SSH Hosts", systemImage: "server.rack")
+                } description: {
+                    Text("Add a server with a password or import an SSH private key from Files.")
+                } actions: {
+                    Button("Add SSH Host") { model.editHost() }.buttonStyle(.borderedProminent)
+                    Button("Use SSH Command…") { model.sshCommandVisible = true }
+                }
+            }
+        }
+        #endif
         .safeAreaInset(edge: .bottom) {
-            Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Advanced settings are optional.")
+            #if os(iOS)
+            if !model.hosts.isEmpty {
+                Text("Tap a host to open its terminal. Tap the green status icon to disconnect; use ••• to edit.")
+                    .font(.caption).foregroundStyle(CrowTheme.textDim).padding(12)
+            }
+            #else
+            Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Click its status icon to connect or disconnect.")
                 .font(.system(size: 11))
                 .crowForeground(CrowTheme.textDim)
                 .padding(12)
+            #endif
         }
     }
 
@@ -369,6 +428,68 @@ struct SidebarView: View {
         case .shell: return "terminal"
         default: return "doc.plaintext"
         }
+    }
+}
+
+private extension ConnectionState {
+    var hostStatusText: String {
+        switch self {
+        case .connected: "Connected"
+        case .connecting: "Connecting…"
+        case .failed: "Connection failed"
+        case .disconnected, .local: "Disconnected"
+        }
+    }
+}
+
+private struct HostConnectionButton: View {
+    @Environment(AppModel.self) private var model
+    let host: SSHHost
+
+    private var connection: ConnectionState { model.connectionState(for: host) }
+    private var status: String { connection.hostStatusText }
+    private var symbol: String {
+        switch connection {
+        case .connected: "checkmark.circle.fill"
+        case .failed: "exclamationmark.circle"
+        default: "circle"
+        }
+    }
+    private var color: Color {
+        switch connection {
+        case .connected: CrowTheme.ok
+        case .failed: CrowTheme.danger
+        default: CrowTheme.textDim
+        }
+    }
+
+    var body: some View {
+        Button {
+            if connection == .connected { model.disconnect(host) }
+            else { model.connect(host) }
+        } label: {
+            Group {
+                if connection == .connecting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(color)
+                }
+            }
+            #if os(iOS)
+            .frame(width: 44, height: 44)
+            #else
+            .frame(width: 32, height: 32)
+            #endif
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(CrowButtonStyle())
+        .disabled(connection == .connecting)
+        .help(connection == .connecting ? status : "\(status) — click to \(connection == .connected ? "disconnect" : "connect")")
+        .accessibilityLabel("\(connection == .connected ? "Disconnect" : "Connect") \(host.name)")
+        .accessibilityValue(status)
+        .accessibilityIdentifier("crow.host-connection.\(host.id.rawValue.uuidString)")
     }
 }
 
