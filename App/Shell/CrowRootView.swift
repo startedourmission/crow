@@ -175,8 +175,10 @@ struct RegularWorkspaceView: View {
             StatusBarView()
         }
         .background(CrowTheme.bg0)
-        #if os(macOS)
+        // The regular workspace owns the top row, just like the Mac title/tab bar.
         .ignoresSafeArea(.container, edges: .top)
+        #if os(iOS)
+        .statusBarHidden(true)
         #endif
     }
 }
@@ -288,6 +290,7 @@ private struct PhoneWorkspaceBar: View {
     @State private var restoreSnippetKeyboard = false
     @State private var showingTabs = false
     @State private var restoreTabsKeyboard = false
+    @State private var copyToast: (id: UUID, message: String)?
 
     private var title: String {
         switch model.compactSurface {
@@ -310,6 +313,29 @@ private struct PhoneWorkspaceBar: View {
     private var canClose: Bool {
         model.compactSurface == .editor ? model.selectedBufferID != nil
             : model.compactSurface == .terminal && model.current.snapshot.selectedTerminalID != nil
+    }
+
+    private var titleCopyValue: (text: String, label: String)? {
+        switch model.compactSurface {
+        case .editor:
+            guard let buffer = model.selectedBuffer else { return nil }
+            return (buffer.path, "Copy Absolute Path")
+        case .terminal:
+            guard case .remote(let id, _) = model.selectedWorkspace.kind,
+                  let host = model.hosts.first(where: { $0.id == id }) else { return nil }
+            return (host.hostname, "Copy Server Address")
+        case .files, .hosts:
+            return nil
+        }
+    }
+
+    private func copyTitleValue() {
+        guard let value = titleCopyValue, !value.text.isEmpty else { return }
+        UIPasteboard.general.string = value.text
+        let message = model.compactSurface == .editor ? "Path copied" : "Address copied"
+        copyToast = (UUID(), message)
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.35)
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     private var otherSurfaces: [CompactSurface] {
@@ -339,6 +365,21 @@ private struct PhoneWorkspaceBar: View {
                 }
                 .accessibilityLabel("Show Hosts and Workspaces")
                 .accessibilityIdentifier("crow.phone.hosts")
+                .highPriorityGesture(
+                    LongPressGesture(minimumDuration: 0.4).exclusively(before: TapGesture())
+                        .onEnded { gesture in
+                            switch gesture {
+                            case .first(true): copyTitleValue()
+                            case .second: model.showHosts()
+                            default: break
+                            }
+                        }
+                )
+                .accessibilityActions {
+                    if let value = titleCopyValue {
+                        Button(value.label, action: copyTitleValue)
+                    }
+                }
                 if canClose {
                     Button {
                         if model.compactSurface == .editor { model.saveSelectedBuffer() }
@@ -391,6 +432,28 @@ private struct PhoneWorkspaceBar: View {
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(CrowTheme.bg1)
         .overlay(alignment: .top) { CrowDivider().allowsHitTesting(false) }
+        .overlay(alignment: .top) {
+            if let toast = copyToast {
+                Label(toast.message, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CrowTheme.text)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(CrowTheme.bg3, in: RoundedRectangle(cornerRadius: 5))
+                    .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(CrowTheme.border) }
+                    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                    .fixedSize().padding(.bottom, 8)
+                    .alignmentGuide(.top) { $0[.bottom] }
+                    .allowsHitTesting(false).accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: copyToast != nil)
+        .task(id: copyToast?.id) {
+            guard copyToast != nil else { return }
+            do { try await Task.sleep(for: .seconds(1.5)) }
+            catch { return }
+            copyToast = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             keyboardVisible = true
         }

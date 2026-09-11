@@ -115,9 +115,17 @@ struct SidebarView: View {
         } message: { _ in Text("The saved credentials will be removed from this device. Server files will not be changed.") }
     }
 
+    private var showsHostsHeading: Bool {
+        #if os(macOS)
+        true
+        #else
+        phoneLayout
+        #endif
+    }
+
     private var sidebarHeader: some View {
         HStack {
-            if model.sidebarPane == .hosts {
+            if model.sidebarPane == .hosts && showsHostsHeading {
                 Text("HOSTS")
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.6)
@@ -158,11 +166,13 @@ struct SidebarView: View {
                 Button { model.sshCommandVisible = true } label: { toolbarIcon("plus") }
                     .buttonStyle(CrowButtonStyle()).accessibilityLabel("Add SSH Host")
                     .accessibilityIdentifier("crow.host.add")
-                Button { model.folderImporterVisible = true } label: { toolbarIcon("folder.badge.plus") }
-                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Open Folder")
-                    .accessibilityIdentifier("crow.host.open-folder")
-                Button { model.settingsVisible = true } label: { toolbarIcon("gearshape") }
-                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Settings")
+                if phoneLayout {
+                    Button { model.folderImporterVisible = true } label: { toolbarIcon("folder.badge.plus") }
+                        .buttonStyle(CrowButtonStyle()).accessibilityLabel("Open Folder")
+                        .accessibilityIdentifier("crow.host.open-folder")
+                    Button { model.settingsVisible = true } label: { toolbarIcon("gearshape") }
+                        .buttonStyle(CrowButtonStyle()).accessibilityLabel("Settings")
+                }
                 #else
                 Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.buttonStyle(CrowButtonStyle()).help("SSH Command").windowDragExcluded()
                 #endif
@@ -404,12 +414,14 @@ struct SidebarView: View {
                     }
                 }
             }
-            Section("SSH Hosts") {
+            Section {
                 if model.hosts.isEmpty {
                     Text("Use + to add an SSH host.").font(.caption).crowForeground(CrowTheme.textDim)
                         .listRowBackground(Color.clear)
                 }
                 hostRows
+            } header: {
+                if phoneLayout { Text("SSH Hosts") }
             }
             #else
             hostRows
