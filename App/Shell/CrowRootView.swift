@@ -111,24 +111,6 @@ struct RegularWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            #if os(iOS)
-            HStack(spacing: 4) {
-                Button { model.sidebarVisible.toggle() } label: {
-                    Image(systemName: "sidebar.left").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar")
-                .accessibilityIdentifier("crow.sidebar-toggle")
-                WorkspaceSwitcher()
-                Button { model.inspectorVisible.toggle() } label: {
-                    Image(systemName: "sidebar.right").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel(model.inspectorVisible ? "Hide Right Sidebar" : "Show Right Sidebar")
-                .accessibilityIdentifier("crow.inspector-toggle")
-            }
-            .buttonStyle(CrowButtonStyle()).crowForeground(CrowTheme.textDim)
-            .background(CrowTheme.bg1)
-            CrowDivider()
-            #endif
             GeometryReader { workspaceGeometry in
               let inspectorWidth = min(max(200, liveInspectorWidth ?? savedInspectorWidth), max(200, workspaceGeometry.size.width * 0.35))
               let sidebarAvailable = workspaceGeometry.size.width - (model.inspectorVisible ? inspectorWidth + ResizeHandle.thickness : 0)
@@ -137,26 +119,22 @@ struct RegularWorkspaceView: View {
                     .overlay(alignment: .trailing) {
                         Rectangle().fill(CrowTheme.border).frame(width: 1).allowsHitTesting(false)
                     }
-                    #if os(macOS)
                     .padding(.top, SidebarTopBar.height)
                     .background(CrowTheme.bg1)
                     .windowDragBackground()
+                    #if os(macOS)
                     .overlay(alignment: .top) { WindowDragRegion().frame(height: 12) }
+                    #endif
                     .overlay(alignment: .top) {
                         CrowDivider().padding(.top, SidebarTopBar.height).allowsHitTesting(false)
                     }
-                    #endif
                 if model.sidebarVisible {
                     VStack(spacing: 0) {
-                        #if os(macOS)
                         SidebarTopBar()
                         CrowDivider()
-                        #endif
                         SidebarView()
-                        #if os(macOS)
                         CrowDivider()
                         WorkspaceSwitcher()
-                        #endif
                     }
                         .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: sidebarAvailable))
                         .background(CrowTheme.bg1)
@@ -175,13 +153,11 @@ struct RegularWorkspaceView: View {
                     if !model.hasWorkspace { EmptyWorkspaceView() }
                     else { WorkspaceAreaView() }
                 }
-                #if os(macOS)
                 .overlay(alignment: .topLeading) {
                     if !model.sidebarVisible {
                         SidebarTopBar().frame(width: SidebarTopBar.collapsedWidth)
                     }
                 }
-                #endif
                 if model.inspectorVisible {
                     ResizeHandle(axis: .horizontal, label: "Resize right sidebar", onDrag: { translation in
                         if inspectorDragStart == nil { inspectorDragStart = inspectorWidth }
@@ -310,6 +286,8 @@ private struct PhoneWorkspaceBar: View {
     @State private var showingSnippets = false
     @State private var snippetSurface: CompactSurface = .editor
     @State private var restoreSnippetKeyboard = false
+    @State private var showingTabs = false
+    @State private var restoreTabsKeyboard = false
 
     private var title: String {
         switch model.compactSurface {
@@ -363,13 +341,18 @@ private struct PhoneWorkspaceBar: View {
                 .accessibilityIdentifier("crow.phone.hosts")
                 if canClose {
                     Button {
-                        if model.compactSurface == .editor, let id = model.selectedBufferID { model.closeBuffer(id) }
+                        if model.compactSurface == .editor { model.saveSelectedBuffer() }
                         else { model.terminalCloseRequest = model.current.snapshot.selectedTerminalID }
                     } label: {
-                        Image(systemName: "xmark.circle").font(.system(size: 16))
-                            .frame(width: 36, height: 44).contentShape(Rectangle())
+                        Group {
+                            if model.compactSurface == .editor {
+                                SaveDiskIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                                    .frame(width: 17, height: 17)
+                            } else { Image(systemName: "xmark.circle").font(.system(size: 16)) }
+                        }.frame(width: 36, height: 44).contentShape(Rectangle())
                     }
-                    .accessibilityLabel(model.compactSurface == .editor ? "Close File" : "Close Terminal")
+                    .accessibilityLabel(model.compactSurface == .editor ? "Save File" : "Close Terminal")
+                    .accessibilityIdentifier(model.compactSurface == .editor ? "crow.phone.save" : "crow.phone.close-terminal")
                 }
             }
             .background(CrowTheme.bg2, in: RoundedRectangle(cornerRadius: 5))
@@ -415,6 +398,11 @@ private struct PhoneWorkspaceBar: View {
             keyboardVisible = false
         }
         .accessibilityIdentifier("crow.phone.navigation")
+        .sheet(isPresented: $showingTabs, onDismiss: {
+            if restoreTabsKeyboard { keyboard?.show(for: model.compactSurface) }
+        }) {
+            WorkspaceTabsView().environment(model).presentationDetents([.large])
+        }
     }
 
     private func controlIcon(_ symbol: String) -> some View {
@@ -425,8 +413,16 @@ private struct PhoneWorkspaceBar: View {
     private func surfaceButton(_ surface: CompactSurface) -> some View {
         let label = surface == .terminal ? "Terminal" : surface == .editor ? "Editor" : "Files"
         let icon = surface == .terminal ? "terminal" : surface == .editor ? "doc.text" : "folder"
-        return Button { navigate(surface) } label: { controlIcon(icon) }
+        return Button { if !showingTabs { navigate(surface) } } label: { controlIcon(icon) }
             .accessibilityLabel(label).accessibilityIdentifier("crow.phone.surface.\(surface.rawValue)")
+            .highPriorityGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                guard surface == .terminal || surface == .editor else { return }
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.35)
+                restoreTabsKeyboard = keyboardVisible; showingTabs = true
+            })
+            .accessibilityAction(named: Text("Show All Open Tabs")) {
+                restoreTabsKeyboard = keyboardVisible; showingTabs = true
+            }
     }
 
     @ViewBuilder private var generalMenu: some View {
@@ -465,11 +461,26 @@ private struct PhoneWorkspaceBar: View {
             }
             Button("Save File", systemImage: "square.and.arrow.down") { model.saveSelectedBuffer() }
                 .disabled(model.selectedBuffer == nil)
+            Button("Close File", systemImage: "xmark") {
+                if let id = model.selectedBufferID { model.closeBuffer(id) }
+            }.disabled(model.selectedBuffer == nil)
             Divider()
         }
     }
 }
 #endif
+
+private struct SaveDiskIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 2, y: 1)); path.addLine(to: CGPoint(x: 12, y: 1))
+        path.addLine(to: CGPoint(x: 16, y: 5)); path.addLine(to: CGPoint(x: 16, y: 16))
+        path.addLine(to: CGPoint(x: 1, y: 16)); path.addLine(to: CGPoint(x: 1, y: 2)); path.closeSubpath()
+        path.addRect(CGRect(x: 4, y: 1, width: 7, height: 5))
+        path.addRect(CGRect(x: 4, y: 10, width: 9, height: 6))
+        return path.applying(CGAffineTransform(scaleX: rect.width / 17, y: rect.height / 17))
+    }
+}
 
 private struct EmptyWorkspaceView: View {
     @Environment(AppModel.self) private var model

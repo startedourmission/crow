@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 import CrowCore
 
@@ -8,12 +7,25 @@ struct RepositorySnapshot: Sendable {
 }
 
 enum GitRepository {
+    static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    static func query(path: String) -> String {
+        let git = "git --no-optional-locks -c core.fsmonitor=false -C " + quote(path)
+        return "crow_git_root=$(\(git) rev-parse --show-toplevel) && printf '%s\\0' \"$crow_git_root\" && \(git) status --porcelain=v1 -z --branch --untracked-files=normal"
+    }
+    static func parse(_ data: Data) throws -> RepositorySnapshot {
+        guard let separator = data.firstIndex(of: 0) else { throw failure("Unable to read Git repository status.") }
+        let root = String(decoding: data[..<separator], as: UTF8.self)
+        guard root.hasPrefix("/") else { throw failure("Git did not return an absolute repository path.") }
+        return RepositorySnapshot(root: root, status: GitStatus(porcelain: data.subdata(in: data.index(after: separator)..<data.endIndex)))
+    }
+    private static func failure(_ message: String) -> NSError {
+        NSError(domain: "CrowGit", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    #if os(macOS)
     static func read(path: String, remote: SystemSSHSpec? = nil) async throws -> RepositorySnapshot {
         let work = Task.detached(priority: .utility) {
-            func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-            // Query only; disable optional index refresh/locking and fsmonitor hooks.
-            let git = "git --no-optional-locks -c core.fsmonitor=false -C " + quote(path)
-            let query = "crow_git_root=$(\(git) rev-parse --show-toplevel) && printf '%s\\0' \"$crow_git_root\" && \(git) status --porcelain=v1 -z --branch --untracked-files=normal"
+            let query = query(path: path)
             let data: Data
             if let remote {
                 guard FileManager.default.fileExists(atPath: remote.socket) else {
@@ -33,16 +45,9 @@ enum GitRepository {
             } else {
                 data = try run("/bin/sh", ["-c", query])
             }
-            guard let separator = data.firstIndex(of: 0) else { throw failure("Unable to read Git repository status.") }
-            let root = String(decoding: data[..<separator], as: UTF8.self)
-            guard root.hasPrefix("/") else { throw failure("Git did not return an absolute repository path.") }
-            return RepositorySnapshot(root: root, status: GitStatus(porcelain: data.subdata(in: data.index(after: separator)..<data.endIndex)))
+            return try parse(data)
         }
         return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
-    }
-
-    private static func failure(_ message: String) -> NSError {
-        NSError(domain: "CrowGit", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     /// Bounded, cancellable background process. File-backed output avoids full-pipe
@@ -86,5 +91,5 @@ enum GitRepository {
         }
         return result
     }
+    #endif
 }
-#endif

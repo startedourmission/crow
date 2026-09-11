@@ -6,7 +6,91 @@ import CrowCore
 import UIKit
 import WebKit
 
+@MainActor private final class WorkspaceDragSessionFixture: NSObject, UIDragSession, UIDropSession {
+    var items: [UIDragItem] = []
+    var localContext: Any?
+    var point = CGPoint.zero
+    var local = true
+    var localDragSession: (any UIDragSession)? { local ? self : nil }
+    var allowsMoveOperation: Bool { true }
+    var isRestrictedToDraggingApplication: Bool { true }
+    nonisolated let progress = Progress(totalUnitCount: 1)
+    var progressIndicatorStyle: UIDropSessionProgressIndicatorStyle = .none
+    func location(in view: UIView) -> CGPoint { point }
+    func hasItemsConforming(toTypeIdentifiers identifiers: [String]) -> Bool {
+        items.contains { item in identifiers.contains { item.itemProvider.hasItemConformingToTypeIdentifier($0) } }
+    }
+    func canLoadObjects(ofClass aClass: any NSItemProviderReading.Type) -> Bool { false }
+    func loadObjects(ofClass aClass: any NSItemProviderReading.Type, completion: @escaping ([any NSItemProviderReading]) -> Void) -> Progress {
+        completion([]); return progress
+    }
+}
+
 final class IOSEditorIntegrationTests: XCTestCase {
+    @MainActor func testTabDropRoutesAboveSourceAndRenderedEditorsWithoutInsertingContent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ipad-drag-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        let buffer = try XCTUnwrap(model.selectedBuffer)
+        model.updateBufferText(buffer.id, "# Drag target\n\nKeep this unsaved document.\n")
+        let original = try XCTUnwrap(model.selectedBuffer?.text)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene); window.frame = CGRect(x: 0, y: 0, width: 1100, height: 800)
+        window.rootViewController = UIHostingController(rootView: RegularWorkspaceView().environment(model))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        func descendants<T: UIView>(_ view: UIView, of type: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, of: type) }
+        }
+        for preview in [false, true] {
+            model.markdownPreviewEnabled = preview
+            try await Task.sleep(for: .milliseconds(400))
+            let source = try XCTUnwrap(descendants(window, of: IOSWorkspaceTabDragView.self).first { $0.payload?.tab == .file(buffer.id) })
+            let interaction = try XCTUnwrap(source.interactions.compactMap { $0 as? UIDragInteraction }.first)
+            let session = WorkspaceDragSessionFixture()
+            session.items = source.dragInteraction(interaction, itemsForBeginning: session)
+            XCTAssertEqual(session.items.count, 1)
+            XCTAssertNil(model.draggedTab, "A cancelled lift must not leave drop shields active")
+            source.dragInteraction(interaction, sessionWillBegin: session)
+            try await Task.sleep(for: .milliseconds(100))
+            let target = try XCTUnwrap(descendants(window, of: IOSWorkspacePaneDropView.self).first { $0.paneID == source.payload?.paneID })
+            let drop = try XCTUnwrap(target.interactions.compactMap { $0 as? UIDropInteraction }.first)
+            session.point = CGPoint(x: target.bounds.midX, y: target.bounds.midY)
+            XCTAssertTrue(window.hitTest(target.convert(session.point, to: window), with: nil) === target,
+                "Workspace drops must be above the native editor's text/attachment destination")
+            XCTAssertEqual(target.dropInteraction(drop, sessionDidUpdate: session).operation, .move)
+            XCTAssertEqual(target.destination(at: CGPoint(x: target.bounds.midX, y: 10)).0, .center, "Tab strip drops reorder rather than split")
+            for (point, edge) in [(CGPoint(x: 1, y: target.bounds.midY), PanePlacement.left),
+                (CGPoint(x: target.bounds.width - 1, y: target.bounds.midY), .right),
+                (CGPoint(x: target.bounds.midX, y: 40), .top),
+                (CGPoint(x: target.bounds.midX, y: target.bounds.height - 1), .bottom)] {
+                XCTAssertEqual(target.destination(at: point).0, edge)
+            }
+            session.local = false
+            XCTAssertNil(target.acceptedPayload(session), "External items cannot masquerade as local tabs")
+            session.local = true
+            source.dragInteraction(interaction, session: session, didEndWith: .cancel)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertNil(model.draggedTab)
+            XCTAssertNil(target.hitTest(session.point, with: nil), "Cancelling must immediately return input to the editor")
+            XCTAssertEqual(model.buffers.first { $0.id == buffer.id }?.text, original)
+        }
+        let source = try XCTUnwrap(descendants(window, of: IOSWorkspaceTabDragView.self).first { $0.payload?.tab == .file(buffer.id) })
+        let target = try XCTUnwrap(descendants(window, of: IOSWorkspacePaneDropView.self).first { $0.paneID != source.payload?.paneID })
+        let terminalID = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        let terminal = model.terminal(terminalID, in: model.current)
+        let session = WorkspaceDragSessionFixture()
+        let drag = try XCTUnwrap(source.interactions.compactMap { $0 as? UIDragInteraction }.first)
+        session.items = source.dragInteraction(drag, itemsForBeginning: session)
+        source.dragInteraction(drag, sessionWillBegin: session)
+        session.point = CGPoint(x: target.bounds.width - 1, y: target.bounds.midY)
+        target.dropInteraction(try XCTUnwrap(target.interactions.compactMap { $0 as? UIDropInteraction }.first), performDrop: session)
+        XCTAssertNil(model.draggedTab)
+        XCTAssertNotEqual(model.current.snapshot.layout?.panes.first { $0.tabs.contains(.file(buffer.id)) }?.id, source.payload?.paneID)
+        XCTAssertTrue(model.terminal(terminalID, in: model.current) === terminal)
+        XCTAssertEqual(model.buffers.first { $0.id == buffer.id }?.text, original)
+        XCTAssertTrue(model.buffers.first { $0.id == buffer.id }?.isDirty == true)
+    }
+
     @MainActor func testPhoneKeyboardRestoresSourceAndMarkdownEditor() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ios-editor-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
@@ -153,6 +237,12 @@ final class EditorIntegrationTests: XCTestCase {
         _ = try await js("document.querySelector('.tiptap').dispatchEvent(new KeyboardEvent('keydown', {key:'s', code:'KeyS', keyCode:83, metaKey:true, bubbles:true})); return true")
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(saves, 1)
+        _ = try await js("window.crowMarkdown.jumpHeading(0); return true")
+        window.makeFirstResponder(web)
+        let snippetTarget = try XCTUnwrap(MacSnippetTarget(responder: window.firstResponder))
+        snippetTarget.insert("Snippet ")
+        for _ in 0..<100 where !binding.wrappedValue.contains("Snippet") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(binding.wrappedValue.hasPrefix("# Snippet 제목\n"))
     }
 
     @MainActor func testRealMouseDragMovesTabWithoutMovingWindow() async throws {

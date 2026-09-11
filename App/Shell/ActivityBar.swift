@@ -24,6 +24,11 @@ struct ActivityBar: View {
             .buttonStyle(CrowButtonStyle())
             .windowDragExcluded()
             .help("Terminal")
+            #if os(macOS)
+            MacSnippetButton(width: CrowTheme.activityWidth, height: 40)
+            #else
+            IPadSnippetButton()
+            #endif
             Button { model.settingsVisible = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))

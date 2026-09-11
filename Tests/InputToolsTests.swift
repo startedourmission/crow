@@ -11,6 +11,34 @@ import UIKit
 final class InputToolsTests: XCTestCase {
     static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1cAAAAASUVORK5CYII=")!
 
+    func testKeyboardButtonsComposeChordsAndStandaloneModifiers() throws {
+        var draft = KeyboardBarDraft()
+        XCTAssertNil(draft.item)
+        draft.tap("Shift")
+        XCTAssertEqual(draft.item?.key, "Shift")
+        draft.tap("Tab")
+        XCTAssertEqual(draft.item?.label, "shift+tab")
+        XCTAssertEqual(draft.item?.terminalText(applicationCursor: false), "\u{1b}[Z")
+        draft.tap("Control")
+        XCTAssertTrue(draft.item?.control == true)
+        draft.tap("Shift")
+        XCTAssertFalse(draft.item?.shift == true)
+        draft.tap("Tab")
+        XCTAssertEqual(draft.item?.key, "Control")
+        draft.tap("Character")
+        XCTAssertNil(draft.item)
+        draft.character = "c"
+        XCTAssertEqual(draft.item?.terminalText(applicationCursor: false), "\u{03}")
+        draft.character = "two"
+        XCTAssertNil(draft.item)
+    }
+
+    func testWorkspaceDragTypeIsExportedByApplicationBundle() throws {
+        let declarations = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "UTExportedTypeDeclarations") as? [[String: Any]])
+        let type = try XCTUnwrap(declarations.first { $0["UTTypeIdentifier"] as? String == "dev.chajinwoo.crow.workspace-tab" })
+        XCTAssertTrue((type["UTTypeConformsTo"] as? [String])?.contains("public.data") == true)
+    }
+
     func testKeyboardSettingsMigrationAndCustomizedRoundTrip() throws {
         let old = try JSONEncoder().encode(EditorSettings())
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: old) as? [String: Any])
@@ -54,6 +82,27 @@ final class InputToolsTests: XCTestCase {
     }
 
     #if os(macOS)
+    @MainActor func testMacSnippetRestoresCapturedSelectionAndSupportsTerminal() throws {
+        let editor = CodeTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 400))
+        editor.isRichText = false; editor.allowsUndo = true; editor.string = "before after"
+        let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = editor
+        defer { window.close() }
+        editor.setSelectedRange(NSRange(location: 7, length: 0))
+        let target = try XCTUnwrap(MacSnippetTarget(responder: editor))
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        target.insert("한글 ")
+        XCTAssertEqual(editor.string, "before 한글 after")
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Test", kind: .local, connection: .local), directory: "/tmp", remote: nil, fontSize: 14)
+        defer { session.stop() }
+        window.contentView = session.view
+        var sent: [UInt8] = []; session.onBytes = { sent += $0 }
+        let terminalTarget = try XCTUnwrap(MacSnippetTarget(responder: session.view))
+        terminalTarget.insert("snippet")
+        XCTAssertEqual(sent, Array("snippet".utf8))
+        XCTAssertFalse(target.available, "A detached editor must not receive stale snippet insertions")
+    }
+
     @MainActor func testFloatingWindowRestoresFrameAndBehavior() {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 900, height: 600), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -74,6 +123,44 @@ final class InputToolsTests: XCTestCase {
         XCTAssertEqual(window.minSize, NSSize(width: 640, height: 400))
     }
     #else
+    @MainActor func testIPadSnippetTargetsFocusedSplitAndRestoresSelection() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIViewController()
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let container = try XCTUnwrap(window.rootViewController?.view)
+        let first = NumberedTextView(usingTextLayoutManager: false)
+        let second = NumberedTextView(usingTextLayoutManager: false)
+        first.frame = CGRect(x: 0, y: 0, width: 200, height: 150)
+        second.frame = CGRect(x: 210, y: 0, width: 200, height: 150)
+        container.addSubview(first); container.addSubview(second)
+        first.text = "untouched"; second.text = "before after"
+        XCTAssertTrue(second.becomeFirstResponder())
+        second.selectedRange = NSRange(location: 7, length: 0)
+        let target = try XCTUnwrap(IOSSnippetTarget.capture(in: window))
+        XCTAssertTrue(first.becomeFirstResponder())
+        second.selectedRange = NSRange(location: 0, length: 0)
+        target.insert("snippet ")
+        XCTAssertEqual(first.text, "untouched")
+        XCTAssertEqual(second.text, "before snippet after")
+        target.restoreFocus()
+        XCTAssertTrue(second.isFirstResponder)
+        second.removeFromSuperview()
+        XCTAssertFalse(target.available)
+        target.insert("ignored")
+        XCTAssertEqual(second.text, "before snippet after")
+
+        let terminal = CrowIOSTerminalView(frame: CGRect(x: 0, y: 160, width: 400, height: 200))
+        container.addSubview(terminal)
+        let delegate = TerminalCoordinator(); var sent: [UInt8] = []
+        delegate.onBytes = { sent += $0 }; terminal.terminalDelegate = delegate
+        XCTAssertTrue(terminal.becomeFirstResponder())
+        let terminalTarget = try XCTUnwrap(IOSSnippetTarget.capture(in: window))
+        terminalTarget.insert("agent prompt")
+        XCTAssertEqual(sent, Array("agent prompt".utf8))
+    }
+
     @MainActor func testSnippetsInsertAtDocumentCursorAndTerminalSendsNoReturn() throws {
         let editor = NumberedTextView(usingTextLayoutManager: false)
         editor.text = "before after"; editor.selectedRange = NSRange(location: 7, length: 0)

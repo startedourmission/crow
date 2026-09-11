@@ -48,6 +48,7 @@ struct FloatingWorkspaceView: View {
                             .frame(width: 32, height: 36)
                     }.help(surface.rawValue.capitalized)
                 }
+                MacSnippetButton()
                 Menu {
                     if model.compactSurface == .terminal {
                         Button("New Terminal") { model.newTerminal() }

@@ -37,6 +37,10 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="crow-ios-ssh-") as temporary:
         root = Path(temporary).resolve()
+        project = root / "project with ' spaces"
+        project.mkdir()
+        subprocess.run(["/usr/bin/git", "init", "-q", "-b", "crow-fixture", str(project)], check=True)
+        (project / "note.md").write_text("# Changed remote note\n")
         for name in ("host-key", "user-key"):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
         with socket.socket() as sock:
@@ -66,7 +70,7 @@ LogLevel ERROR
             fixture = fixture_path()
             fixture.parent.mkdir(parents=True, exist_ok=True)
             fixture.write_text(json.dumps({"port": port, "username": username,
-                "privateKey": (root / "user-key").read_text(), "directory": str(root)}))
+                "privateKey": (root / "user-key").read_text(), "directory": str(project)}))
             subprocess.run(build + ["test-without-building", "-quiet",
                 "-only-testing:CrowTests/IOSTerminalIntegrationTests"], cwd=repo, check=True)
         finally:

@@ -96,6 +96,20 @@ final class SSHIntegrationTests: XCTestCase {
             XCTAssertEqual((directory[.posixPermissions] as? NSNumber)?.intValue, 0o700)
         }
         try verifyImage(await connection.uploadClipboardImage(InputToolsTests.png))
+        let repository = root.appendingPathComponent("repo with ' spaces")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        try run("/usr/bin/git", ["init", "-q", "-b", "crow-fixture", repository.path])
+        try Data("changed".utf8).write(to: repository.appendingPathComponent("changed file.txt"))
+        let remoteGit = try await connection.gitStatus(path: repository.path)
+        let localGit = try await GitRepository.read(path: repository.path)
+        XCTAssertEqual(URL(fileURLWithPath: remoteGit.root).resolvingSymlinksInPath(), repository.resolvingSymlinksInPath())
+        XCTAssertEqual(remoteGit.status, localGit.status)
+        XCTAssertTrue(remoteGit.status.branch.contains("crow-fixture"))
+        XCTAssertTrue(remoteGit.status.changes.contains { $0.path == "changed file.txt" && $0.status == "??" })
+        do {
+            _ = try await connection.gitStatus(path: root.path)
+            XCTFail("A non-repository must report a Git error")
+        } catch { XCTAssertTrue(connection.isConnected, "A failed Git query must preserve the SSH connection") }
         let path = root.appendingPathComponent("remote.txt").path
         try await connection.create(path, directory: false)
         let largeText = String(repeating: "한글-remote-data\n", count: 5000)

@@ -7,7 +7,6 @@ struct InspectorPanel: View {
     @State private var outline: [OutlineItem] = []
     @State private var outlineBufferID: BufferID?
     @State private var outlineSource = ""
-    #if os(macOS)
     @State private var repository: RepositorySnapshot?
     @State private var gitError: String?
     @State private var refreshing = false
@@ -17,15 +16,8 @@ struct InspectorPanel: View {
         "\(model.selectedWorkspaceID)-\(model.current.snapshot.rootPath)-\(model.selectedWorkspace.connection)-\(tab)-\(refreshID)"
     }
 
-    #endif
     private var buffer: OpenBuffer? { model.inspectedBuffer }
-    private var tabs: [String] {
-        #if os(macOS)
-        ["Summary", "Git"]
-        #else
-        ["Summary"]
-        #endif
-    }
+    private let tabs = ["Summary", "Git"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +26,7 @@ struct InspectorPanel: View {
                     Button { tab = item } label: {
                         Label(item, systemImage: item == "Summary" ? "list.bullet.indent" : "point.3.connected.trianglepath.dotted")
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
-                            .crowForeground(CrowTheme.textDim)
+                            .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
                     }.windowDragExcluded()
                         .accessibilityIdentifier("crow.inspector-" + item.lowercased())
                 }
@@ -47,11 +39,7 @@ struct InspectorPanel: View {
             .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).frame(height: 36)
             .windowDragBackground()
             CrowDivider()
-            #if os(macOS)
             if tab == "Summary" { summary } else { git }
-            #else
-            summary
-            #endif
         }
         .background(CrowTheme.bg1)
         .crowForeground(CrowTheme.text)
@@ -65,18 +53,33 @@ struct InspectorPanel: View {
                 outline = items; outlineSource = buffer.text
             } catch {}
         }
-        #if os(macOS)
         .task(id: gitTaskID) {
             repository = nil; gitError = nil
             guard tab == "Git", model.hasWorkspace else { return }
-            let state = model.current, path = state.snapshot.rootPath, remote = state.systemSSH
-            if state.snapshot.workspace.isRemote && remote == nil {
-                gitError = "Connect through the terminal to read remote Git status."; return
+            let state = model.current, path = state.snapshot.rootPath
+            #if os(iOS)
+            guard state.snapshot.workspace.isRemote else {
+                gitError = "Open an SSH workspace to view Git status on iPad and iPhone."; return
             }
+            #endif
+            defer { refreshing = false }
             while !Task.isCancelled {
                 refreshing = true
                 do {
-                    let result = try await GitRepository.read(path: path, remote: remote)
+                    let result: RepositorySnapshot
+                    #if os(macOS)
+                    if let remote = state.systemSSH {
+                        result = try await GitRepository.read(path: path, remote: remote)
+                    } else if !state.snapshot.workspace.isRemote {
+                        result = try await GitRepository.read(path: path)
+                    } else {
+                        guard let remote = state.remote else { throw FileFailure.disconnected }
+                        result = try await remote.gitStatus(path: path)
+                    }
+                    #else
+                    guard let remote = state.remote else { throw FileFailure.disconnected }
+                    result = try await remote.gitStatus(path: path)
+                    #endif
                     try Task.checkCancellation()
                     repository = result; gitError = nil
                 } catch is CancellationError { return }
@@ -85,7 +88,6 @@ struct InspectorPanel: View {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
-        #endif
     }
 
     private var summary: some View {
@@ -130,7 +132,6 @@ struct InspectorPanel: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    #if os(macOS)
     private var git: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -169,5 +170,4 @@ struct InspectorPanel: View {
             Spacer(minLength: 0)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    #endif
 }

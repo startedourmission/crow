@@ -67,6 +67,7 @@ targets:
     platform: iOS
     settings:
       base:
+        INFOPLIST_FILE: Config/Crow-iOS-Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         SUPPORTS_MACCATALYST: NO

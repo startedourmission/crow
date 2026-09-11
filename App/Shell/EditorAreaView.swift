@@ -249,7 +249,7 @@ struct WorkspaceAreaView: View {
             }
             let root = model.current.maximizedPaneID.flatMap { id in panes.contains { $0.id == id } ? PaneNode.pane(id) : nil }
                 ?? saved.root?.retaining(Set(panes.map(\.id)))
-            if let root { WorkspaceNodeView(node: root, panes: panes, isTopLeading: true) }
+            if let root { WorkspaceNodeView(node: root, panes: panes, isTopLeading: true, isTopTrailing: true) }
             else { empty }
         } else { empty }
     }
@@ -268,16 +268,17 @@ private struct WorkspaceNodeView: View {
     let node: PaneNode
     let panes: [WorkspacePane]
     let isTopLeading: Bool
+    let isTopTrailing: Bool
     var body: AnyView {
         switch node {
         case .pane(let id):
             if let pane = panes.first(where: { $0.id == id }) {
-                return AnyView(WorkspacePaneView(pane: pane, isTopLeading: isTopLeading).id(id))
+                return AnyView(WorkspacePaneView(pane: pane, isTopLeading: isTopLeading, isTopTrailing: isTopTrailing).id(id))
             }
             return AnyView(EmptyView())
         case .split(let id, let axis, let fraction, let first, let second):
             return AnyView(WorkspaceSplitView(id: id, axis: axis, fraction: fraction,
-                first: first, second: second, panes: panes, isTopLeading: isTopLeading))
+                first: first, second: second, panes: panes, isTopLeading: isTopLeading, isTopTrailing: isTopTrailing))
         }
     }
 }
@@ -291,6 +292,7 @@ private struct WorkspaceSplitView: View {
     let second: PaneNode
     let panes: [WorkspacePane]
     let isTopLeading: Bool
+    let isTopTrailing: Bool
     @State private var dragStart: CGFloat?
     @State private var liveSize: CGFloat?
 
@@ -308,27 +310,157 @@ private struct WorkspaceSplitView: View {
             })
             if axis == .horizontal {
                 HStack(spacing: 0) {
-                    WorkspaceNodeView(node: first, panes: panes, isTopLeading: isTopLeading).frame(width: size)
+                    WorkspaceNodeView(node: first, panes: panes, isTopLeading: isTopLeading, isTopTrailing: false).frame(width: size)
                     handle
-                    WorkspaceNodeView(node: second, panes: panes, isTopLeading: false).frame(maxWidth: .infinity)
+                    WorkspaceNodeView(node: second, panes: panes, isTopLeading: false, isTopTrailing: isTopTrailing).frame(maxWidth: .infinity)
                 }
             } else {
                 VStack(spacing: 0) {
-                    WorkspaceNodeView(node: first, panes: panes, isTopLeading: isTopLeading).frame(height: size)
+                    WorkspaceNodeView(node: first, panes: panes, isTopLeading: isTopLeading, isTopTrailing: isTopTrailing).frame(height: size)
                     handle
-                    WorkspaceNodeView(node: second, panes: panes, isTopLeading: false).frame(maxHeight: .infinity)
+                    WorkspaceNodeView(node: second, panes: panes, isTopLeading: false, isTopTrailing: false).frame(maxHeight: .infinity)
                 }
             }
         }
     }
 }
 
-private let workspaceTabType = UTType(exportedAs: "dev.chajinwoo.crow.workspace-tab")
+private let workspaceTabType = UTType(exportedAs: "dev.chajinwoo.crow.workspace-tab", conformingTo: .data)
+
+#if os(iOS)
+import UIKit
+
+private struct IOSWorkspaceTabSource: UIViewRepresentable {
+    let model: AppModel
+    let payload: WorkspaceTabDrag
+    let title: String
+    func makeUIView(context: Context) -> IOSWorkspaceTabDragView { IOSWorkspaceTabDragView() }
+    func updateUIView(_ view: IOSWorkspaceTabDragView, context: Context) {
+        view.model = model; view.payload = payload; view.title = title
+    }
+}
+
+/// UIKit owns the complete drag lifecycle, including cancellation outside a pane.
+final class IOSWorkspaceTabDragView: UIView, UIDragInteractionDelegate {
+    weak var model: AppModel?
+    var payload: WorkspaceTabDrag?
+    var title = ""
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let drag = UIDragInteraction(delegate: self); drag.isEnabled = true; addInteraction(drag)
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(selectTab)))
+        isAccessibilityElement = false
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    @objc private func selectTab() {
+        guard let model, let payload else { return }
+        model.selectTab(payload.tab, in: payload.paneID)
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: any UIDragSession) -> [UIDragItem] {
+        guard let model, let payload, payload.workspaceID == model.selectedWorkspaceID,
+              model.current.snapshot.layout?.panes.contains(where: { $0.id == payload.paneID && $0.tabs.contains(payload.tab) }) == true,
+              let data = try? JSONEncoder().encode(payload) else { return [] }
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: workspaceTabType.identifier, visibility: .ownProcess) { completion in
+            completion(data, nil); return nil
+        }
+        let item = UIDragItem(itemProvider: provider); item.localObject = payload
+        return [item]
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionWillBegin session: any UIDragSession) {
+        guard let payload = session.items.first?.localObject as? WorkspaceTabDrag,
+              payload.workspaceID == model?.selectedWorkspaceID else { return }
+        model?.draggedTab = payload
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionIsRestrictedToDraggingApplication session: any UIDragSession) -> Bool { true }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionAllowsMoveOperation session: any UIDragSession) -> Bool { true }
+    func dragInteraction(_ interaction: UIDragInteraction, session: any UIDragSession, didEndWith operation: UIDropOperation) { endDrag() }
+    func dragInteraction(_ interaction: UIDragInteraction, session: any UIDragSession, willEndWith operation: UIDropOperation) {
+        if operation == .cancel || operation == .forbidden { endDrag() }
+    }
+    func endDrag() { if model?.draggedTab == payload { model?.draggedTab = nil } }
+    func dragInteraction(_ interaction: UIDragInteraction, previewForLifting item: UIDragItem, session: any UIDragSession) -> UITargetedDragPreview? {
+        let label = UILabel(frame: CGRect(x: 0, y: 0, width: min(260, max(100, bounds.width)), height: 32))
+        label.text = "  " + title; label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = UIColor(CrowTheme.text); label.backgroundColor = UIColor(CrowTheme.bg1)
+        label.layer.cornerRadius = 5; label.clipsToBounds = true
+        return UITargetedDragPreview(view: label, parameters: UIDragPreviewParameters(),
+            target: UIDragPreviewTarget(container: self, center: CGPoint(x: bounds.midX, y: bounds.midY)))
+    }
+}
+
+private struct IOSWorkspacePaneDrop: UIViewRepresentable {
+    let model: AppModel
+    let paneID: UUID
+    @Binding var placement: PanePlacement?
+    func makeUIView(context: Context) -> IOSWorkspacePaneDropView { IOSWorkspacePaneDropView() }
+    func updateUIView(_ view: IOSWorkspacePaneDropView, context: Context) {
+        view.model = model; view.paneID = paneID; view.isHidden = model.draggedTab == nil
+        view.highlight = { placement = $0 }
+    }
+}
+
+/// During tab drags this sits above UITextView, WKWebView and SwiftTerm, so their
+/// native text/attachment drop interactions cannot claim workspace tabs.
+final class IOSWorkspacePaneDropView: UIView, UIDropInteractionDelegate {
+    weak var model: AppModel?
+    var paneID = UUID()
+    var highlight: (PanePlacement?) -> Void = { _ in }
+    override init(frame: CGRect) {
+        super.init(frame: frame); addInteraction(UIDropInteraction(delegate: self))
+        isAccessibilityElement = false
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard model?.draggedTab != nil else { return nil }
+        return super.hitTest(point, with: event)
+    }
+    func acceptedPayload(_ session: any UIDropSession) -> WorkspaceTabDrag? {
+        guard session.localDragSession != nil, session.items.count == 1,
+              session.hasItemsConforming(toTypeIdentifiers: [workspaceTabType.identifier]),
+              let payload = session.items.first?.localObject as? WorkspaceTabDrag,
+              payload == model?.draggedTab, payload.workspaceID == model?.selectedWorkspaceID,
+              model?.current.snapshot.layout?.panes.contains(where: { $0.id == payload.paneID && $0.tabs.contains(payload.tab) }) == true else { return nil }
+        return payload
+    }
+    func destination(at point: CGPoint) -> (PanePlacement, WorkspaceTab?) {
+        if point.y < 36 {
+            func sources(_ view: UIView) -> [IOSWorkspaceTabDragView] {
+                if let source = view as? IOSWorkspaceTabDragView { return [source] }
+                return view.subviews.flatMap(sources)
+            }
+            let tabs = window.map(sources)?.filter { $0.payload?.paneID == paneID && $0.convert($0.bounds, to: self).intersects(bounds) }
+                .sorted { $0.convert($0.bounds, to: self).minX < $1.convert($1.bounds, to: self).minX } ?? []
+            return (.center, tabs.first { point.x < $0.convert($0.bounds, to: self).midX }?.payload?.tab)
+        }
+        if point.x < min(90, bounds.width * 0.25) { return (.left, nil) }
+        if point.x > bounds.width - min(90, bounds.width * 0.25) { return (.right, nil) }
+        if point.y < 36 + min(70, max(0, bounds.height - 36) * 0.25) { return (.top, nil) }
+        if point.y > bounds.height - min(70, bounds.height * 0.25) { return (.bottom, nil) }
+        return (.center, nil)
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, canHandle session: any UIDropSession) -> Bool { acceptedPayload(session) != nil }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: any UIDropSession) -> UIDropProposal {
+        guard acceptedPayload(session) != nil else { highlight(nil); return UIDropProposal(operation: .forbidden) }
+        highlight(destination(at: session.location(in: self)).0)
+        return UIDropProposal(operation: .move)
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, performDrop session: any UIDropSession) {
+        defer { highlight(nil); model?.draggedTab = nil }
+        guard let payload = acceptedPayload(session), let model else { return }
+        let (edge, before) = destination(at: session.location(in: self))
+        _ = model.moveTab(payload, to: paneID, placement: edge, before: before)
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidExit session: any UIDropSession) { highlight(nil) }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: any UIDropSession) { highlight(nil) }
+}
+#endif
 
 private struct WorkspacePaneView: View {
     @Environment(AppModel.self) private var model
     let pane: WorkspacePane
     let isTopLeading: Bool
+    let isTopTrailing: Bool
     @State private var dropPlacement: PanePlacement?
 
     var body: some View {
@@ -360,8 +492,11 @@ private struct WorkspacePaneView: View {
             }
             .onChange(of: model.draggedTab) { _, drag in if drag == nil { dropPlacement = nil } }
             #else
-            .onDrop(of: [workspaceTabType], delegate: WorkspacePaneDrop(model: model, paneID: pane.id,
-                size: geometry.size, placement: $dropPlacement))
+            .overlay {
+                IOSWorkspacePaneDrop(model: model, paneID: pane.id, placement: $dropPlacement)
+                    .allowsHitTesting(model.draggedTab != nil)
+            }
+            .onChange(of: model.draggedTab) { _, drag in if drag == nil { dropPlacement = nil } }
             #endif
         }
     }
@@ -394,8 +529,7 @@ private struct WorkspacePaneView: View {
             .frame(width: 28, height: 28).help("Pane actions")
             .crowMenuHover()
             .windowDragExcluded()
-            #if os(macOS)
-            if !model.inspectorVisible {
+            if !model.inspectorVisible && showsInspectorToggle {
             Button {
                 model.current.maximizedPaneID = nil
                 model.inspectorVisible = true
@@ -408,25 +542,17 @@ private struct WorkspacePaneView: View {
             .accessibilityIdentifier("crow.inspector-toggle")
             .windowDragExcluded()
             }
-            #else
-            if (model.current.snapshot.layout?.panes.count ?? 0) > 1 {
-                Button {
-                    model.current.maximizedPaneID = model.current.maximizedPaneID == pane.id ? nil : pane.id
-                } label: {
-                    Image(systemName: model.current.maximizedPaneID == pane.id ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 11)).frame(width: 24, height: 28)
-                }.buttonStyle(CrowButtonStyle()).help(model.current.maximizedPaneID == pane.id ? "Restore Panes" : "Maximize Pane")
-            }
-            #endif
         }
-        #if os(macOS)
         // Only the top-left pane shares its header with the collapsed sidebar controls.
         .padding(.leading, !model.sidebarVisible && isTopLeading ? SidebarTopBar.collapsedWidth : 0)
-        #endif
         .padding(.trailing, 5).frame(height: 36).background(CrowTheme.bg1)
-        #if !os(macOS)
-        .onDrop(of: [workspaceTabType], delegate: WorkspacePaneDrop(model: model, paneID: pane.id,
-            size: .zero, placement: $dropPlacement, tabStrip: true))
+    }
+
+    private var showsInspectorToggle: Bool {
+        #if os(macOS)
+        true
+        #else
+        isTopTrailing
         #endif
     }
 
@@ -458,18 +584,6 @@ private struct WorkspacePaneView: View {
         .overlay(alignment: .bottom) { if selected { CrowTheme.accent.frame(height: 1) } }
         .contentShape(Rectangle())
         .accessibilityIdentifier("crow.tab.\(tab.key)")
-        #if !os(macOS)
-        .onDrag {
-            model.draggedTab = WorkspaceTabDrag(workspaceID: model.selectedWorkspaceID, paneID: pane.id, tab: tab)
-            let provider = NSItemProvider()
-            provider.registerDataRepresentation(forTypeIdentifier: workspaceTabType.identifier, visibility: .ownProcess) { completion in
-                completion(Data(tab.key.utf8), nil); return nil
-            }
-            return provider
-        }
-        .onDrop(of: [workspaceTabType], delegate: WorkspacePaneDrop(model: model, paneID: pane.id,
-            size: .zero, placement: $dropPlacement, tabStrip: true, before: tab))
-        #endif
         .contextMenu {
             Button("Split Right") { model.splitTab(tab, in: pane.id, placement: .right) }
             Button("Split Down") { model.splitTab(tab, in: pane.id, placement: .bottom) }
@@ -489,6 +603,14 @@ private struct WorkspacePaneView: View {
         .overlay {
             GeometryReader { geometry in
                 NativeWorkspaceTabSource(model: model,
+                    payload: .init(workspaceID: model.selectedWorkspaceID, paneID: pane.id, tab: tab), title: title(tab))
+                    .frame(width: max(0, geometry.size.width - 28), height: geometry.size.height)
+            }
+        }
+        #else
+        .overlay {
+            GeometryReader { geometry in
+                IOSWorkspaceTabSource(model: model,
                     payload: .init(workspaceID: model.selectedWorkspaceID, paneID: pane.id, tab: tab), title: title(tab))
                     .frame(width: max(0, geometry.size.width - 28), height: geometry.size.height)
             }
@@ -767,31 +889,3 @@ final class WorkspacePaneDropView: NSView {
     override func draggingEnded(_ sender: NSDraggingInfo) { highlight(nil) }
 }
 #endif
-
-private struct WorkspacePaneDrop: DropDelegate {
-    let model: AppModel
-    let paneID: UUID
-    let size: CGSize
-    @Binding var placement: PanePlacement?
-    var tabStrip = false
-    var before: WorkspaceTab?
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [workspaceTabType]) && model.draggedTab?.workspaceID == model.selectedWorkspaceID
-    }
-    private func edge(_ point: CGPoint) -> PanePlacement {
-        if tabStrip { return .center }
-        if point.x < min(70, size.width * 0.22) { return .left }
-        if point.x > size.width - min(70, size.width * 0.22) { return .right }
-        if point.y < min(70, size.height * 0.22) { return .top }
-        if point.y > size.height - min(70, size.height * 0.22) { return .bottom }
-        return .center
-    }
-    func dropEntered(info: DropInfo) { placement = edge(info.location) }
-    func dropUpdated(info: DropInfo) -> DropProposal? { placement = edge(info.location); return DropProposal(operation: .move) }
-    func dropExited(info: DropInfo) { placement = nil }
-    func performDrop(info: DropInfo) -> Bool {
-        defer { placement = nil; model.draggedTab = nil }
-        guard validateDrop(info: info), let drag = model.draggedTab else { return false }
-        return model.moveTab(drag, to: paneID, placement: edge(info.location), before: before)
-    }
-}

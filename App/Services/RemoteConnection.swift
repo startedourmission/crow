@@ -168,6 +168,51 @@ final class RemoteConnection {
         try? await old?.close()
     }
 
+    func gitStatus(path: String) async throws -> RepositorySnapshot {
+        guard let client, client.isConnected else { throw FileFailure.disconnected }
+        let command = "sh -c " + GitRepository.quote(GitRepository.query(path: path))
+        let data = try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                var output = Data(), diagnostic = Data()
+                var completed = false
+                do {
+                    try await client.withExec(command) { inbound, _ in
+                        for try await chunk in inbound {
+                            try Task.checkCancellation()
+                            switch chunk {
+                            case .stdout(let bytes): output.append(contentsOf: bytes.readableBytesView)
+                            case .stderr(let bytes): diagnostic.append(contentsOf: bytes.readableBytesView)
+                            }
+                            guard output.count + diagnostic.count <= 8 * 1024 * 1024 else {
+                                throw CommandError("Git output is too large to display.")
+                            }
+                        }
+                        try Task.checkCancellation()
+                        completed = true
+                    }
+                } catch ChannelError.alreadyClosed where completed {
+                    // Citadel closes the command channel after EOF; the server can
+                    // finish closing it first. The successful output is still valid.
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    if !diagnostic.isEmpty {
+                        throw CommandError(String(decoding: diagnostic.prefix(2000), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    throw error
+                }
+                return output
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(12))
+                throw CommandError("Git status timed out. The terminal connection was left open.")
+            }
+            defer { group.cancelAll() }
+            return try await group.next() ?? Data()
+        }
+        try Task.checkCancellation()
+        return try GitRepository.parse(data)
+    }
+
     private func files() async throws -> SFTPClient {
         if let sftp { return sftp }
         guard let client else { throw FileFailure.disconnected }

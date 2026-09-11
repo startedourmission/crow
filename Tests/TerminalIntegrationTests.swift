@@ -187,6 +187,10 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         let id = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
         try await wait("Visible terminal did not start") { model.current.terminals[id]?.running == true }
         let session = try XCTUnwrap(model.current.terminals[id])
+        let remote = try XCTUnwrap(model.current.remote)
+        let repository = try await remote.gitStatus(path: fixture.directory)
+        XCTAssertTrue(repository.status.branch.contains("crow-fixture"))
+        XCTAssertTrue(repository.status.changes.contains { $0.path == "note.md" })
         func screen() -> String {
             let terminal = session.view.getTerminal()
             return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined(separator: "\n")
@@ -205,7 +209,7 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         keyboard.show(for: .terminal)
         XCTAssertTrue(session.view.isFirstResponder)
         for _ in 0..<2 {
-            session.view.resignFirstResponder()
+            _ = session.view.resignFirstResponder()
             XCTAssertFalse(session.view.isFirstResponder)
             keyboard.show(for: .terminal)
             XCTAssertTrue(session.view.isFirstResponder, "The bottom keyboard button must restore the displayed SSH terminal")

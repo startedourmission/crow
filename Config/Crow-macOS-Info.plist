@@ -36,5 +36,16 @@
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 	<key>SURequireSignedFeed</key>
 	<true/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>dev.chajinwoo.crow.workspace-tab</string>
+			<key>UTTypeDescription</key>
+			<string>Crow Workspace Tab</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+		</dict>
+	</array>
 </dict>
 </plist>

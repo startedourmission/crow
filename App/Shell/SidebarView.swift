@@ -1,23 +1,30 @@
 import CrowCore
 import SwiftUI
 
-#if os(macOS)
 struct SidebarTopBar: View {
     @Environment(AppModel.self) private var model
+    #if os(macOS)
     @Environment(\.crowFloatingMode) private var floating
+    #endif
     // Match the workspace tab header so its divider continues across the window.
     static let height: CGFloat = 36
     // Traffic-light clearance, horizontal padding, and the reopen button.
+    #if os(macOS)
     static let collapsedWidth: CGFloat = 36 + 24 + 28 + 36
+    #else
+    static let collapsedWidth: CGFloat = 52
+    #endif
 
     var body: some View {
         HStack(spacing: 8) {
             if model.sidebarVisible { Spacer(minLength: 0) }
+            #if os(macOS)
             Button { floating.wrappedValue = true } label: {
                 Image(systemName: "pip.enter").frame(width: 28, height: 28).contentShape(Rectangle())
             }
             .help("Float Window").accessibilityLabel("Float Window")
             .accessibilityIdentifier("crow.window.float").windowDragExcluded()
+            #endif
             Button { model.sidebarVisible.toggle() } label: {
                 Image(systemName: "sidebar.left").frame(width: 28, height: 28).contentShape(Rectangle())
             }
@@ -31,13 +38,14 @@ struct SidebarTopBar: View {
         .font(.system(size: 14))
         .crowForeground(CrowTheme.textDim)
         .padding(.horizontal, 12)
+        #if os(macOS)
         .padding(.leading, 36) // Leave room for the native traffic lights.
+        #endif
         .frame(height: Self.height)
         .background(CrowTheme.bg1)
         .windowDragBackground()
     }
 }
-#endif
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
@@ -371,7 +379,7 @@ struct SidebarView: View {
     private var hostsList: some View {
         List {
             #if os(iOS)
-            if !model.localWorkspaces.isEmpty {
+            if phoneLayout && !model.localWorkspaces.isEmpty {
                 Section("Workspaces") {
                     ForEach(model.localWorkspaces) { workspace in
                         HStack(spacing: 8) {
