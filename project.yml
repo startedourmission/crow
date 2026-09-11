@@ -24,10 +24,14 @@ packages:
   Citadel:
     url: https://github.com/orlandos-nl/Citadel
     exactVersion: 0.12.1
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.6
 
 targetTemplates:
   CrowApp:
     type: application
+    productName: Crow
     sources:
       - path: App
         excludes:
@@ -85,9 +89,12 @@ targets:
       base:
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_HARDENED_RUNTIME: YES
-        INFOPLIST_KEY_NSHighResolutionCapable: YES
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Config/Crow-macOS-Info.plist
+        SPARKLE_PUBLIC_ED_KEY: ""
         CODE_SIGN_ENTITLEMENTS: App/Crow-macOS.entitlements
+    dependencies:
+      - package: Sparkle
   CrowTests:
     type: bundle.unit-test
     platform: iOS

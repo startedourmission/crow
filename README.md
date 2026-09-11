@@ -88,6 +88,22 @@ If the server disconnects before cleanup, files may remain there, but the stoppe
 
 In Xcode choose `Crow-macOS` → **My Mac** → Run, or `Crow-iOS` → an installed iPhone/iPad simulator → Run. A full Xcode installation and its platform/Metal components are required. Device builds also require your signing team.
 
+### Install on macOS
+
+[Download the latest notarized Crow DMG](https://github.com/startedourmission/crow/releases/latest/download/Crow-macOS.dmg),
+or install and upgrade through the project tap:
+
+```sh
+brew install --cask startedourmission/tap/crow
+brew upgrade --cask --greedy crow
+```
+
+Crow checks the signed Sparkle feed automatically. You can also choose
+**Crow → Check for Updates…** at any time.
+
+Maintainers can find the signing, notarization, and Homebrew setup checklist in
+[docs/RELEASING.md](docs/RELEASING.md).
+
 ```sh
 swift test --package-path Packages/CrowCore
 xcodebuild test -project Crow.xcodeproj -scheme Crow-macOS -destination 'platform=macOS,arch=arm64'
