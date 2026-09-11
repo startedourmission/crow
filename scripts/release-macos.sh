@@ -59,19 +59,35 @@ fi
 
 submit_for_notarization() {
   local artifact="$1"
+  local result_file="$project_root/build/notarization-$(basename "$artifact").json"
   if [[ -n "$NOTARY_PROFILE" ]]; then
     xcrun notarytool submit "$artifact" \
       --keychain-profile "$NOTARY_PROFILE" \
       --wait \
-      --timeout 30m
+      --timeout 30m \
+      --output-format json > "$result_file"
   else
     xcrun notarytool submit "$artifact" \
       --key "$NOTARY_KEY_PATH" \
       --key-id "$NOTARY_KEY_ID" \
       --issuer "$NOTARY_ISSUER_ID" \
       --wait \
-      --timeout 30m
+      --timeout 30m \
+      --output-format json > "$result_file"
   fi
+  python3 - "$result_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as source:
+    result = json.load(source)
+if result.get("status") != "Accepted" or not result.get("id"):
+    raise SystemExit(
+        f"Notarization failed: {result.get('status', 'unknown')} "
+        f"(submission {result.get('id', 'unknown')})"
+    )
+print(f"Notarization accepted: {result['id']}")
+PY
 }
 
 mkdir -p "$project_root/build" "$output_directory"
@@ -122,6 +138,29 @@ fi
 
 mkdir -p "$staging_directory"
 ditto "$archived_app" "$app_path"
+
+echo "Re-signing Sparkle components from the inside out..."
+sign_identity="${SIGN_IDENTITY:-Developer ID Application}"
+sign=(codesign --force --options runtime --timestamp --sign "$sign_identity")
+sparkle_framework="$app_path/Contents/Frameworks/Sparkle.framework"
+sparkle_version="$(readlink "$sparkle_framework/Versions/Current")"
+sparkle_contents="$sparkle_framework/Versions/$sparkle_version"
+for nested_code in \
+  "$sparkle_contents/XPCServices/Downloader.xpc" \
+  "$sparkle_contents/XPCServices/Installer.xpc" \
+  "$sparkle_contents/Autoupdate" \
+  "$sparkle_contents/Updater.app"; do
+  if [[ -e "$nested_code" ]]; then
+    "${sign[@]}" "$nested_code"
+  fi
+done
+"${sign[@]}" "$sparkle_framework"
+if [[ -f "$app_path/Contents/Frameworks/libswiftCompatibilitySpan.dylib" ]]; then
+  "${sign[@]}" "$app_path/Contents/Frameworks/libswiftCompatibilitySpan.dylib"
+fi
+"${sign[@]}" \
+  --entitlements "$project_root/App/Crow-macOS.entitlements" \
+  "$app_path"
 
 echo "Verifying the Developer ID signature..."
 codesign --verify --deep --strict --verbose=2 "$app_path"
