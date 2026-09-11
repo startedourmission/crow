@@ -1,6 +1,8 @@
-<img src="App/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-256.png" alt="Crow app icon" width="128" height="128">
+<p align="center">
+  <img src="docs/assets/app-icon.svg" alt="Crow app icon" width="128" height="128">
+</p>
 
-# Crow
+<h1 align="center">Crow</h1>
 
 Mac, iPhone, iPad에서 로컬 폴더와 SSH 서버를 한곳에서 다루는 개발 작업 공간입니다.
 터미널과 일반 텍스트 편집기를 함께 제공하며, Markdown·소스 코드·설정 파일을
