@@ -210,6 +210,11 @@ final class AppModel {
         get { settings.terminalVisible }
         set { settings.terminalVisible = newValue }
     }
+    var showHiddenFiles: Bool {
+        get { settings.showHiddenFiles ?? false }
+        set { settings.showHiddenFiles = newValue; refreshFiles() }
+    }
+    var canChooseRemoteProject: Bool { hasWorkspace && selectedWorkspace.isRemote }
     var hasUnsavedChanges: Bool { states.contains { $0.snapshot.buffers.contains(where: \.isDirty) } }
 
     func selectWorkspace(_ id: WorkspaceID, showFiles: Bool = true) {
@@ -412,6 +417,7 @@ final class AppModel {
     func refreshFiles() {
         guard hasWorkspace else { return }
         let state = current, path = current.snapshot.directoryPath
+        state.explorer.showHiddenFiles = showHiddenFiles
         state.explorer.configure(rootPath: state.snapshot.rootPath) { [weak self, weak state] path in
             guard let self, let state else { throw CancellationError() }
             if state.snapshot.workspace.isRemote {
@@ -441,11 +447,8 @@ final class AppModel {
         let generation = UUID(); state.refreshGeneration = generation
         if !state.snapshot.workspace.isRemote {
             do {
-                state.files = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path),
-                    includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
-                    .map { FileEntry(name: $0.lastPathComponent,
-                        path: $0.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent($0.lastPathComponent).path,
-                        isDirectory: (try $0.resourceValues(forKeys: [.isDirectoryKey])).isDirectory ?? false) }
+                state.files = try FileExplorer.localEntries(path)
+                    .filter { showHiddenFiles || !$0.isHidden }
                     .sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             } catch { state.files = []; report(error) }
             return
@@ -456,8 +459,11 @@ final class AppModel {
             defer { if state.refreshGeneration == generation { state.isLoading = false } }
             do {
                 let entries = try await remote.list(path)
-                if state.refreshGeneration == generation { state.files = entries.filter { !$0.name.hasPrefix(".") } }
-            } catch { report(error) }
+                if state.refreshGeneration == generation { state.files = entries.filter { showHiddenFiles || !$0.isHidden } }
+            } catch {
+                guard state.refreshGeneration == generation, selectedWorkspaceID == state.id else { return }
+                report(error)
+            }
         }
     }
 
@@ -482,7 +488,12 @@ final class AppModel {
         let entries = try await remote.list(resolved)
         try Task.checkCancellation()
         guard states.contains(where: { $0 === state }), state.remote === remote else { throw CancellationError() }
-        return (resolved, entries.filter { $0.isDirectory && !$0.name.hasPrefix(".") })
+        return (resolved, entries.filter { $0.isDirectory && $0.name != "." && $0.name != ".." })
+    }
+
+    func remoteTerminals(in id: WorkspaceID) -> [TerminalSession] {
+        guard let state = states.first(where: { $0.id == id }), state.snapshot.workspace.isRemote else { return [] }
+        return state.snapshot.terminalIDs.compactMap { state.terminals[$0] }.filter(\.running)
     }
 
     func selectRemoteProject(_ path: String, in id: WorkspaceID) async throws {
@@ -1076,7 +1087,14 @@ final class AppModel {
         #if os(macOS)
         useSystemSSH = state.systemSSH != nil
         #endif
-        let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: state.snapshot.rootPath,
+        var directory = state.snapshot.rootPath
+        #if os(iOS)
+        if case .remote(let hostID, _) = state.snapshot.workspace.kind {
+            // The explorer restores its project independently of the shell's start folder.
+            directory = hosts.first(where: { $0.id == hostID })?.terminalStartPath(projectPath: state.snapshot.rootPath) ?? "~"
+        }
+        #endif
+        let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: directory,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
         session.imagePasteContext = { [weak self, weak state] in
             guard let self, let state else { return nil }

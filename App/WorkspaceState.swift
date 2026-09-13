@@ -43,6 +43,13 @@ final class FileExplorer {
     private(set) var expanded: Set<String> = []
     var selectedPath: String?
     var searchVisible = false
+    var showHiddenFiles = false {
+        didSet {
+            guard showHiddenFiles != oldValue else { return }
+            stop(); children = [:]; results = []; contentMatches = [:]; errorMessage = nil
+            Task { await refresh(); refreshSearch(force: true) }
+        }
+    }
     var query = "" { didSet { if query != oldValue { startSearch() } } }
     private(set) var results: [FileEntry] = []
     private(set) var contentMatches: [String: FileSearchQuery.Match] = [:]
@@ -96,7 +103,7 @@ final class FileExplorer {
         // Only immediate children are accepted. Do not follow remote symlinks or
         // malformed directory entries back into an ancestor during recursive scans.
         return entries.filter {
-            !$0.name.hasPrefix(".") && !$0.name.contains("/") &&
+            $0.name != "." && $0.name != ".." && (showHiddenFiles || !$0.isHidden) && !$0.name.contains("/") &&
                 $0.path == (path as NSString).appendingPathComponent($0.name)
         }.sorted {
             $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending
@@ -288,11 +295,13 @@ final class FileExplorer {
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
     }
     nonisolated static func localEntries(_ path: String) throws -> [FileEntry] {
-        try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path),
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]).map { url in
-                let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                return FileEntry(name: url.lastPathComponent, path: (path as NSString).appendingPathComponent(url.lastPathComponent),
-                    isDirectory: values.isDirectory == true && values.isSymbolicLink != true)
-            }
+        let directory = URL(fileURLWithPath: path)
+        return try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey], options: []).map { url in
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey])
+            return FileEntry(name: url.lastPathComponent, path: (path as NSString).appendingPathComponent(url.lastPathComponent),
+                isDirectory: values.isDirectory == true && values.isSymbolicLink != true,
+                isHidden: url.lastPathComponent.hasPrefix(".") || values.isHidden == true)
+        }
     }
 }

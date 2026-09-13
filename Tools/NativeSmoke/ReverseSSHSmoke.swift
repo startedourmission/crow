@@ -207,6 +207,52 @@ import AppKit
         } catch let error as CommandError {
             try require(error.message.contains("Permission denied"), "Unexpected authentication error: \(error.message)")
         }
+        // A second transport to the same account represents another client device.
+        // Both reverse endpoints must remain usable, but only from their own transport.
+        let otherSocket = "/tmp/crw-test-" + String(UUID().uuidString.prefix(12))
+        let otherMaster = try spawn(["-F", "/dev/null", "-N", "-M", "-S", otherSocket,
+            "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
+            "-o", "UserKnownHostsFile=\(knownHosts.path)", "-i", root.appendingPathComponent("user").path,
+            "-p", String(port), host.userAtHost])
+        defer {
+            if otherMaster.isRunning { otherMaster.terminate(); otherMaster.waitUntilExit() }
+            try? FileManager.default.removeItem(atPath: otherSocket)
+        }
+        try await wait("Second client did not connect") { FileManager.default.fileExists(atPath: otherSocket) }
+        let otherSpec = SystemSSHSpec(host: host, socket: otherSocket, arguments: [], directory: root.path)
+        let otherSession = ReverseSSHSession(bundleBasePath: root.path)
+        defer { otherSession.stop() }
+        otherSession.start { otherSpec }
+        try await wait("Second reverse endpoint did not start") { otherSession.connectCommand != nil || !otherSession.isEnabled }
+        guard let otherCommand = otherSession.connectCommand else { throw CommandError(otherSession.status) }
+        async let firstOutput = ReverseSSHCommand.remote(spec, command: command + " -T 'printf FIRST_CLIENT'")
+        async let secondOutput = ReverseSSHCommand.remote(otherSpec, command: otherCommand + " -T 'printf SECOND_CLIENT'")
+        let outputs = try await (firstOutput, secondOutput)
+        try require(outputs.0 == "FIRST_CLIENT" && outputs.1 == "SECOND_CLIENT", "Simultaneous clients could not use their own reverse endpoints")
+        let forbiddenFile = root.appendingPathComponent("wrong-client-executed")
+        let forbiddenCommand = "touch " + SystemSSHBridge.quote(forbiddenFile.path)
+        for (source, target) in [(spec, otherCommand), (otherSpec, command)] {
+            do {
+                _ = try await ReverseSSHCommand.remote(source, command: target + " -T " + SystemSSHBridge.quote(forbiddenCommand))
+                throw CommandError("Another client's reverse command was accepted")
+            } catch let error as CommandError {
+                try require(error.message.contains("belongs to a different SSH connection"), "Unexpected cross-client error: \(error.message)")
+            }
+        }
+        // Detached shells and reused tmux environments must not silently select a client.
+        do {
+            _ = try await ReverseSSHCommand.remote(spec,
+                command: "unset SSH_CONNECTION; " + command + " -T " + SystemSSHBridge.quote(forbiddenCommand))
+            throw CommandError("A command without SSH_CONNECTION was accepted")
+        } catch let error as CommandError {
+            try require(error.message.contains("belongs to a different SSH connection"), "Unexpected missing-connection error: \(error.message)")
+        }
+        try require(!FileManager.default.fileExists(atPath: forbiddenFile.path), "A rejected command executed on a client")
+        try require(session.isEnabled && otherSession.isEnabled, "Rejecting a wrong client disabled an endpoint")
+        await otherSession.stopAndWait()
+        let survivor = try await ReverseSSHCommand.remote(spec, command: command + " -T 'printf FIRST_STILL_ALIVE'")
+        try require(survivor == "FIRST_STILL_ALIVE", "Stopping another client's endpoint interrupted the first")
+        print("PASS simultaneous same-account clients, cross-client command rejection, missing connection rejection, independent Off")
         let outputURL = root.appendingPathComponent("live-output")
         FileManager.default.createFile(atPath: outputURL.path, contents: nil)
         let output = try FileHandle(forWritingTo: outputURL)

@@ -26,4 +26,91 @@ final class SSHCommandTests: XCTestCase {
         }
         XCTAssertTrue(SSHCommand.isInteractive(try SSHCommand("ssh -v -p 2222 -o 'IdentityFile=/a key' person@host").arguments))
     }
+
+    #if os(macOS)
+    func testDirectoryPromptHookTracksQuotedUnicodePathsAndPreservesHooks() throws {
+        XCTAssertLessThan(SSHCommand.directoryTrackingCommand.utf8.count, 900,
+            "The startup hook must fit in a PTY's canonical input buffer")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-cwd-" + UUID().uuidString)
+        let folder = root.appendingPathComponent("한글 #' ? % folder")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for shell in ["/bin/bash", "/bin/zsh", "/bin/sh"] {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: shell)
+            process.currentDirectoryURL = folder
+            let previous = shell == "/bin/zsh" ? "precmd_functions=(existing_hook); " : "PROMPT_COMMAND='existing_hook'; "
+            let inspect = shell == "/bin/zsh" ? "printf '%s' \"${precmd_functions[*]}\"" : "printf '%s' \"$PROMPT_COMMAND\""
+            process.arguments = ["-c", previous + SSHCommand.directoryTrackingCommand + "; " + inspect]
+            process.standardOutput = output
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, shell)
+            let text = String(decoding: data, as: UTF8.self)
+            XCTAssertTrue(text.contains("existing_hook"), shell)
+            if let start = text.range(of: "\u{1b}]7;"), let end = text[start.upperBound...].firstIndex(of: "\u{7}") {
+                let path = try XCTUnwrap(SSHCommand.terminalDirectory(String(text[start.upperBound..<end])), shell + ": " + text)
+                XCTAssertEqual(URL(fileURLWithPath: path).resolvingSymlinksInPath(), folder.resolvingSymlinksInPath(), shell)
+            } else if shell != "/bin/sh" { XCTFail("No directory report from " + shell) }
+        }
+    }
+
+    func testRemoteStartFolderUsesHomeAndPreservesLiteralPathCharacters() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-shell-path-" + UUID().uuidString)
+        let home = root.appendingPathComponent("home with ' spaces")
+        let oldProject = root.appendingPathComponent("Dev/skills4rabbits")
+        let child = home.appendingPathComponent("literal $(touch INJECTED) `touch ALSO_INJECTED` ' folder")
+        for directory in [home, oldProject, child] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (requested, expected) in [("~", home), ("", home), ("~/" + child.lastPathComponent, child), (child.path, child)] {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.currentDirectoryURL = oldProject
+            var environment = ProcessInfo.processInfo.environment
+            environment["HOME"] = home.path
+            process.environment = environment
+            process.arguments = ["-c", SSHCommand.remoteDirectoryCommand(requested) + " && pwd -P"]
+            process.standardOutput = output
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, requested)
+            let actual = URL(fileURLWithPath: String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines))
+            XCTAssertEqual(actual.resolvingSymlinksInPath().path,
+                           expected.resolvingSymlinksInPath().path, requested)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldProject.appendingPathComponent("INJECTED").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldProject.appendingPathComponent("ALSO_INJECTED").path))
+    }
+    #endif
+
+    func testTerminalDirectoryRejectsNonFileAndMalformedReports() {
+        XCTAssertEqual(SSHCommand.terminalDirectory("file://localhost/tmp/a%20b%23%25%3F"), "/tmp/a b#%?")
+        for report in [nil, "", "/tmp", "https://host/tmp", "file:relative", "file:///tmp#fragment", "file:///tmp?query", "file:///tmp%00", "file://user:pass@host/tmp"] as [String?] {
+            XCTAssertNil(SSHCommand.terminalDirectory(report), report ?? "nil")
+        }
+    }
+
+    func testHostStartFolderSeparatesWSLWorkaroundFromNormalSSH() throws {
+        var host = SSHHost(name: "Server", hostname: "server", username: "user")
+        let restoredProject = "/Users/user/Dev/skills4rabbits"
+        XCTAssertEqual(host.terminalStartPath(projectPath: restoredProject), "~")
+        host.remotePath = "~/Projects/My Project"
+        XCTAssertEqual(host.terminalStartPath(projectPath: restoredProject), "~/Projects/My Project")
+        host.usesWSL = true
+        XCTAssertEqual(host.terminalStartPath(projectPath: restoredProject), restoredProject)
+        let restored = try JSONDecoder().decode(SSHHost.self, from: JSONEncoder().encode(host))
+        XCTAssertTrue(restored.usesWSL)
+        XCTAssertEqual(restored.terminalStartPath(projectPath: restoredProject), restoredProject)
+
+        // Hosts saved before the checkbox existed still decode as ordinary SSH hosts.
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(host)) as? [String: Any])
+        legacy.removeValue(forKey: "usesWSL")
+        let migrated = try JSONDecoder().decode(SSHHost.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertFalse(migrated.usesWSL)
+        XCTAssertEqual(migrated.remotePath, host.remotePath)
+    }
 }

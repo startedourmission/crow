@@ -25,6 +25,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var title = "Terminal"
     var status = "Ready"
     var running = false
+    private(set) var currentDirectory: String?
     var imagePasteMessage: String?
     var imagePasteInProgress = false
     @ObservationIgnored var imagePasteContext: (() -> String?)?
@@ -131,7 +132,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                 view.feed(text: status + "\r\n"); return
             }
             status = "Starting SSH shell…"
-            let initialDirectory = directory
+            let initialDirectoryCommand = SSHCommand.remoteDirectoryCommand(directory)
             shellTask = Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -139,10 +140,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                     try await client.withPTY(.init(wantReply: true, term: "xterm-256color",
                         terminalCharacterWidth: dims.cols, terminalRowHeight: dims.rows,
                         terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { @Sendable [weak self] inbound, outbound in
-                        if initialDirectory != "~" && !initialDirectory.isEmpty {
-                            let quoted = "'" + initialDirectory.replacingOccurrences(of: "'", with: "'\\''") + "'"
-                            try await outbound.write(ByteBuffer(string: "cd -- \(quoted)\n"))
-                        }
+                        try await outbound.write(ByteBuffer(string: initialDirectoryCommand + "\n" + SSHCommand.directoryTrackingCommand + "\n"))
                         await self?.connected(RemoteWriter(value: outbound))
                         for try await output in inbound {
                             try Task.checkCancellation()
@@ -223,7 +221,9 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         Task { try? await writer.value.changeSize(cols: newCols, rows: newRows, pixelWidth: 0, pixelHeight: 0) }
     }
     func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) { self.title = title }
-    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
+    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
+        currentDirectory = SSHCommand.terminalDirectory(directory)
+    }
     func scrolled(source: SwiftTerm.TerminalView, position: Double) {}
     func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {}
     func requestOpenLink(source: SwiftTerm.TerminalView, link: String, params: [String: String]) {

@@ -1,15 +1,46 @@
+# macOS metadata
 .DS_Store
-/.build
-/DerivedData
-/build
-/dist
+._*
+
+# Swift and Xcode build output
+.build/
+/DerivedData/
+/build/
+/dist/
+*.xcarchive/
+*.xcresult/
+*.hmap
+*.dSYM/
+*.dSYM.zip
+
+# Per-user Xcode state (keep shared schemes and Package.resolved)
 xcuserdata/
 *.xcuserstate
-.swiftpm/xcode/package.xcworkspace/xcuserdata/
-Packages/CrowCore/.build
-Packages/CrowCore/.swiftpm
+Packages/CrowCore/.swiftpm/
 *.moved-aside
-*.hmap
+
+# Distribution artifacts (also when exported outside build/ or dist/)
 *.ipa
-*.dSYM.zip
-*.dSYM
+*.dmg
+/Crow-*.zip
+/Crow-*.zip.sha256
+/Crow-*.dmg.sha256
+
+# Local environment and signing credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+*.p8
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# Python helper caches
+__pycache__/
+*.py[cod]
+
+# Files deleted through Crow while working in this repository
+.crow-trash/
+.crow-trash-*/

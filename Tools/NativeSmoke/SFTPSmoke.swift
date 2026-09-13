@@ -101,6 +101,45 @@ import CrowCore
                   "Remote Git differed from local Git: \(remoteGit.status), \(remoteGit.root); local \(localGit.status), \(gitRoot.path)")
         try check(master.isRunning, "Git read closed the SSH master")
         print("PASS local/remote Git status, quoted paths, shell \(shellOnly ?? "default"), SSH master preserved")
+
+        let scanRoot = root.appendingPathComponent("projects to choose")
+        let child = scanRoot.appendingPathComponent("nested/한글 repo's folder")
+        let worktree = scanRoot.appendingPathComponent("linked worktree")
+        let empty = scanRoot.appendingPathComponent("empty")
+        for path in [scanRoot, child, empty] { try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true) }
+        for path in [scanRoot, child] {
+            let command = try process("/usr/bin/git", ["init", "-q", path.path])
+            command.waitUntilExit(); try check(command.terminationStatus == 0, "Discovery fixture git init failed")
+        }
+        let commit = try process("/usr/bin/git", ["-C", child.path, "-c", "user.name=Crow Fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "--allow-empty", "-qm", "Fixture"])
+        commit.waitUntilExit(); try check(commit.terminationStatus == 0, "Discovery fixture commit failed")
+        let linked = try process("/usr/bin/git", ["-C", child.path, "worktree", "add", "--detach", worktree.path])
+        linked.waitUntilExit(); try check(linked.terminationStatus == 0, "Discovery fixture worktree failed")
+        // The enclosing fixture repo is outside this scan; symlinks must not bring it in.
+        try FileManager.default.createSymbolicLink(at: scanRoot.appendingPathComponent("outside-link"), withDestinationURL: gitRoot)
+        func canonical(_ paths: [String]) -> Set<String> {
+            Set(paths.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
+        }
+        let expected = canonical([scanRoot.path, child.path, worktree.path])
+        let localProjects = try await GitRepository.projects(path: scanRoot.path)
+        let remoteProjects = try await GitRepository.projects(path: scanRoot.path, remote: spec)
+        try check(canonical(localProjects.paths) == expected, "Local discovery missed the vault, nested repo or worktree, or followed a symlink")
+        try check(canonical(remoteProjects.paths) == expected, "Remote discovery differs from the local project list")
+        try check(localProjects.warning == nil && remoteProjects.warning == nil, "Readable projects should not warn")
+        let emptyProjects = try await GitRepository.projects(path: empty.path, remote: spec)
+        try check(emptyProjects.paths.isEmpty, "An empty child folder incorrectly selected its enclosing repository")
+        let denied = scanRoot.appendingPathComponent("unreadable")
+        try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: denied.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: denied.path) }
+        let partial = try await GitRepository.projects(path: scanRoot.path, remote: spec)
+        try check(canonical(partial.paths) == expected && partial.warning != nil, "An unreadable child must preserve accessible repositories and warn")
+        var rejectedIncompleteStatus = false
+        do { _ = try GitRepository.parse(Data((gitRoot.path + "\0").utf8)) }
+        catch { rejectedIncompleteStatus = true }
+        try check(rejectedIncompleteStatus, "Incomplete Git status was presented as a clean tree")
+        print("PASS Git project discovery: repository vault, nested repository, worktree, empty folder, symlink exclusion, shell \(shellOnly ?? "default")")
     }
     if rejectCommands {
         let files = try SystemSFTP(spec: spec)

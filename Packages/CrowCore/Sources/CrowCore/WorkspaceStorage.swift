@@ -71,6 +71,7 @@ public struct EditorSettings: Codable, Equatable, Sendable {
     public var terminalVisible = true
     public var keyboardBarItems: [KeyboardBarKey]?
     public var textSnippets: [TextSnippet]?
+    public var showHiddenFiles: Bool?
     public var effectiveKeyboardBarItems: [KeyboardBarKey] { keyboardBarItems ?? KeyboardBarKey.defaults }
     public init() {}
 }

@@ -6,17 +6,54 @@ struct RepositorySnapshot: Sendable {
     let status: GitStatus
 }
 
+struct GitProjectList: Sendable {
+    let paths: [String]
+    let warning: String?
+}
+
 enum GitRepository {
     static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     static func query(path: String) -> String {
         let git = "git --no-optional-locks -c core.fsmonitor=false -C " + quote(path)
-        return "crow_git_root=$(\(git) rev-parse --show-toplevel) && printf '%s\\0' \"$crow_git_root\" && \(git) status --porcelain=v1 -z --branch --untracked-files=normal"
+        return "crow_git_root=$(\(git) rev-parse --show-toplevel) && printf '%s\\0' \"$crow_git_root\" && \(git) status --porcelain=v1 -z --branch --untracked-files=normal && printf 'CROW_GIT_STATUS_END\\0'"
     }
     static func parse(_ data: Data) throws -> RepositorySnapshot {
-        guard let separator = data.firstIndex(of: 0) else { throw failure("Unable to read Git repository status.") }
+        let end = Data("CROW_GIT_STATUS_END\0".utf8)
+        guard data.suffix(end.count) == end, let separator = data.firstIndex(of: 0), separator < data.count - end.count else {
+            throw failure("Git status did not complete. Check folder access and that Git is installed on this host.")
+        }
         let root = String(decoding: data[..<separator], as: UTF8.self)
         guard root.hasPrefix("/") else { throw failure("Git did not return an absolute repository path.") }
-        return RepositorySnapshot(root: root, status: GitStatus(porcelain: data.subdata(in: data.index(after: separator)..<data.endIndex)))
+        return RepositorySnapshot(root: root, status: GitStatus(porcelain: data.subdata(in: data.index(after: separator)..<(data.endIndex - end.count))))
+    }
+
+    /// Discover worktrees, including the selected folder itself, without entering .git
+    /// or following symlinked folders outside the workspace. Run once per refresh.
+    static func projectsQuery(path: String) -> String {
+        let inspect = """
+        for crow_git_marker do
+          crow_git_folder=${crow_git_marker%/.git}
+          if crow_git_root=$(git --no-optional-locks -c core.fsmonitor=false -C "$crow_git_folder" rev-parse --show-toplevel); then
+            printf '%s\\0' "$crow_git_root"
+          else
+            printf 'CROW_GIT_PROJECTS_PARTIAL\\0'
+          fi
+        done
+        """
+        return "cd -- " + quote(path) + " || exit; "
+            + "command -v git >/dev/null || { printf 'Git is unavailable in the SSH shell PATH.\\n' >&2; exit 127; }; "
+            + "if ! find . -name .git -prune \\( -type d -o -type f \\) -exec sh -c " + quote(inspect)
+            + " sh {} +; then printf 'CROW_GIT_PROJECTS_PARTIAL\\0'; fi; printf 'CROW_GIT_PROJECTS_END\\0'"
+    }
+
+    static func parseProjects(_ data: Data) throws -> GitProjectList {
+        var fields = data.split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
+        guard fields.popLast() == "", fields.popLast() == "CROW_GIT_PROJECTS_END",
+              fields.allSatisfy({ $0.hasPrefix("/") || $0 == "CROW_GIT_PROJECTS_PARTIAL" }) else {
+            throw failure("Could not list Git projects. Check folder access and that Git is installed on this host.")
+        }
+        return GitProjectList(paths: Set(fields.filter { $0.hasPrefix("/") }).sorted { $0.localizedStandardCompare($1) == .orderedAscending },
+            warning: fields.contains("CROW_GIT_PROJECTS_PARTIAL") ? "Some folders or repositories could not be read. Showing the Git projects that are accessible." : nil)
     }
     private static func failure(_ message: String) -> NSError {
         NSError(domain: "CrowGit", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -24,8 +61,15 @@ enum GitRepository {
 
     #if os(macOS)
     static func read(path: String, remote: SystemSSHSpec? = nil) async throws -> RepositorySnapshot {
+        try parse(await execute(query: query(path: path), remote: remote))
+    }
+
+    static func projects(path: String, remote: SystemSSHSpec? = nil) async throws -> GitProjectList {
+        try parseProjects(await execute(query: projectsQuery(path: path), remote: remote))
+    }
+
+    private static func execute(query: String, remote: SystemSSHSpec?) async throws -> Data {
         let work = Task.detached(priority: .utility) {
-            let query = query(path: path)
             let data: Data
             if let remote {
                 guard FileManager.default.fileExists(atPath: remote.socket) else {
@@ -45,7 +89,7 @@ enum GitRepository {
             } else {
                 data = try run("/bin/sh", ["-c", query])
             }
-            return try parse(data)
+            return data
         }
         return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
     }
@@ -76,7 +120,7 @@ enum GitRepository {
         let deadline = Date().addingTimeInterval(12)
         while process.isRunning {
             try Task.checkCancellation()
-            guard Date() < deadline else { throw failure("Git status timed out. The terminal connection was left open.") }
+            guard Date() < deadline else { throw failure("Git request timed out. Try a smaller project folder. The terminal connection was left open.") }
             for url in [outputURL, errorURL] {
                 let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                 guard size < 8 * 1024 * 1024 else { throw failure("Git output is too large to display.") }

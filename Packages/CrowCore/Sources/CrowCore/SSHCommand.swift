@@ -81,6 +81,44 @@ public struct SSHCommand: Equatable, Sendable {
         guard !hostname.isEmpty, !user.isEmpty else { throw CommandError("Use ssh user@host.") }
         return (SSHHost(name: target!, hostname: hostname, port: port, username: user), identity)
     }
+
+    /// Resolve home in the remote shell, independently of SFTP's initial directory.
+    public static func remoteDirectoryCommand(_ path: String) -> String {
+        func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        if path.isEmpty || path == "~" { return "cd -- \"$HOME\"" }
+        if path.hasPrefix("~/") { return "cd -- \"$HOME\"/" + quote(String(path.dropFirst(2))) }
+        return "cd -- " + quote(path)
+    }
+
+    /// Session-only bash/zsh prompt hook. Reports cwd through OSC 7 without polling
+    /// or writing commands into a terminal that may be running an editor or agent.
+    public static var directoryTrackingCommand: String {
+        let script = ##"""
+        _crow_cwd(){ local x=$? p="$PWD";
+        p=${p//\%/%25}; p=${p// /%20}; p=${p//\#/%23}; p=${p//\?/%3F};
+        p=${p//$'\n'/%0A}; p=${p//$'\r'/%0D}; p=${p//$'\t'/%09}; p=${p//$'\e'/%1B}; p=${p//$'\a'/%07};
+        printf '\e]7;file://localhost%s\a' "$p"; return "$x"; };
+        if [ -n "${ZSH_VERSION-}" ]; then typeset -ga precmd_functions; precmd_functions=(_crow_cwd "${precmd_functions[@]}");
+        else case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+        'declare -a'*) PROMPT_COMMAND=(_crow_cwd "${PROMPT_COMMAND[@]}");;
+        *) PROMPT_COMMAND="_crow_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}";; esac; fi; _crow_cwd
+        """##.replacingOccurrences(of: "\n", with: " ")
+        let quoted = "'" + script.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return "if [ -n \"${BASH_VERSION-}${ZSH_VERSION-}\" ]; then eval " + quoted + "; fi"
+    }
+
+    public static func terminalDirectory(_ report: String?) -> String? {
+        guard let report, report.hasPrefix("file://") else { return nil }
+        let parts = report.dropFirst(7).split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let authority = URLComponents(string: "file://" + parts[0] + "/"),
+              authority.user == nil, authority.password == nil, authority.query == nil, authority.fragment == nil,
+              !parts[1].contains("?"), !parts[1].contains("#"),
+              let path = ("/" + parts[1]).removingPercentEncoding, !path.contains("\0") else { return nil }
+        // Decode once. URL(string:) re-escapes existing percent sequences when a
+        // report also contains raw Unicode (common in bash/zsh OSC 7 hooks).
+        return path
+    }
 }
 
 public struct CommandError: LocalizedError, Sendable {

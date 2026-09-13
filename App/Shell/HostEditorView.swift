@@ -75,6 +75,14 @@ struct HostEditorView: View {
                     hostField("Display name", text: $host.name, prompt: "My server")
                     hostField("Remote folder", text: $host.remotePath, prompt: "~")
                 }
+                #if os(iOS)
+                Section {
+                    Toggle("WSL default shell", isOn: $host.usesWSL)
+                        .accessibilityIdentifier("crow.host.wsl")
+                } footer: {
+                    Text("Enable for a Windows SSH server configured to open WSL as its default shell. Terminals start in the selected remote project folder. When off, they start in Remote folder (~ means home). Reconnect after changing this setting.")
+                }
+                #endif
                 if let error {
                     Section {
                         Label(error, systemImage: "exclamationmark.circle")

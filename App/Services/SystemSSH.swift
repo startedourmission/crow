@@ -52,6 +52,7 @@ struct SystemSSHSpec: Sendable {
                 }
 
                 """
+                text += SSHCommand.directoryTrackingCommand + "\n"
             }
             // Keep startup routing in our private directory even if user rc files set ZDOTDIR.
             text += "export ZDOTDIR=\(Self.quote(root.path))\n"

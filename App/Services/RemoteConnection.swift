@@ -169,8 +169,16 @@ final class RemoteConnection {
     }
 
     func gitStatus(path: String) async throws -> RepositorySnapshot {
+        try GitRepository.parse(await gitData(query: GitRepository.query(path: path)))
+    }
+
+    func gitProjects(path: String) async throws -> GitProjectList {
+        try GitRepository.parseProjects(await gitData(query: GitRepository.projectsQuery(path: path)))
+    }
+
+    private func gitData(query: String) async throws -> Data {
         guard let client, client.isConnected else { throw FileFailure.disconnected }
-        let command = "sh -c " + GitRepository.quote(GitRepository.query(path: path))
+        let command = "sh -c " + GitRepository.quote(query)
         let data = try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask {
                 var output = Data(), diagnostic = Data()
@@ -204,13 +212,13 @@ final class RemoteConnection {
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(12))
-                throw CommandError("Git status timed out. The terminal connection was left open.")
+                throw CommandError("Git request timed out. Try a smaller project folder. The terminal connection was left open.")
             }
             defer { group.cancelAll() }
             return try await group.next() ?? Data()
         }
         try Task.checkCancellation()
-        return try GitRepository.parse(data)
+        return data
     }
 
     private func files() async throws -> SFTPClient {
@@ -225,18 +233,21 @@ final class RemoteConnection {
         #if os(macOS)
         if let system { return try await system.realPath(path) }
         #endif
-        let sftp = try await files()
-        let home = try await sftp.getRealPath(atPath: ".")
-        let requested = path == "~" ? home : path.hasPrefix("~/") ? home + "/" + path.dropFirst(2) : path
-        return try await sftp.getRealPath(atPath: requested)
+        do {
+            let sftp = try await files()
+            let home = try await sftp.getRealPath(atPath: ".")
+            let requested = path == "~" ? home : path.hasPrefix("~/") ? home + "/" + path.dropFirst(2) : path
+            return try await sftp.getRealPath(atPath: requested)
+        } catch { throw folderError(error, path: path) }
     }
 
     func list(_ path: String) async throws -> [FileEntry] {
         #if os(macOS)
         if let system { return try await system.list(path) }
         #endif
-        let sftp = try await files()
-        let messages = try await sftp.listDirectory(atPath: path)
+        let messages: [SFTPMessage.Name]
+        do { messages = try await files().listDirectory(atPath: path) }
+        catch { throw folderError(error, path: path) }
         var entries: [FileEntry] = []
         for message in messages {
             for component in message.components where component.filename != "." && component.filename != ".." {
@@ -249,6 +260,17 @@ final class RemoteConnection {
             if left.isDirectory != right.isDirectory { return left.isDirectory }
             return left.name.localizedStandardCompare(right.name) == .orderedAscending
         }
+    }
+
+    private func folderError(_ error: Error, path: String) -> Error {
+        let status: SFTPMessage.Status
+        if let value = error as? SFTPMessage.Status { status = value }
+        else if case SFTPError.errorStatus(let value) = error { status = value }
+        else { return error }
+        let detail = status.errorCode == .permissionDenied
+            ? "The SSH server denied access to this folder. Check permissions on the server, including access to iCloud Drive if this is a Mac."
+            : status.message
+        return CommandError("Cannot open remote folder: \(path)\nSFTP \(status.errorCode.rawValue): \(detail)")
     }
 
     func revision(_ path: String) async throws -> FileRevision {

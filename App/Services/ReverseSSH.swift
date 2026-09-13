@@ -192,7 +192,7 @@ enum ReverseSSHCommand {
 enum ReverseSSHConnector {
     enum Route { case direct, windowsLoopback }
 
-    static func script(path: String, port: Int, username: String, route: Route) -> String {
+    static func script(path: String, port: Int, username: String, connection: String, route: Route) -> String {
         let quote = SystemSSHBridge.quote
         let proxy: String
         switch route {
@@ -203,6 +203,12 @@ enum ReverseSSHConnector {
         }
         return """
         #!/bin/sh
+        # Prevent accidentally using another client's command in a shared server account.
+        # This is not a security boundary against that account's owner.
+        if [ -z "${SSH_CONNECTION-}" ] || [ "$SSH_CONNECTION" != \(quote(connection)) ]; then
+          printf '%s\\n' 'Crow: this client command belongs to a different SSH connection. Run it in the Crow connection that enabled Reverse SSH.' >&2
+          exit 1
+        fi
         exec ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o UserKnownHostsFile=\(quote(path + "/known_hosts")) -i \(quote(path + "/identity"))\(proxy) -p \(port) -l \(quote(username)) 127.0.0.1 "$@"
 
         """
@@ -303,6 +309,16 @@ enum ReverseSSHConnector {
 
         func open(_ spec: SystemSSHSpec, bundleBasePath: String?, progress: (String) -> Void) async throws {
             self.spec = spec
+            progress("Identifying this SSH connection…")
+            let connection = try await ReverseSSHCommand.remote(spec, command: "printf '%s\\n' \"${SSH_CONNECTION-}\"")
+            let endpoints = connection.split(separator: " ", omittingEmptySubsequences: false)
+            guard endpoints.count == 4, !endpoints[0].isEmpty, !endpoints[2].isEmpty,
+                  let clientPort = Int(endpoints[1]), (1...65535).contains(clientPort),
+                  let serverPort = Int(endpoints[3]), (1...65535).contains(serverPort),
+                  !connection.contains(where: { $0.isNewline }) else {
+                throw CommandError("The server did not provide SSH_CONNECTION. Reverse SSH needs it to keep each client's command tied to its original SSH connection.")
+            }
+            try Task.checkCancellation()
             progress("Preparing this Mac…")
             server = try await ReverseSSHServer.create()
             try Task.checkCancellation()
@@ -324,7 +340,7 @@ enum ReverseSSHConnector {
             let path = (base as NSString).appendingPathComponent(".crow-client-" + UUID().uuidString)
             // Remember the path even if the transfer fails, so partial credentials are removed.
             remoteDirectory = path
-            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .direct)
+            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, connection: connection, route: .direct)
             try await files.installReverseSSHBundle(at: path, identity: server.privateKey,
                 knownHosts: "[127.0.0.1]:\(port) \(try server.hostPublicKey)", command: command)
             try Task.checkCancellation()
@@ -338,7 +354,7 @@ enum ReverseSSHConnector {
                 // Probe the bridge capability instead of assuming a host name, WSL distro or network mode.
                 do {
                     _ = try await ReverseSSHCommand.remote(spec, command: "command -v powershell.exe >/dev/null")
-                    let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .windowsLoopback)
+                    let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, connection: connection, route: .windowsLoopback)
                     try await files.write(bridged, path: path + "/connect", expected: command, overwrite: false)
                     try Task.checkCancellation()
                     try await verify()

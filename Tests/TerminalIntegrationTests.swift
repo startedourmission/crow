@@ -189,15 +189,25 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         let session = try XCTUnwrap(model.current.terminals[id])
         let remote = try XCTUnwrap(model.current.remote)
         let repository = try await remote.gitStatus(path: fixture.directory)
+        let projects = try await remote.gitProjects(path: fixture.directory)
+        XCTAssertEqual(projects.paths, [repository.root], "A repository vault must be listed before selecting its status")
         XCTAssertTrue(repository.status.branch.contains("crow-fixture"))
         XCTAssertTrue(repository.status.changes.contains { $0.path == "note.md" })
-        func screen() -> String {
-            let terminal = session.view.getTerminal()
+        func screen(_ target: TerminalSession? = nil) -> String {
+            let terminal = (target ?? session).view.getTerminal()
             return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined(separator: "\n")
         }
         session.view.insertText("printf '__IOS_%s__\\n' WORKS")
         session.view.insertText("\n")
         try await wait("SSH terminal did not execute UIKit input (\(session.status))") { screen().contains("__IOS_WORKS__") }
+        let quotedFolder = "'" + fixture.directory.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        session.view.insertText("test \"$PWD\" -ef " + quotedFolder + " && printf '__FOLDER_%s__\\n' OK\n")
+        try await wait("Terminal ignored the configured folder") { screen().contains("__FOLDER_OK__") }
+        try await wait("Terminal did not report its current folder") { session.currentDirectory == repository.root }
+        session.view.insertText("cd /tmp\n")
+        try await wait("Terminal folder did not follow cd") { session.currentDirectory == "/tmp" }
+        session.view.insertText("cd -- " + quotedFolder + "\n")
+        try await wait("Terminal folder did not follow return to project") { session.currentDirectory == repository.root }
         XCTAssertNotNil(session.view.window, "The working terminal must be the one displayed on screen")
         keyboard.show(for: .terminal)
         model.compactSurface = .hosts
@@ -217,6 +227,48 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         session.view.insertText("printf '__IOS_%s__\\n' RETURNED")
         session.view.insertText("\n")
         try await wait("Restored SSH terminal lost keyboard input") { screen().contains("__IOS_RETURNED__") }
+
+        // A restored explorer project must not override the host's new shell start folder.
+        host.remotePath = "~"
+        try model.storeHost(host, credential: HostCredential(privateKey: fixture.privateKey))
+        model.reconnectCurrent()
+        try await wait("Reconnect did not finish") { model.connectionState(for: host) == .connected }
+        try await wait("Reconnected terminal did not start") {
+            model.current.terminals[id]?.running == true && model.current.terminals[id] !== session
+        }
+        let reconnected = try XCTUnwrap(model.current.terminals[id])
+        reconnected.view.insertText("test \"$PWD\" -ef \"$HOME\" && printf '__HOME_%s__\\n' OK\n")
+        try await wait("Restored project overrode the configured home folder") { screen(reconnected).contains("__HOME_OK__") }
+        XCTAssertEqual(model.current.snapshot.rootPath, fixture.directory, "The explorer should retain its selected project")
+
+        // The WSL checkbox deliberately preserves the previous project-folder behavior.
+        host.usesWSL = true
+        try model.storeHost(host, credential: HostCredential(privateKey: fixture.privateKey))
+        model.reconnectCurrent()
+        try await wait("WSL-mode reconnect did not finish") { model.connectionState(for: host) == .connected }
+        try await wait("WSL-mode terminal did not start") {
+            model.current.terminals[id]?.running == true && model.current.terminals[id] !== reconnected
+        }
+        let wslSession = try XCTUnwrap(model.current.terminals[id])
+        wslSession.view.insertText("test \"$PWD\" -ef " + quotedFolder + " && printf '__WSL_FOLDER_%s__\\n' OK\n")
+        try await wait("WSL mode did not preserve the project-folder workaround") { screen(wslSession).contains("__WSL_FOLDER_OK__") }
+
+        // Mount the detail component created when the user selects a project.
+        // Its SwiftUI task must update the rendered state, not only the SSH API.
+        let gitState = GitProjectStatusState()
+        XCTAssertNil(gitState.repository)
+        window.rootViewController = UIHostingController(rootView:
+            GitProjectStatusView(path: repository.root, refreshID: UUID(), status: gitState).environment(model))
+        try await wait("Selected SSH project did not load its status view") { gitState.repository != nil || gitState.error != nil }
+        XCTAssertNil(gitState.error)
+        XCTAssertEqual(gitState.repository?.status.branch, repository.status.branch)
+        XCTAssertEqual(gitState.repository?.status.changes, repository.status.changes)
+        let failedGitState = GitProjectStatusState()
+        window.rootViewController = UIHostingController(rootView:
+            GitProjectStatusView(path: repository.root + "/missing-project", refreshID: UUID(), status: failedGitState).environment(model))
+        try await wait("Failed Git status must display an error instead of remaining blank") { failedGitState.error != nil }
+        XCTAssertNil(failedGitState.repository)
+
     }
 
     @MainActor

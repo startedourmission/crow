@@ -13,7 +13,9 @@ Coverage:
 
 - actual NSWindow mouse-event dispatch and native window hit testing;
 - native `performDrag(with:)` handoff and `isMovable` remaining enabled;
-- local and multiplexed remote Git status, including quoted paths and shell-only SSH;
+- local and multiplexed remote Git status and project discovery, including a repository
+  vault, nested repositories, worktrees, empty folders, symlink exclusion, quoted paths,
+  and shell-only SSH;
 - exclusion of editor, button and file-list coordinates from window dragging;
 - bundled WebKit editor initialization and several Markdown fixtures;
 - direct rich-text edits, exact source preservation, undo/redo and save;
@@ -73,6 +75,13 @@ DerivedData directory also checks the production app's toggle workflow.
 It also verifies that ordinary SSH startup/completion, selecting an already
 connected host, and reverse-SSH startup/reconnect preserve the current sidebar
 selection rather than automatically opening Files or Hosts.
+
+The loopback test opens two independent SSH transports to the same server account
+and enables both reverse endpoints. It checks simultaneous execution through each
+client's own command, rejection of commands used from the other transport or with
+`SSH_CONNECTION` missing, and that turning one endpoint Off preserves the other.
+This connection check prevents accidental cross-client use, not deliberate bypass
+by someone with access to the same server account and its private key files.
 
 An **explicitly opt-in** live check can use an existing authenticated control socket:
 

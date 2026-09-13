@@ -22,6 +22,7 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
     public var port: Int
     public var username: String
     public var remotePath: String
+    public var usesWSL = false
     public var authentication: SSHAuthenticationKind = .password
     public var commandArguments: [String]?
     public var commandDirectory: String?
@@ -44,6 +45,30 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
 
     public var userAtHost: String {
         "\(username)@\(hostname)"
+    }
+
+    /// WSL default-shell hosts retain the existing project-directory workaround.
+    public func terminalStartPath(projectPath: String) -> String {
+        usesWSL ? projectPath : (remotePath.isEmpty ? "~" : remotePath)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, hostname, port, username, remotePath, usesWSL
+        case authentication, commandArguments, commandDirectory
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(HostID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        hostname = try values.decode(String.self, forKey: .hostname)
+        port = try values.decode(Int.self, forKey: .port)
+        username = try values.decode(String.self, forKey: .username)
+        remotePath = try values.decode(String.self, forKey: .remotePath)
+        usesWSL = try values.decodeIfPresent(Bool.self, forKey: .usesWSL) ?? false
+        authentication = try values.decodeIfPresent(SSHAuthenticationKind.self, forKey: .authentication) ?? .password
+        commandArguments = try values.decodeIfPresent([String].self, forKey: .commandArguments)
+        commandDirectory = try values.decodeIfPresent(String.self, forKey: .commandDirectory)
     }
 }
 
@@ -160,11 +185,13 @@ public struct FileEntry: Identifiable, Hashable, Sendable {
     public var name: String
     public var path: String
     public var isDirectory: Bool
+    public var isHidden: Bool
 
-    public init(name: String, path: String, isDirectory: Bool) {
+    public init(name: String, path: String, isDirectory: Bool, isHidden: Bool? = nil) {
         self.name = name
         self.path = path
         self.isDirectory = isDirectory
+        self.isHidden = isHidden ?? name.hasPrefix(".")
     }
 }
 

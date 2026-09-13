@@ -112,15 +112,35 @@ import CrowCore
         XCTAssertTrue(tree.rows.contains { $0.entry.name == "new.txt" })
         XCTAssertNotNil(tree.errorMessage)
     }
-    func testLocalScanSkipsHiddenFilesAndDoesNotTraverseSymlinkLoops() async throws {
+    func testLocalScanRetainsHiddenMetadataAndDoesNotTraverseSymlinkLoops() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tree-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try Data().write(to: root.appendingPathComponent(".hidden"))
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("loop"), withDestinationURL: root)
         let entries = try FileExplorer.localEntries(root.path)
-        XCTAssertFalse(entries.contains { $0.name == ".hidden" })
+        XCTAssertTrue(try XCTUnwrap(entries.first { $0.name == ".hidden" }).isHidden)
         XCTAssertFalse(try XCTUnwrap(entries.first { $0.name == "loop" }).isDirectory)
+    }
+
+    func testHiddenSettingRefreshesTreeAndSearchWithoutAcceptingDotEntries() async throws {
+        let tree = FileExplorer(rootPath: "/vault")
+        let hidden = entry(".private", directory: true), file = entry("note.md", in: "/vault/.private")
+        tree.load = { path in
+            path == "/vault" ? [hidden, self.entry("visible.md"), self.entry(".", directory: true), self.entry("..", directory: true)] : [file]
+        }
+        await tree.refresh()
+        XCTAssertEqual(tree.rows.map(\.entry.name), ["visible.md"])
+        tree.query = "note"
+        try await waitUntil { !tree.isSearching }
+        XCTAssertTrue(tree.results.isEmpty)
+        tree.showHiddenFiles = true
+        try await waitUntil { tree.results == [file] && !tree.isSearching }
+        tree.query = ""
+        XCTAssertEqual(tree.rows.map(\.entry.name), [".private", "visible.md"])
+        tree.showHiddenFiles = false
+        try await waitUntil { tree.rows.map(\.entry.name) == ["visible.md"] }
+        tree.stop()
     }
 }
 
@@ -455,6 +475,19 @@ final class CrowAppTests: XCTestCase {
         XCTAssertFalse(model.workspaces.isEmpty)
         XCTAssertEqual(model.selectedWorkspace.kind, .local)
         XCTAssertFalse(model.files.isEmpty)
+        XCTAssertFalse(model.canChooseRemoteProject)
+    }
+
+    @MainActor func testProjectPickerBelongsOnlyToRemoteWorkspaces() {
+        let model = fixture(), localID = model.selectedWorkspaceID
+        let host = SSHHost(name: "Remote", hostname: "example.invalid", username: "test")
+        let state = WorkspaceState(.init(workspace: Workspace(name: "Remote", kind: .remote(hostID: host.id, path: "/project"), connection: .disconnected), rootPath: "/project"))
+        model.states.append(state)
+        model.selectWorkspace(state.id)
+        XCTAssertTrue(model.canChooseRemoteProject)
+        model.selectWorkspace(localID)
+        XCTAssertFalse(model.canChooseRemoteProject)
+        XCTAssertTrue(model.remoteTerminals(in: localID).isEmpty)
     }
 
     @MainActor private func fixture() -> AppModel {

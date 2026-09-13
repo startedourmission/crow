@@ -1,37 +1,34 @@
 <p align="center">
-  <img src="docs/assets/app-icon.svg" alt="Crow app icon" width="128" height="128">
+  <img src="App/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-256.png" alt="Crow — 은빛 까마귀 앱 아이콘" width="128" height="128">
 </p>
 
 <h1 align="center">Crow</h1>
 
-Mac, iPhone, iPad에서 로컬 폴더와 SSH 서버를 한곳에서 다루는 개발 작업 공간입니다.
-터미널과 일반 텍스트 편집기를 함께 제공하며, Markdown·소스 코드·설정 파일을
-빠르게 열고 편집할 수 있습니다.
+<p align="center">
+  내 컴퓨터와 SSH 서버를 하나의 작업 공간으로.<br>
+  Mac · iPhone · iPad에서 터미널, 파일 탐색, 텍스트 편집을 함께 사용하세요.
+</p>
 
-## macOS 다운로드
+<p align="center">
+  <a href="https://github.com/startedourmission/crow/releases/latest/download/Crow-macOS.dmg">macOS 다운로드</a> ·
+  <a href="#설치">설치 안내</a> ·
+  <a href="#주요-기능">주요 기능</a> ·
+  <a href="#개발하기">개발하기</a>
+</p>
 
-### [최신 Crow DMG 다운로드](https://github.com/startedourmission/crow/releases/latest/download/Crow-macOS.dmg)
+## 설치
 
-- 지원 운영체제: macOS 15 Sequoia 이상
-- 지원 Mac: Apple Silicon 및 Intel
-- 배포 파일은 Developer ID로 서명하고 Apple 공증을 거칩니다.
+**macOS 15 Sequoia 이상 · Apple Silicon 및 Intel 지원**
 
-설치는 간단합니다.
+[**Crow-macOS.dmg 다운로드 →**](https://github.com/startedourmission/crow/releases/latest/download/Crow-macOS.dmg)
 
-1. 위 링크에서 `Crow-macOS.dmg`를 다운로드합니다.
-2. DMG를 열고 `Crow.app`을 `Applications` 폴더로 드래그합니다.
-3. 응용 프로그램 폴더에서 Crow를 실행합니다.
+DMG를 열고 **Crow.app을 Applications 폴더로 드래그**한 뒤 실행하세요.
+배포본은 Developer ID 서명과 Apple 공증을 거칩니다.
+버전별 파일과 변경 사항은 [Releases](https://github.com/startedourmission/crow/releases)에서 확인할 수 있습니다.
 
-정상 배포본은 Apple 공증을 받은 파일이므로 Gatekeeper를 끄거나 터미널에서
-격리 속성을 삭제할 필요가 없습니다.
+iPhone·iPad는 iOS/iPadOS 18 이상을 지원하며, 소스 빌드는 아래 [개발하기](#개발하기)를 참고하세요.
 
-아직 Release가 한 번도 게시되지 않았다면 최신 다운로드 링크가 404를 반환할
-수 있습니다. 이 경우 [Releases](https://github.com/startedourmission/crow/releases)
-페이지에서 배포 상태를 확인해 주세요.
-
-## Homebrew로 설치
-
-Crow 저장소를 처음 한 번만 tap으로 등록한 뒤 설치합니다.
+### Homebrew
 
 ```sh
 brew trust --cask startedourmission/crow/crow
@@ -39,41 +36,63 @@ brew tap startedourmission/crow https://github.com/startedourmission/crow
 brew install --cask crow
 ```
 
-첫 번째 명령은 Homebrew 6의 비공식 tap 보호 정책에 따라 Crow Cask만 명시적으로
-신뢰하는 단계입니다. 저장소 전체를 신뢰하지 않아도 됩니다.
+첫 줄은 [Homebrew 6의 tap 신뢰 설정](https://docs.brew.sh/Tap-Trust)에 따라 Crow Cask를 신뢰하도록 등록합니다.
 
-Homebrew를 통한 수동 업그레이드는 다음과 같습니다.
+### 업데이트
+
+새 버전은 앱에서 안내합니다. **Crow → Check for Updates…** 메뉴로 직접 확인할 수도 있습니다.
+자동 업데이트에는 Sparkle의 서명 검증을 사용합니다.
+
+Homebrew로 수동 업데이트하려면:
 
 ```sh
+brew update
 brew upgrade --cask --greedy crow
 ```
 
-## 자동 업데이트
-
-Crow는 Sparkle의 서명된 업데이트 피드를 자동으로 확인합니다. 새 버전이 있으면
-앱 안에서 안내하며, 언제든지 메뉴의 **Crow → Check for Updates…**를 선택해 직접
-확인할 수 있습니다.
-
-업데이트 파일도 최초 설치 파일과 마찬가지로 Developer ID 서명과 Apple 공증,
-Sparkle EdDSA 서명 검증을 거칩니다.
-
 ## 주요 기능
 
-- 로컬 폴더와 여러 SSH 호스트를 각각 독립된 작업 공간으로 관리
-- macOS 실제 로그인 셸과 PTY 기반 터미널 탭·분할·크기 조절
-- 한글 IME 조합 중 문자가 PTY로 잘못 전송되지 않는 터미널 입력 처리
-- Markdown, txt, json, yaml, 소스 코드 등 UTF-8 일반 텍스트 편집
-- 실행 취소, 찾기·바꾸기, 줄 번호, 들여쓰기, 글꼴 크기 조절
-- 파일명·경로 검색과 `contents:` 접두사를 이용한 파일 내용 검색
-- 파일·폴더 생성, 이름 변경, 가져오기 및 복구 가능한 삭제
-- 작업 공간별 파일 탭, 터미널, 분할 화면, 임시 초안 복원
-- 로컬 및 원격 Git 브랜치·변경 파일 확인
-- SFTP 파일 탐색과 충돌 감지 저장
-- macOS에서 기존 OpenSSH 설정, 에이전트, 키, `known_hosts` 사용
-- 서버의 에이전트가 임시 SSH 경로를 통해 Mac에서 명령을 실행할 수 있는
-  Reverse SSH 기능
+| 기능 | 할 수 있는 일 |
+| --- | --- |
+| 작업 공간 | 로컬 폴더와 여러 SSH 서버 관리, 파일·터미널 탭과 분할 화면, 임시 초안 복원 |
+| 터미널 | macOS 로컬 로그인 셸, SSH 터미널, 한글 IME 입력, 클립보드 이미지 업로드 |
+| 편집기 | Markdown 편집·소스 모드, UTF-8 텍스트·코드 편집, 찾기·바꾸기, 줄 번호·들여쓰기 |
+| 파일과 Git | SFTP 탐색·저장, 파일명·경로·내용 검색, 외부 변경 감지, Git 브랜치·변경 파일 확인 |
+| SSH 키 | Ed25519 키 생성, Ed25519·RSA OpenSSH 키 가져오기, 기기별 Keychain 보관 |
+| Mac 전용 | 기존 OpenSSH 설정 사용, Reverse SSH, 다른 창 위에 유지되는 작은 작업 창 |
+| 모바일 입력 | iPhone·iPad 키보드 바와 키 조합 설정, iPhone 스니펫 빠른 삽입 |
 
-## SSH 사용
+아래 기능 설명은 현재 소스 기준입니다. 설치한 릴리스에 따라 제공 범위가 다를 수 있습니다.
+
+## 사용하기
+
+### Reverse SSH · macOS
+
+서버에서 실행 중인 에이전트가 **내 Mac에서 명령을 실행하거나 파일을 수정**할 수 있습니다.
+
+1. SSH 호스트 목록에서 해당 서버의 **Reverse SSH** 토글을 켭니다.
+2. 준비가 끝나면 **Copy Client Command**를 누릅니다.
+3. 복사한 명령을 **서버 터미널에 붙여넣거나 서버의 에이전트에게 전달**합니다.
+4. 토글을 끄면 연결 중인 역방향 세션도 즉시 종료됩니다.
+
+Mac의 시스템 원격 로그인을 켤 필요는 없습니다. 토글을 켤 때마다 임시 키를 만들며,
+접속한 에이전트는 현재 Mac 사용자 권한으로 작업합니다. 서버에서 SSH 포트 포워딩을
+허용해야 하며, iPhone·iPad에는 이 기능이 표시되지 않습니다.
+
+여러 기기가 같은 서버 계정을 써도 각자의 Reverse SSH를 동시에 켤 수 있습니다.
+접속 명령은 토글을 켠 Crow의 SSH 연결에서 실행해야 합니다. 다른 SSH 연결이나
+`SSH_CONNECTION`이 없는 환경에서 실행하면 거절합니다. 서버가 이 정보를 제공하지
+않으면 Reverse SSH를 켤 수 없습니다. 기존 tmux 세션은 이전 연결 정보를 유지해
+거절될 수 있으므로 해당 Crow의 일반 서버 터미널에서 실행하세요. 이 검사는 다른 기기의
+명령을 실수로 쓰는 것을 막는 장치이며, 같은 계정 사용자의 고의적인 우회까지 차단하지는 않습니다.
+
+<details>
+<summary><strong>SSH 연결과 원격 파일 편집</strong></summary>
+
+iPhone·iPad에서 터미널 시작 폴더는 호스트의 **Remote folder** 설정을 따릅니다.
+`~`는 서버 사용자의 홈입니다. Windows SSH 서버가 WSL을 기본 셸로 여는 구성이면
+호스트 편집에서 **WSL default shell**을 켜세요. 이 옵션은 기존 호환 동작대로
+선택한 원격 프로젝트 폴더에서 터미널을 시작합니다. 변경 후에는 다시 접속하세요.
 
 Mac의 Crow 터미널에서 평소처럼 SSH 명령을 실행하면 됩니다.
 
@@ -91,7 +110,10 @@ Crow는 시스템 OpenSSH 설정과 에이전트, 키를 그대로 사용합니�
 사용하고 외부 변경을 감지하지만, SFTP v3의 교체 작업 자체는 원자적이지 않아
 동시에 같은 파일을 쓰는 다른 프로그램과 충돌할 수 있습니다.
 
-### 앱에서 SSH 키 생성·관리
+</details>
+
+<details>
+<summary><strong>SSH 키 생성·가져오기·관리</strong></summary>
 
 Mac, iPhone, iPad에서 Hosts 상단의 열쇠 버튼이나 **Settings → SSH Keys**를 엽니다.
 
@@ -111,7 +133,10 @@ Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.s
 기기 간 자동 동기화되지 않습니다. Mac에서 앱의 저장된 키를 선택하면 입력한
 호스트·포트로 직접 연결하며, 기존에 저장한 SSH 명령 옵션은 대체됩니다.
 
-## 편집과 입력 도구
+</details>
+
+<details>
+<summary><strong>파일 자동 갱신, 이미지 붙여넣기와 입력 도구</strong></summary>
 
 - 열어 둔 로컬·SSH 파일이 다른 프로그램에서 바뀌면 자동으로 갱신합니다.
   미저장 편집이 있으면 그대로 보존하고 외부 변경 안내와 다시 불러오기 버튼을 표시합니다.
@@ -129,11 +154,25 @@ Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.s
   약한 햅틱과 함께 문서는 위, 터미널은 아래에 배치된 열린 탭 그리드에서 선택할 수 있습니다.
 - iPad 워크스페이스 선택기는 Mac처럼 왼쪽 패널 하단에 있습니다. 오른쪽 패널의
   **Summary / Git** 탭에서 문서 목차와 SSH 작업 공간의 Git 상태를 확인합니다.
+  Git 탭은 볼트와 하위 폴더의 Git 프로젝트 목록을 먼저 보여줍니다. 볼트 자체가
+  저장소여도 프로젝트를 한 번 선택해야 브랜치와 변경 파일이 표시됩니다.
+  **Projects**로 목록에 돌아가 다른 저장소를 선택할 수 있습니다.
+  읽을 수 없는 하위 폴더가 있으면 안내와 함께 접근 가능한 저장소를 표시합니다.
   상단은 Mac과 같은 36pt 탭·패널 제목줄을 사용합니다.
+- 파일 탐색기의 **Show hidden files** 체크박스로 숨김 항목 표시와 검색을 켭니다.
+  SSH 프로젝트 폴더 선택창은 이 설정과 무관하게 숨김 폴더도 표시합니다.
+  **From Terminal…**에서 같은 작업 공간의 열린 터미널을 고르면 보고된 현재 폴더로 이동합니다.
+  새 SSH 터미널의 bash·zsh 셸은 폴더를 자동 보고하며, 경로가 아직 없는 터미널은 선택할 수 없습니다.
+  원격 프로젝트 선택 아이콘은 SSH 작업 공간에만 표시됩니다.
 - Mac의 좌측 패널 토글 왼쪽 **Float Window** 버튼으로 작은 창을 띄울 수 있습니다.
   다른 창이나 Space를 사용해도 위에 유지되며, 상단 **Restore Window** 버튼으로 원래 크기로 돌아갑니다.
 
-## 데이터와 보안
+파일 내용 검색에는 `contents:` 접두사를 사용합니다. 예: `contents:TODO`.
+
+</details>
+
+<details>
+<summary><strong>데이터 저장과 접근 권한</strong></summary>
 
 macOS 버전은 로컬 셸과 일반 개발 명령을 실행해야 하므로 App Sandbox를 사용하지
 않습니다. 신뢰할 수 있는 명령과 서버에만 연결하세요.
@@ -145,6 +184,10 @@ macOS 버전은 로컬 셸과 일반 개발 명령을 실행해야 하므로 App
 - 앱에 저장한 SSH 개인키와 인증 정보는 각 기기의 Keychain이 관리합니다.
   Mac 터미널의 SSH 명령은 시스템 OpenSSH 설정을 사용합니다.
 - 실행 중인 셸 프로세스와 SSH 연결은 앱 재시작 후 자동 복원되지 않습니다.
+- Reverse SSH를 끄면 임시 접속 권한을 폐기하고 서버의 접속 파일을 정리합니다.
+  서버 연결이 끊긴 상태라면 `.crow-client-…` 폴더가 남을 수 있지만 기존 명령으로 재접속할 수는 없습니다.
+
+</details>
 
 ## 개발하기
 
@@ -158,6 +201,9 @@ open Crow.xcodeproj
 ```
 
 Xcode에서 `Crow-macOS` 또는 `Crow-iOS` 스킴을 선택합니다.
+
+<details>
+<summary><strong>테스트 실행</strong></summary>
 
 핵심 로직 테스트:
 
@@ -187,10 +233,19 @@ xcodebuild test \
 설치된 시뮬레이터 이름에 맞게 destination을 변경하세요. 실제 iPhone·iPad 빌드는
 Apple 개발자 서명 팀이 필요합니다.
 
-## 배포 관리
+추가 터미널·레이아웃·Reverse SSH 검증은 [네이티브 스모크 테스트](Tools/NativeSmoke/README.md)를 참고하세요.
 
-Developer ID 서명, Apple 공증, DMG 생성, Sparkle appcast와 Homebrew Cask 갱신
-절차는 [배포 문서](docs/RELEASING.md)에 정리되어 있습니다.
+</details>
 
-터미널 렌더링에는 [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), iOS 및
-일부 SSH 연결에는 [Citadel](https://github.com/orlandos-nl/Citadel)을 사용합니다.
+| 문서 | 내용 |
+| --- | --- |
+| [Markdown 편집기](EditorWeb/README.md) | 웹 편집기 소스 수정과 번들 재생성 |
+| [앱 아이콘](Design/AppIcon/README.md) | 원본 아트워크와 플랫폼별 아이콘 내보내기 |
+| [macOS 배포](docs/RELEASING.md) | Developer ID 서명, 공증, DMG, Sparkle 및 Homebrew 갱신 |
+
+## 사용한 오픈소스
+
+[SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) ·
+[Citadel](https://github.com/orlandos-nl/Citadel) ·
+[Tiptap](https://github.com/ueberdosis/tiptap) ·
+[Sparkle](https://github.com/sparkle-project/Sparkle)

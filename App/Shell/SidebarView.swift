@@ -134,20 +134,11 @@ struct SidebarView: View {
             if model.sidebarPane == .files {
                 toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
                 toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
-                #if os(iOS)
-                Button {
-                    if model.hasWorkspace && model.selectedWorkspace.isRemote { choosingProject = true }
-                    else { model.folderImporterVisible = true }
-                } label: { toolbarIcon("folder") }
-                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Choose Folder")
-                    .accessibilityIdentifier("crow.files.choose-folder")
-                    .disabled(model.selectedWorkspace.connection == .connecting)
-                #else
-                if model.hasWorkspace && model.selectedWorkspace.isRemote {
+                if model.canChooseRemoteProject {
                     toolbarButton("Choose Remote Project Folder", symbol: "folder") { choosingProject = true }
+                        .accessibilityIdentifier("crow.files.choose-folder")
                         .disabled(model.selectedWorkspace.connection == .connecting)
                 }
-                #endif
                 Spacer(minLength: 0)
                     #if os(macOS)
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
@@ -206,6 +197,16 @@ struct SidebarView: View {
 
     private var filesList: some View {
         VStack(spacing: 0) {
+            Button { model.showHiddenFiles.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: model.showHiddenFiles ? "checkmark.square.fill" : "square")
+                    Text("Show hidden files").font(.system(size: 11))
+                    Spacer(minLength: 0)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).padding(.vertical, 6)
+            .accessibilityValue(model.showHiddenFiles ? "On" : "Off")
+            .accessibilityIdentifier("crow.files.show-hidden").windowDragExcluded()
             if model.selectedWorkspace.isRemote {
                 HStack(spacing: 6) {
                     if model.selectedWorkspace.connection == .connecting { ProgressView().controlSize(.mini) }
@@ -351,7 +352,7 @@ struct SidebarView: View {
                             .textSelection(.enabled).multilineTextAlignment(.center)
                             .windowDragExcluded()
                         if model.selectedWorkspace.isRemote && !explorer.searching {
-                            Text("The file browser folder is independent of the terminal's current directory. Hidden files are not shown.")
+                            Text("The file browser folder is independent of the terminal's current directory.")
                                 .font(.system(size: 11)).multilineTextAlignment(.center)
                             Button("Choose Project Folder…") { choosingProject = true }
                                 .accessibilityIdentifier("crow.empty-choose-project")
@@ -651,7 +652,7 @@ struct CopyClientCommandButton: View {
         }
         .buttonStyle(CrowButtonStyle())
         .accessibilityLabel(title).accessibilityIdentifier("crow.reverse-ssh-copy")
-        .help("Run this command on the SSH server. Append a command to execute it on this Mac.")
+        .help("Run this command in the Crow SSH connection that enabled Reverse SSH. Append a command to execute it on this Mac.")
         .task(id: feedbackID) {
             guard feedbackID != nil else { return }
             do { try await Task.sleep(for: .milliseconds(1600)); copied = nil }
@@ -673,6 +674,7 @@ struct RemoteProjectFolderPicker: View {
     @State private var loading = false
     @State private var error: String?
     @State private var request: Task<Void, Never>?
+    @State private var choosingTerminal = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -687,6 +689,8 @@ struct RemoteProjectFolderPicker: View {
                 TextField("Remote folder path", text: $path).textFieldStyle(.roundedBorder).onSubmit { browse(path) }
                 Button("Go") { browse(path) }
             }
+            Button { choosingTerminal = true } label: { Label("From Terminal…", systemImage: "terminal") }
+                .accessibilityIdentifier("crow.project.from-terminal")
             List(folders) { folder in
                 Button { browse(folder.path) } label: {
                     Label(folder.name, systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -714,6 +718,32 @@ struct RemoteProjectFolderPicker: View {
         .padding(20).frame(minWidth: 380, idealWidth: 520, minHeight: 360, idealHeight: 440)
         .onAppear { browse(initialPath) }
         .onDisappear { request?.cancel() }
+        .sheet(isPresented: $choosingTerminal) {
+            NavigationStack {
+                List {
+                    ForEach(model.remoteTerminals(in: workspaceID)) { terminal in
+                        Button {
+                            guard terminal.running, let directory = terminal.currentDirectory else { return }
+                            choosingTerminal = false; browse(directory)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label(terminal.title, systemImage: "terminal")
+                                Text(terminal.currentDirectory ?? "Waiting for the shell to report its folder")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .disabled(terminal.currentDirectory == nil)
+                        .accessibilityIdentifier("crow.project.terminal.\(terminal.id)")
+                    }
+                }
+                .overlay {
+                    if model.remoteTerminals(in: workspaceID).isEmpty { Text("No open terminals for this SSH workspace").foregroundStyle(.secondary).padding() }
+                }
+                .navigationTitle("Choose Terminal")
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { choosingTerminal = false } } }
+            }
+            .frame(minWidth: 320, minHeight: 280)
+        }
     }
     private func browse(_ requested: String) {
         request?.cancel(); loading = true; error = nil; folders = []; loadedPath = nil; path = requested

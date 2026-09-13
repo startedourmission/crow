@@ -102,6 +102,24 @@ final class SSHIntegrationTests: XCTestCase {
         try Data("changed".utf8).write(to: repository.appendingPathComponent("changed file.txt"))
         let remoteGit = try await connection.gitStatus(path: repository.path)
         let localGit = try await GitRepository.read(path: repository.path)
+        let discovered = try await connection.gitProjects(path: root.path)
+        XCTAssertTrue(discovered.paths.contains { URL(fileURLWithPath: $0).resolvingSymlinksInPath() == repository.resolvingSymlinksInPath() })
+        let selfDiscovered = try await connection.gitProjects(path: repository.path)
+        XCTAssertEqual(selfDiscovered.paths.count, 1, "A repository vault must remain available as a selectable project")
+        let deniedFolder = root.appendingPathComponent("unreadable")
+        try FileManager.default.createDirectory(at: deniedFolder, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: deniedFolder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: deniedFolder.path) }
+        let partialProjects = try await connection.gitProjects(path: root.path)
+        XCTAssertEqual(partialProjects.paths, discovered.paths)
+        XCTAssertNotNil(partialProjects.warning)
+        do {
+            _ = try await connection.list(deniedFolder.path)
+            XCTFail("An unreadable folder must fail")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("SFTP 3"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains(deniedFolder.path), error.localizedDescription)
+        }
         XCTAssertEqual(URL(fileURLWithPath: remoteGit.root).resolvingSymlinksInPath(), repository.resolvingSymlinksInPath())
         XCTAssertEqual(remoteGit.status, localGit.status)
         XCTAssertTrue(remoteGit.status.branch.contains("crow-fixture"))
@@ -137,13 +155,16 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(session.running, session.status)
         session.send(source: session.view, data: Array("printf '__SSH_%s__\\n' WORKS\n".utf8)[...])
         var found = false
+        var lastScreen = ""
         for _ in 0..<100 {
             let terminal = session.view.getTerminal()
             let screen = (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined()
+            lastScreen = screen
             if screen.contains("__SSH_WORKS__") { found = true; break }
             try await Task.sleep(for: .milliseconds(50))
         }
-        XCTAssertTrue(found, "The SSH PTY must execute commands and stream their output")
+        XCTAssertTrue(found, "The SSH PTY must execute commands and stream their output: \(session.status)\n\(lastScreen)")
+        XCTAssertEqual(session.currentDirectory, root.path)
         session.stop(); await connection.disconnect()
 
         try SecureStore.set(Data("changed key".utf8), for: account)
