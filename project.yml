@@ -37,6 +37,30 @@ targetTemplates:
         excludes:
           - Editor/markdown-editor.js
           - Editor/MarkdownEditor-LICENSES.txt
+          - Screen/screen.html
+          - Screen/screen-client.js
+          - Screen/noVNC-LICENSE.txt
+          - Screen/noVNC-MPL-2.0.txt
+          - Screen/noVNC-BSD-3-Clause.txt
+          - Screen/noVNC-BSD-2-Clause.txt
+          - Screen/noVNC-pako-LICENSE.txt
+          - Screen/noVNC-AUTHORS.txt
+      - path: App/Screen/screen.html
+        buildPhase: resources
+      - path: App/Screen/screen-client.js
+        buildPhase: resources
+      - path: App/Screen/noVNC-LICENSE.txt
+        buildPhase: resources
+      - path: App/Screen/noVNC-MPL-2.0.txt
+        buildPhase: resources
+      - path: App/Screen/noVNC-BSD-3-Clause.txt
+        buildPhase: resources
+      - path: App/Screen/noVNC-BSD-2-Clause.txt
+        buildPhase: resources
+      - path: App/Screen/noVNC-pako-LICENSE.txt
+        buildPhase: resources
+      - path: App/Screen/noVNC-AUTHORS.txt
+        buildPhase: resources
       - path: App/Editor/markdown-editor.js
         buildPhase: resources
       - path: App/Editor/MarkdownEditor-LICENSES.txt

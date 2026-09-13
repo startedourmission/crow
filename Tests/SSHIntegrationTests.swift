@@ -86,6 +86,23 @@ final class SSHIntegrationTests: XCTestCase {
         defer { Task { await connection.disconnect() } }
         let resolved = try await connection.realPath(root.path)
         XCTAssertEqual(URL(fileURLWithPath: resolved).resolvingSymlinksInPath(), root.resolvingSymlinksInPath())
+        let screenServer = Process()
+        screenServer.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        let fixtureScript = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Tools/ScreenClient/vnc-fixture.py")
+        let screenPortFile = root.appendingPathComponent("vnc-port")
+        let screenEvents = root.appendingPathComponent("vnc-events").path
+        screenServer.arguments = ["python3", fixtureScript.path, screenPortFile.path, screenEvents]
+        try screenServer.run()
+        defer { if screenServer.isRunning { screenServer.terminate(); screenServer.waitUntilExit() } }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: screenPortFile.path) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let screenPort = try XCTUnwrap(Int(String(contentsOf: screenPortFile, encoding: .utf8)))
+        let screenState = WorkspaceState(.init(workspace: Workspace(name: "Screen fixture",
+            kind: .remote(hostID: host.id, path: root.path), connection: .connected), rootPath: root.path))
+        screenState.remote = connection
+        try await ScreenIntegrationChecks.verify(in: screenState, port: screenPort, events: screenEvents)
         func verifyImage(_ path: String) throws {
             let url = URL(fileURLWithPath: path)
             defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -217,6 +234,7 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertEqual(model.hosts.first?.port, port)
         XCTAssertFalse(model.hostEditorVisible)
         let native = try XCTUnwrap(imported.remote)
+        try await ScreenIntegrationChecks.verify(in: imported, port: screenPort, events: screenEvents)
         try verifyImage(await native.uploadClipboardImage(InputToolsTests.png))
         XCTAssertNotNil(localTerminal.imagePasteContext?(), "A manually typed SSH command must associate image paste with its own terminal")
         let closedChannel = try SystemSFTP(spec: XCTUnwrap(imported.systemSSH))

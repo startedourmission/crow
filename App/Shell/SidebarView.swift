@@ -135,6 +135,9 @@ struct SidebarView: View {
                 toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
                 toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
                 if model.canChooseRemoteProject {
+                    toolbarButton("Server Screen", symbol: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }
+                        .disabled(model.selectedWorkspace.connection != .connected)
+                        .accessibilityIdentifier("crow.files.server-screen")
                     toolbarButton("Choose Remote Project Folder", symbol: "folder") { choosingProject = true }
                         .accessibilityIdentifier("crow.files.choose-folder")
                         .disabled(model.selectedWorkspace.connection == .connecting)

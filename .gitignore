@@ -37,6 +37,9 @@ Packages/CrowCore/.swiftpm/
 *.mobileprovision
 *.provisionprofile
 
+# JavaScript dependencies
+node_modules/
+
 # Python helper caches
 __pycache__/
 *.py[cod]

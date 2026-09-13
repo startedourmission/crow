@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'">
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#17191e;color:#eef0f4;font:14px -apple-system,sans-serif}
+body{display:flex;flex-direction:column}#display{flex:1;min-height:0;overflow:hidden}
+#controls{padding:8px;display:flex;gap:8px;align-items:center;overflow-x:auto;flex-shrink:0;background:#272b33}
+button,input{font:inherit;border:1px solid #59606d;border-radius:6px;background:#363c47;color:inherit;padding:9px}
+button,label{white-space:nowrap}label{display:flex;align-items:center;gap:4px}#text{min-width:130px;flex:1}
+</style></head><body>
+<div id="display" aria-label="Remote server screen"></div>
+<div id="controls">
+<label><input type="checkbox" id="view-only">View only</label>
+<label title="Uncheck to show actual pixels and drag to pan"><input type="checkbox" id="fit" checked>Fit</label>
+<button data-key="65307">Esc</button><button data-key="65289">Tab</button>
+<button data-key="65293">Enter</button><button data-key="65288">⌫</button>
+<button data-key="65361">←</button><button data-key="65362">↑</button><button data-key="65364">↓</button><button data-key="65363">→</button>
+<button id="secure-attention">Ctrl+Alt+Del</button>
+<input id="text" aria-label="Text to type on server" placeholder="Text to type…" autocapitalize="off" autocomplete="off" spellcheck="false">
+<button id="type">Type</button>
+</div>
+<script src="screen-client.js"></script></body></html>

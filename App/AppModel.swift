@@ -4,6 +4,8 @@ import Observation
 import SwiftUI
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 struct WorkspaceTabDrag: Codable, Equatable {
@@ -80,6 +82,13 @@ final class AppModel {
     var pendingHostEditor = false
     var pendingHostConnection: SSHHost?
     var settingsVisible = false
+    var screenRequest: ScreenRequest?
+    #if os(iOS)
+    @ObservationIgnored private var backgroundSSH = Set<WorkspaceID>()
+    @ObservationIgnored private var backgroundTime: UIBackgroundTaskIdentifier = .invalid
+    @ObservationIgnored private var backgroundKeepalive: Task<Void, Never>?
+    @ObservationIgnored private var foregroundChecks: [WorkspaceID: Task<Void, Never>] = [:]
+    #endif
     var sshKeysVisible = false
     var sshCommandVisible = false
     var credentialRequest: SSHHost?
@@ -981,7 +990,7 @@ final class AppModel {
         schedulePersist()
     }
 
-    func connect(_ host: SSHHost) {
+    func connect(_ host: SSHHost, select: Bool = true) {
         #if os(macOS)
         if let arguments = host.commandArguments {
             Task {
@@ -1000,9 +1009,9 @@ final class AppModel {
                 kind: .remote(hostID: host.id, path: host.remotePath), connection: .disconnected), rootPath: host.remotePath))
             states.append(state)
         }
-        selectWorkspace(state.id, showFiles: false)
+        if select { selectWorkspace(state.id, showFiles: false) }
         #if os(iOS)
-        compactSurface = .terminal; terminalVisible = true
+        if select { compactSurface = .terminal; terminalVisible = true }
         #endif
         if state.snapshot.workspace.connection == .connected || state.snapshot.workspace.connection == .connecting { return }
         state.snapshot.workspace.name = host.name; state.snapshot.workspace.connection = .connecting
@@ -1015,6 +1024,9 @@ final class AppModel {
                         guard let state, state.remote === connection else { return }
                         state.snapshot.workspace.connection = .disconnected; state.stopTerminals()
                         self?.statusMessage = "Connection closed — reconnect to start a new shell."
+                        #if os(iOS)
+                        if self?.fileRefreshPaused == false { self?.recoverBackgroundSSH(state) }
+                        #endif
                     }
                 }
                 let root = try await connection.realPath(state.snapshot.rootPath)
@@ -1071,6 +1083,10 @@ final class AppModel {
     }
     #endif
     private func disconnect(_ state: WorkspaceState, stopReverseSSH: Bool = true) {
+        #if os(iOS)
+        backgroundSSH.remove(state.id)
+        foregroundChecks.removeValue(forKey: state.id)?.cancel()
+        #endif
         #if os(macOS)
         if stopReverseSSH, case .remote(let id, _) = state.snapshot.workspace.kind { reverseSSHConnections[id]?.stop() }
         state.systemSSH = nil
@@ -1167,16 +1183,87 @@ final class AppModel {
             selectedWorkspaceID: selectedWorkspaceID, settings: settings), to: sessionURL) }
         catch { report(error) }
     }
-    func suspend() { fileRefreshPaused = true; persist() }
+    func suspend() {
+        fileRefreshPaused = true; persist()
+        #if os(iOS)
+        foregroundChecks.values.forEach { $0.cancel() }; foregroundChecks.removeAll()
+        guard backgroundTime == .invalid else { return }
+        backgroundSSH.formUnion(states.filter { $0.snapshot.workspace.isRemote && $0.snapshot.workspace.connection == .connected }.map(\.id))
+        guard !backgroundSSH.isEmpty else { return }
+        backgroundTime = UIApplication.shared.beginBackgroundTask(withName: "Keep SSH connections alive") { [weak self] in
+            MainActor.assumeIsolated { self?.endBackgroundTime() }
+        }
+        backgroundKeepalive = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                guard let self, fileRefreshPaused else { return }
+                for state in states where backgroundSSH.contains(state.id) {
+                    guard !Task.isCancelled, let remote = state.remote, remote.isConnected else { continue }
+                    _ = try? await remote.revision(".")
+                }
+            }
+        }
+        #endif
+    }
     func resume() {
         fileRefreshPaused = false; observedFileRevisions.removeAll()
-        refreshFiles()
+        #if os(iOS)
+        endBackgroundTime()
+        for state in states where backgroundSSH.contains(state.id) {
+            guard let remote = state.remote, remote.isConnected else { recoverBackgroundSSH(state); continue }
+            foregroundChecks[state.id]?.cancel()
+            foregroundChecks[state.id] = Task { [weak self, weak state] in
+                guard let self, let state else { return }
+                let timeout = Task { [weak self, weak state] in
+                    do { try await Task.sleep(for: .seconds(8)) } catch { return }
+                    guard let self, let state, state.remote === remote else { return }
+                    recoverBackgroundSSH(state)
+                }
+                defer { timeout.cancel() }
+                do {
+                    try await withTaskCancellationHandler {
+                        _ = try await remote.revision(".")
+                    } onCancel: { timeout.cancel() }
+                    guard !Task.isCancelled, state.remote === remote else { return }
+                    backgroundSSH.remove(state.id)
+                    foregroundChecks[state.id] = nil
+                } catch {
+                    guard !Task.isCancelled, state.remote === remote else { return }
+                    recoverBackgroundSSH(state)
+                }
+            }
+        }
+        #else
         for state in states where state.snapshot.workspace.isRemote {
             if state.remote?.isConnected == false { disconnect(state) }
         }
+        #endif
+        refreshFiles()
     }
+    #if os(iOS)
+    private func endBackgroundTime() {
+        backgroundKeepalive?.cancel(); backgroundKeepalive = nil
+        if backgroundTime != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTime); backgroundTime = .invalid
+        }
+        // Let iOS suspend the app when its grant expires. Do not close live SSH sockets.
+    }
+    private func recoverBackgroundSSH(_ state: WorkspaceState) {
+        guard !fileRefreshPaused, backgroundSSH.contains(state.id),
+              states.contains(where: { $0 === state }),
+              case .remote(let hostID, _) = state.snapshot.workspace.kind,
+              let host = hosts.first(where: { $0.id == hostID }) else { return }
+        disconnect(state)
+        connect(host, select: false)
+    }
+    #endif
     func shutdown() {
         fileRefreshPaused = true
+        #if os(iOS)
+        endBackgroundTime()
+        foregroundChecks.values.forEach { $0.cancel() }; foregroundChecks.removeAll()
+        backgroundSSH.removeAll()
+        #endif
         #if os(macOS)
         reverseSSHConnections.values.forEach { $0.stop() }
         sshBridge?.stop(); sshBridge = nil

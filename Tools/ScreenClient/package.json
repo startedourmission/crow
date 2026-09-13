@@ -1,0 +1,9 @@
+{
+  "name": "crow-screen-client",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": { "@novnc/novnc": "1.7.0" },
+  "devDependencies": { "esbuild": "0.25.12" }
+}

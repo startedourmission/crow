@@ -40,6 +40,15 @@ struct CrowRootView: View {
             model.finishHostEditorDismissal()
         }) { HostEditorView(host: model.editingHost).environment(model) }
         .sheet(isPresented: Bindable(model).settingsVisible) { CrowSettingsView().environment(model) }
+        #if os(iOS)
+        .fullScreenCover(item: Bindable(model).screenRequest) { request in
+            RemoteScreenView(workspaceID: request.id).environment(model)
+        }
+        #else
+        .sheet(item: Bindable(model).screenRequest) { request in
+            RemoteScreenView(workspaceID: request.id).environment(model)
+        }
+        #endif
         .sheet(isPresented: Bindable(model).sshKeysVisible) { SSHKeysView().environment(model) }
         .sheet(isPresented: Bindable(model).sshCommandVisible, onDismiss: {
             if model.pendingHostEditor { model.pendingHostEditor = false; model.hostEditorVisible = true }
@@ -489,6 +498,11 @@ private struct PhoneWorkspaceBar: View {
     }
 
     @ViewBuilder private var generalMenu: some View {
+        if model.selectedWorkspace.isRemote {
+            Button("Server Screen", systemImage: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }
+                .disabled(model.selectedWorkspace.connection != .connected)
+                .accessibilityIdentifier("crow.phone.server-screen")
+        }
         Button("Settings…", systemImage: "gearshape") { model.settingsVisible = true }
             .accessibilityIdentifier("crow.phone.settings")
     }

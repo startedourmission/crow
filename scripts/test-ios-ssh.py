@@ -63,17 +63,26 @@ LogLevel ERROR
         with (root / "sshd.log").open("w") as log:
             server = subprocess.Popen(["/usr/sbin/sshd", "-D", "-e", "-f", str(root / "sshd_config")],
                                       stdout=log, stderr=log)
+        screen = subprocess.Popen(["python3", str(repo / "Tools/ScreenClient/vnc-fixture.py"),
+                                   str(root / "vnc-port"), str(root / "vnc-events")])
         try:
             time.sleep(0.3)
             if server.poll() is not None:
                 raise RuntimeError((root / "sshd.log").read_text())
+            for _ in range(100):
+                if (root / "vnc-port").exists():
+                    break
+                time.sleep(0.05)
             fixture = fixture_path()
             fixture.parent.mkdir(parents=True, exist_ok=True)
             fixture.write_text(json.dumps({"port": port, "username": username,
-                "privateKey": (root / "user-key").read_text(), "directory": str(project)}))
+                "privateKey": (root / "user-key").read_text(), "directory": str(project),
+                "screenPort": int((root / "vnc-port").read_text()), "screenEvents": str(root / "vnc-events")}))
             subprocess.run(build + ["test-without-building", "-quiet",
                 "-only-testing:CrowTests/IOSTerminalIntegrationTests"], cwd=repo, check=True)
         finally:
+            screen.terminate()
+            screen.wait(timeout=5)
             try:
                 fixture_path().unlink(missing_ok=True)
             finally:

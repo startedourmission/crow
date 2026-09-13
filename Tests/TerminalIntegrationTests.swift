@@ -143,6 +143,8 @@ final class IOSTerminalIntegrationTests: XCTestCase {
             var username: String
             var privateKey: String
             var directory: String
+            var screenPort: Int
+            var screenEvents: String
         }
         let fixtureURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
             .appendingPathComponent("crow-ios-ssh-fixture.json")
@@ -228,6 +230,31 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         session.view.insertText("\n")
         try await wait("Restored SSH terminal lost keyboard input") { screen().contains("__IOS_RETURNED__") }
 
+        model.suspend()
+        XCTAssertTrue(remote.isConnected)
+        XCTAssertTrue(session.running)
+        model.resume()
+        session.view.insertText("printf '__BACKGROUND_%s__\\n' RETURNED\n")
+        try await wait("A short background transition must preserve the original shell") { screen().contains("__BACKGROUND_RETURNED__") }
+        XCTAssertTrue(model.current.remote === remote)
+        XCTAssertTrue(model.current.terminals[id] === session)
+        try await ScreenIntegrationChecks.verify(in: model.current, port: fixture.screenPort, events: fixture.screenEvents)
+
+        let backgroundState = model.current
+        let localID = try XCTUnwrap(model.states.first(where: { !$0.snapshot.workspace.isRemote })?.id)
+        model.selectWorkspace(localID)
+        model.compactSurface = .files
+        model.suspend()
+        await remote.disconnect() // Simulate a socket lost while iOS suspends the app.
+        model.resume()
+        try await wait("A lost background SSH connection must reconnect") {
+            backgroundState.remote !== remote && backgroundState.snapshot.workspace.connection == .connected
+        }
+        XCTAssertEqual(model.selectedWorkspaceID, localID, "Recovery must not switch the selected workspace")
+        XCTAssertEqual(model.compactSurface, .files, "Recovery must not force the terminal screen")
+        model.selectWorkspace(backgroundState.id)
+        model.compactSurface = .terminal
+
         // A restored explorer project must not override the host's new shell start folder.
         host.remotePath = "~"
         try model.storeHost(host, credential: HostCredential(privateKey: fixture.privateKey))
@@ -268,6 +295,12 @@ final class IOSTerminalIntegrationTests: XCTestCase {
             GitProjectStatusView(path: repository.root + "/missing-project", refreshID: UUID(), status: failedGitState).environment(model))
         try await wait("Failed Git status must display an error instead of remaining blank") { failedGitState.error != nil }
         XCTAssertNil(failedGitState.repository)
+
+        model.suspend()
+        model.disconnect(host)
+        model.resume()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.connectionState(for: host), .disconnected, "An explicit disconnect must never auto-reconnect")
 
     }
 
