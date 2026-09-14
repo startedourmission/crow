@@ -178,10 +178,10 @@ struct AgentWorkspaceBrowser: View {
         let selected = model.selectedWorkspaceID == state.id && model.selectedTerminalID(in: state) == id
         let activity = agent != nil && session?.running == true ? session?.agentActivity : nil
         let statusColor: Color = switch activity {
-        case .working: CrowTheme.accent
+        case .working: .green
         case .needsInput: .orange
         case .idle: CrowTheme.textDim
-        default: session?.running == true ? .green : CrowTheme.textDim
+        default: agent == nil && session?.running == true ? .green : CrowTheme.textDim
         }
         return Button { model.openAgentTerminal(id, workspaceID: state.id); onOpen?() } label: {
             HStack(spacing: 7) {
