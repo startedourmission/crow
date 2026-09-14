@@ -7,6 +7,24 @@ import SwiftUI
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testBundledHistoryReaderStaysInRequestedWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-empty-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let result = try await AgentHistoryService.list(in: model.current)
+        XCTAssertTrue(result.sessions.isEmpty, "Other folders' conversations must not appear in this workspace")
+    }
+
+    @MainActor func testResourceSamplingAndSleepAssertionLifecycle() {
+        let status = DeviceStatusState()
+        status.sampleResources()
+        XCTAssertGreaterThan(status.memory, 0)
+        XCTAssertGreaterThanOrEqual(status.cpu, 0)
+        status.toggleAwake()
+        XCTAssertTrue(status.awake); XCTAssertNil(status.error)
+        if status.awake { status.toggleAwake() }
+        XCTAssertFalse(status.awake)
+    }
     @MainActor func testOnlyWorkingSessionsAskBeforeClosing() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-close-state-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

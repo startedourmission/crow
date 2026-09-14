@@ -1424,7 +1424,7 @@ final class AppModel {
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: directory,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
         if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {
-            session.launchCommand = agent.provider.command(directory: agent.directory)
+            session.launchCommand = agent.command
             session.agentProvider = agent.provider
         }
         session.imagePasteContext = { [weak self, weak state] in

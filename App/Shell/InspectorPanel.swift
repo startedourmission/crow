@@ -24,14 +24,14 @@ struct InspectorPanel: View {
     }
 
     private var buffer: OpenBuffer? { model.inspectedBuffer }
-    private let tabs = ["Summary", "Git"]
+    private let tabs = ["Summary", "Git", "Agents"]
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 ForEach(tabs, id: \.self) { item in
                     Button { tab = item } label: {
-                        Label(item, systemImage: item == "Summary" ? "list.bullet.indent" : "point.3.connected.trianglepath.dotted")
+                        Label(item, systemImage: item == "Summary" ? "list.bullet.indent" : item == "Agents" ? "bubble.left.and.bubble.right" : "point.3.connected.trianglepath.dotted")
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
                             .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
                     }.windowDragExcluded()
@@ -46,7 +46,7 @@ struct InspectorPanel: View {
             .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).frame(height: 36)
             .windowDragBackground()
             CrowDivider()
-            if tab == "Summary" { summary } else { git }
+            if tab == "Summary" { summary } else if tab == "Agents" { AgentHistoryPanel() } else { git }
         }
         .background(CrowTheme.bg1)
         .crowForeground(CrowTheme.text)

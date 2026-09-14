@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A3A5398FCAB46E8108282E4 /* agent-history.py in Resources */ = {isa = PBXBuildFile; fileRef = 63C347D69D6830A362C6F7AB /* agent-history.py */; };
+		969C634BFE996D15036CBEDB /* agent-history.py in Resources */ = {isa = PBXBuildFile; fileRef = 63C347D69D6830A362C6F7AB /* agent-history.py */; };
+		A13B7A70A6A248562203EED9 /* DeviceStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CB15BEDEF5D698ADAC07E7 /* DeviceStatusView.swift */; };
+		4B46347832991BADBBE0C8B0 /* DeviceStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CB15BEDEF5D698ADAC07E7 /* DeviceStatusView.swift */; };
+		093C0128B740030DA147127A /* AgentHistoryPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0DDC1195D87A9833F9A0E5 /* AgentHistoryPanel.swift */; };
+		2C7E56ED20D3516342EE5F75 /* AgentHistoryPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0DDC1195D87A9833F9A0E5 /* AgentHistoryPanel.swift */; };
 		0487294D85B3CE9CAB9DDC10 /* AutomationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9449B99AFAA9424C7A088E70 /* AutomationTests.swift */; };
 		32877039147A8A2E5E1261CE /* AutomationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9449B99AFAA9424C7A088E70 /* AutomationTests.swift */; };
 		455B2AFA09F3335B4FD65885 /* AutomationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C304FF958FA342E331C730F /* AutomationPanel.swift */; };
@@ -190,6 +196,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		63C347D69D6830A362C6F7AB /* agent-history.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = "App/Agents/agent-history.py"; sourceTree = SOURCE_ROOT; };
+		B0CB15BEDEF5D698ADAC07E7 /* DeviceStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Shell/DeviceStatusView.swift"; sourceTree = SOURCE_ROOT; };
+		3F0DDC1195D87A9833F9A0E5 /* AgentHistoryPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Agents/AgentHistoryPanel.swift"; sourceTree = SOURCE_ROOT; };
 		9449B99AFAA9424C7A088E70 /* AutomationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Tests/AutomationTests.swift"; sourceTree = SOURCE_ROOT; };
 		1C304FF958FA342E331C730F /* AutomationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Automation/AutomationPanel.swift"; sourceTree = SOURCE_ROOT; };
 		CB2C4057EF9EFC660DB671BE /* AutomationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Automation/AutomationService.swift"; sourceTree = SOURCE_ROOT; };
@@ -390,6 +399,9 @@
 				E96BC28F84DDB402A78D73B9 /* AgentWorkspaceBrowser.swift */,
 				CB2C4057EF9EFC660DB671BE /* AutomationService.swift */,
 				1C304FF958FA342E331C730F /* AutomationPanel.swift */,
+				3F0DDC1195D87A9833F9A0E5 /* AgentHistoryPanel.swift */,
+				B0CB15BEDEF5D698ADAC07E7 /* DeviceStatusView.swift */,
+				63C347D69D6830A362C6F7AB /* agent-history.py */,
 				2612E983B79CB4122B97FE5F /* TmuxModel.swift */,
 				9AB6458511DB09FD5C48000E /* TmuxPanel.swift */,
 				0FEEE4A3561B20E2D72EF908 /* Editor */,
@@ -608,6 +620,7 @@
 				75C51A84756BB865D20F817B /* MarkdownEditor-LICENSES.txt in Resources */,
 				C7061386EE590421187C2662 /* markdown-editor.js in Resources */,
 				9CC934004CD1401189A8D402 /* obsidian-preview.css in Resources */,
+				969C634BFE996D15036CBEDB /* agent-history.py in Resources */,
 				A559D921738743AF8CB82522 /* obsidian-preview.js in Resources */,
 				5DFA447ACDEE32322ED5D776 /* noVNC-AUTHORS.txt in Resources */,
 				5213FCEAC768AC7DED943F60 /* noVNC-BSD-2-Clause.txt in Resources */,
@@ -628,6 +641,7 @@
 				625238F79BADC8151633A02F /* MarkdownEditor-LICENSES.txt in Resources */,
 				2AB4FD069ED3F003092DA0D9 /* markdown-editor.js in Resources */,
 				F4E3C6166A4246FD9806D1D9 /* obsidian-preview.css in Resources */,
+				5A3A5398FCAB46E8108282E4 /* agent-history.py in Resources */,
 				EB8ED59C2C5147E89E4D4385 /* obsidian-preview.js in Resources */,
 				C3F5D11C3487825586550ED1 /* noVNC-AUTHORS.txt in Resources */,
 				31C17969C3E60F58894C240E /* noVNC-BSD-2-Clause.txt in Resources */,
@@ -652,6 +666,8 @@
 				52501C51E63A0AF954373A6E /* AgentWorkspaceBrowser.swift in Sources */,
 				1D6814FE524B517807379A16 /* AutomationService.swift in Sources */,
 				DBE2CEC4C3943466BF30AEDB /* AutomationPanel.swift in Sources */,
+				2C7E56ED20D3516342EE5F75 /* AgentHistoryPanel.swift in Sources */,
+				4B46347832991BADBBE0C8B0 /* DeviceStatusView.swift in Sources */,
 				A84E8FC972A79290620BE741 /* TmuxModel.swift in Sources */,
 				AA8ED1A7FB72C6DA0BFFB0F0 /* TmuxPanel.swift in Sources */,
 				73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */,
@@ -730,6 +746,8 @@
 				EC95A1359A1C99CC87BD7B5B /* AgentWorkspaceBrowser.swift in Sources */,
 				3B83C21DB7CB20C79D3B6840 /* AutomationService.swift in Sources */,
 				455B2AFA09F3335B4FD65885 /* AutomationPanel.swift in Sources */,
+				093C0128B740030DA147127A /* AgentHistoryPanel.swift in Sources */,
+				A13B7A70A6A248562203EED9 /* DeviceStatusView.swift in Sources */,
 				299FBC8BF7B03C70E63DA863 /* TmuxModel.swift in Sources */,
 				CBA1524288930F804747BCC3 /* TmuxPanel.swift in Sources */,
 				D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */,

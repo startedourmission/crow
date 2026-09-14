@@ -26,6 +26,15 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
     public var directory: String
     public var name = ""
     public var isPinned = false
+    public var sessionID: String?
+    public var forkSession: Bool?
+    public var command: String {
+        guard let sessionID else { return provider.command(directory: directory) }
+        let resume: [String] = provider == .codex ? [forkSession == true ? "fork" : "resume", sessionID]
+            : ["--resume", sessionID] + (forkSession == true ? ["--fork-session"] : [])
+        return TerminalCommand.environment + "cd " + TerminalCommand.path(directory) + " && exec "
+            + ([provider.rawValue] + resume + provider.arguments).map(TerminalCommand.quote).joined(separator: " ")
+    }
     public var title: String { name.isEmpty ? provider.title : name }
     public init(provider: AgentProvider, directory: String) { self.provider = provider; self.directory = directory }
 }

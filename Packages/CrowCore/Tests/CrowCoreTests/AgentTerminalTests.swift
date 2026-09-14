@@ -2,6 +2,21 @@ import XCTest
 @testable import CrowCore
 
 final class AgentTerminalTests: XCTestCase {
+    func testResumeAndForkKeepCliHistoryAndSurviveRestoration() throws {
+        for provider in AgentProvider.allCases {
+            var session = AgentTerminal(provider: provider, directory: "/tmp/project ' name")
+            let legacy = try JSONEncoder().encode(session)
+            XCTAssertNil(try JSONDecoder().decode(AgentTerminal.self, from: legacy).sessionID)
+            session.sessionID = "11111111-1111-4111-8111-111111111111"
+            session.forkSession = true
+            let restored = try JSONDecoder().decode(AgentTerminal.self, from: JSONEncoder().encode(session))
+            XCTAssertEqual(restored.sessionID, session.sessionID)
+            XCTAssertEqual(restored.forkSession, true)
+            XCTAssertTrue(restored.command.contains(provider == .codex ? "'fork'" : "'--fork-session'"))
+            XCTAssertTrue(restored.command.contains(TerminalCommand.quote(session.directory)))
+            XCTAssertTrue(restored.command.contains(TerminalCommand.quote(provider.arguments[0])))
+        }
+    }
     func testHostConnectionRecencyRoundTripsAndOlderHostsStillDecode() throws {
         var host = SSHHost(name: "Server", hostname: "192.0.2.8", username: "fixture")
         XCTAssertNil(try JSONDecoder().decode(SSHHost.self, from: JSONEncoder().encode(host)).lastConnectedAt)

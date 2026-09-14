@@ -33,6 +33,18 @@ import WebKit
     }
 
     #if os(macOS)
+    func testFolderPathNativeTabCompletesAndMovesPicker() async throws {
+        let folder = root.appendingPathComponent("Project One")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let panel = NSOpenPanel()
+        let value = FolderPathCompletion(panel: panel, initialDirectory: root.path)
+        value.path = root.path + "/Pro"
+        await value.refresh()
+        let delegate = FolderPathInput.Coordinator(completion: value)
+        XCTAssertTrue(delegate.control(NSTextField(), textView: NSTextView(), doCommandBy: #selector(NSResponder.insertTab(_:))))
+        XCTAssertEqual(value.path, root.path + "/Project One/")
+        XCTAssertEqual(panel.directoryURL?.resolvingSymlinksInPath().path, folder.resolvingSymlinksInPath().path)
+    }
     func testFolderPathSuggestionsSupportTildeSpacesAndFoldersOnly() throws {
         for name in ["Project One", "Project Two", ".private"] {
             try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)

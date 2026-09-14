@@ -729,9 +729,10 @@ private struct FolderPickerPresentation: ViewModifier {
         self.panel = panel
         path = (initialDirectory?.isEmpty == false ? initialDirectory! : FileManager.default.homeDirectoryForCurrentUser.path) + "/"
         panel.directoryURL = URL(fileURLWithPath: path)
-        observation = panel.observe(\.directoryURL) { [weak self] panel, _ in
-            let value = panel.directoryURL?.path
-            Task { @MainActor in if let value { self?.path = value + (value == "/" ? "" : "/") } }
+        observation = panel.observe(\.directoryURL) { [weak self] _, _ in
+            Task { @MainActor in
+                if let value = self?.panel?.directoryURL?.path { self?.path = value + (value == "/" ? "" : "/") }
+            }
         }
     }
     nonisolated static func suggestions(for input: String, home: String = FileManager.default.homeDirectoryForCurrentUser.path) throws -> [String] {
@@ -772,12 +773,7 @@ struct FolderPathAccessory: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("Path").font(.system(size: 12))
-                TextField("/path/to/folder or ~/", text: $completion.path).textFieldStyle(.roundedBorder)
-                    .onSubmit { completion.choose(completion.path) }
-                    .onKeyPress(.tab) {
-                        guard let first = completion.matches.first else { return .ignored }
-                        completion.choose(first); return .handled
-                    }.accessibilityIdentifier("crow.folder.path")
+                FolderPathInput(completion: completion).frame(height: 24)
                 Button("Go") { completion.choose(completion.path) }
             }
             ForEach(completion.matches, id: \.self) { path in
@@ -790,6 +786,38 @@ struct FolderPathAccessory: View {
             Spacer(minLength: 0)
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
             .task(id: completion.path) { await completion.refresh() }
+    }
+}
+
+struct FolderPathInput: NSViewRepresentable {
+    let completion: FolderPathCompletion
+    func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.placeholderString = "/path/to/folder or ~/"; field.isBezeled = true; field.bezelStyle = .roundedBezel
+        field.font = .systemFont(ofSize: 12); field.delegate = context.coordinator
+        field.setAccessibilityIdentifier("crow.folder.path")
+        return field
+    }
+    func updateNSView(_ field: NSTextField, context: Context) {
+        if field.stringValue != completion.path { field.stringValue = completion.path }
+    }
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let completion: FolderPathCompletion
+        init(completion: FolderPathCompletion) { self.completion = completion }
+        func controlTextDidChange(_ notification: Notification) {
+            if let field = notification.object as? NSTextField { completion.path = field.stringValue }
+        }
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertTab(_:)), let first = completion.matches.first {
+                completion.choose(first)
+                (control as? NSTextField)?.stringValue = completion.path
+                textView.setSelectedRange(NSRange(location: (completion.path as NSString).length, length: 0))
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) { completion.choose(completion.path); return true }
+            return false
+        }
     }
 }
 #endif

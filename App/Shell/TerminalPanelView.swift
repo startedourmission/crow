@@ -110,6 +110,7 @@ struct StatusBarView: View {
             Text(model.statusMessage)
                 .crowForeground(CrowTheme.textDim)
                 .lineLimit(1)
+            DeviceStatusView()
             if model.current.snapshot.layout?.panes.isEmpty != false && !model.inspectorVisible {
             Button { model.inspectorVisible.toggle() } label: {
                 Image(systemName: "sidebar.right").frame(width: 20, height: 20)

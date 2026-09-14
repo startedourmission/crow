@@ -38,6 +38,7 @@ targetTemplates:
     sources:
       - path: App
         excludes:
+          - Agents/agent-history.py
           - Editor/markdown-editor.js
           - Editor/obsidian-preview.js
           - Editor/obsidian-preview.css
@@ -50,6 +51,8 @@ targetTemplates:
           - Screen/noVNC-BSD-2-Clause.txt
           - Screen/noVNC-pako-LICENSE.txt
           - Screen/noVNC-AUTHORS.txt
+      - path: App/Agents/agent-history.py
+        buildPhase: resources
       - path: App/Screen/screen.html
         buildPhase: resources
       - path: App/Screen/screen-client.js
