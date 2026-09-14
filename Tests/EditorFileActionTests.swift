@@ -1,5 +1,7 @@
 import XCTest
 import CrowCore
+import SwiftUI
+import WebKit
 @testable import Crow
 
 @MainActor final class EditorFileActionTests: XCTestCase {
@@ -13,6 +15,49 @@ import CrowCore
         model.shutdown()
         try? FileManager.default.removeItem(at: root)
     }
+
+    func testObsidianInventoryAndLinksStayInOwningWorkspace() async throws {
+        let folder = root.appendingPathComponent("Notes")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("---\nstatus: reading\n---\n# Note".utf8).write(to: folder.appendingPathComponent("Note.md"))
+        let alias = root.appendingPathComponent("escape")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root.deletingLastPathComponent())
+        let (files, _) = try await ObsidianFiles.inventory(in: model.current)
+        XCTAssertTrue(files.contains { $0["path"] as? String == "Notes/Note.md" && ($0["text"] as? String)?.contains("status: reading") == true })
+        XCTAssertFalse(files.contains { ($0["path"] as? String)?.hasPrefix("escape/") == true })
+        for path in ["../outside.txt", "escape/outside.txt", "/etc/passwd"] {
+            do { _ = try await ObsidianFiles.resolve(path, in: model.current); XCTFail("Escaping links must fail") } catch {}
+        }
+        XCTAssertEqual(LanguageMode.infer(filename: "board.canvas"), .json)
+        XCTAssertEqual(LanguageMode.infer(filename: "list.base"), .yaml)
+    }
+
+    #if os(macOS)
+    func testObsidianWebViewsRenderCanvasAndBaseFromBundledResources() async throws {
+        let node: [String: Any] = ["id": "note", "type": "text", "x": -100, "y": -50, "width": 250, "height": 150, "text": "# Canvas title"]
+        let canvas = String(decoding: try JSONSerialization.data(withJSONObject: ["nodes": [node], "edges": []]), as: UTF8.self)
+        for (name, source, selector) in [("Board.canvas", canvas, ".node.text"), ("Index.base", "views:\n  - type: table\n    name: Notes\n    order: [file.name]", "tbody tr")] {
+            let file = root.appendingPathComponent(name)
+            try Data(source.utf8).write(to: file)
+            model.openFile(.init(name: name, path: file.path, isDirectory: false))
+            let buffer = try XCTUnwrap(model.selectedBuffer)
+            let hosting = NSHostingView(rootView: ObsidianDocumentView(buffer: buffer).environment(model))
+            let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 700, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil)
+            defer { window.close() }
+            func web(_ view: NSView) -> WKWebView? { if let value = view as? WKWebView { return value }; return view.subviews.lazy.compactMap { web($0) }.first }
+            var rendered = false
+            for _ in 0..<100 {
+                if let view = web(hosting), let count = try? await view.callAsyncJavaScript("return document.querySelectorAll(selector).length", arguments: ["selector": selector], in: nil, contentWorld: .defaultClient) as? Int, count > 0 {
+                    rendered = true; break
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            if !rendered, let view = web(hosting) { print("PREVIEW", try await view.callAsyncJavaScript("return document.querySelector('main').textContent", arguments: [:], in: nil, contentWorld: .defaultClient) as Any) }
+            XCTAssertTrue(rendered, "Expected rendered content for " + name)
+        }
+    }
+    #endif
 
     func testExplorerPickerMovesUnopenedFolderIntoUnloadedDestination() async throws {
         let source = root.appendingPathComponent("Source"), destination = root.appendingPathComponent("Other/Nested")

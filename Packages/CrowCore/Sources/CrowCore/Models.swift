@@ -139,8 +139,8 @@ public enum LanguageMode: String, Hashable, Codable, Sendable {
         let ext = (filename as NSString).pathExtension.lowercased()
         switch ext {
         case "md", "markdown": return .markdown
-        case "json": return .json
-        case "yml", "yaml": return .yaml
+        case "json", "canvas": return .json
+        case "yml", "yaml", "base": return .yaml
         case "toml": return .toml
         case "xml": return .xml
         case "html", "htm": return .html

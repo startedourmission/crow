@@ -2,6 +2,9 @@ import { build } from 'esbuild';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 await build({ entryPoints: ['editor.js'], bundle: true, format: 'iife', target: 'safari18',
   minify: true, outfile: '../App/Editor/markdown-editor.js', legalComments: 'eof' });
+await build({ entryPoints: ['obsidian-preview.js'], bundle: true, format: 'iife', target: 'safari18',
+  minify: true, outfile: '../App/Editor/obsidian-preview.js', legalComments: 'eof' });
+await writeFile('../App/Editor/obsidian-preview.css', await readFile('obsidian-preview.css'));
 // Ship notices for every bundled dependency, independently of minifier annotations.
 const notices = [];
 async function collect(directory) {

@@ -152,6 +152,12 @@
 		4DBF075E27064714BCADDCD5 /* WorkspaceWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */; };
 		38DA1903B03F4B229E81C806 /* WorkspaceWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */; };
 		A2E61456EF244A7A8E2FB399 /* WorkspaceWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */; };
+		859AC43947C34AF9AB830DF3 /* ObsidianPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */; };
+		195409B31134410FACDD6120 /* ObsidianPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */; };
+		A559D921738743AF8CB82522 /* obsidian-preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */; };
+		EB8ED59C2C5147E89E4D4385 /* obsidian-preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */; };
+		9CC934004CD1401189A8D402 /* obsidian-preview.css in Resources */ = {isa = PBXBuildFile; fileRef = C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */; };
+		F4E3C6166A4246FD9806D1D9 /* obsidian-preview.css in Resources */ = {isa = PBXBuildFile; fileRef = C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -247,6 +253,9 @@
 		0BE7C542793644FDB079010F /* EditorFileActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFileActionTests.swift; sourceTree = "<group>"; };
 		9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindowStore.swift; sourceTree = "<group>"; };
 		C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindowTests.swift; sourceTree = "<group>"; };
+		4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ObsidianPreview.swift"; sourceTree = "<group>"; };
+		4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "obsidian-preview.js"; sourceTree = "<group>"; };
+		C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = "obsidian-preview.css"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -302,6 +311,9 @@
 				D59A3074AF3C2BC650FA1DB1 /* KeyboardAccessory.swift */,
 				7FACD1BCE145D0783FF32A74 /* markdown-editor.js */,
 				172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */,
+				4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */,
+				4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */,
+				C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */,
 				DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */,
 				C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */,
 				A606BBA36A074764AF873412 /* ImagePreview.swift */,
@@ -571,6 +583,8 @@
 				AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */,
 				75C51A84756BB865D20F817B /* MarkdownEditor-LICENSES.txt in Resources */,
 				C7061386EE590421187C2662 /* markdown-editor.js in Resources */,
+				9CC934004CD1401189A8D402 /* obsidian-preview.css in Resources */,
+				A559D921738743AF8CB82522 /* obsidian-preview.js in Resources */,
 				5DFA447ACDEE32322ED5D776 /* noVNC-AUTHORS.txt in Resources */,
 				5213FCEAC768AC7DED943F60 /* noVNC-BSD-2-Clause.txt in Resources */,
 				62D7B43D9414FAF15CAE2878 /* noVNC-BSD-3-Clause.txt in Resources */,
@@ -589,6 +603,8 @@
 				B09A2B69C85652902D15946E /* Assets.xcassets in Resources */,
 				625238F79BADC8151633A02F /* MarkdownEditor-LICENSES.txt in Resources */,
 				2AB4FD069ED3F003092DA0D9 /* markdown-editor.js in Resources */,
+				F4E3C6166A4246FD9806D1D9 /* obsidian-preview.css in Resources */,
+				EB8ED59C2C5147E89E4D4385 /* obsidian-preview.js in Resources */,
 				C3F5D11C3487825586550ED1 /* noVNC-AUTHORS.txt in Resources */,
 				31C17969C3E60F58894C240E /* noVNC-BSD-2-Clause.txt in Resources */,
 				28188B13FCBC79FF3E89192C /* noVNC-BSD-3-Clause.txt in Resources */,
@@ -632,6 +648,7 @@
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
 				4DBF075E27064714BCADDCD5 /* WorkspaceWindowStore.swift in Sources */,
 				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
+				859AC43947C34AF9AB830DF3 /* ObsidianPreview.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
 				978311A499FE46CAA5F8E8B4 /* ImagePreview.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
@@ -703,6 +720,7 @@
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
 				4175A8E7D5B743F4A6F837D1 /* WorkspaceWindowStore.swift in Sources */,
 				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
+				195409B31134410FACDD6120 /* ObsidianPreview.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
 				9FC987AB24A64B98AC27F31C /* ImagePreview.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,

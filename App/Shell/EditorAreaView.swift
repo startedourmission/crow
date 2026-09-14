@@ -120,7 +120,9 @@ struct CrowEditorView: View {
 
     var body: some View {
         if buffer.isImage { CrowImagePreviewView(buffer: buffer) }
-        else { textEditor }
+        else if ["canvas", "base"].contains((buffer.path as NSString).pathExtension.lowercased()) {
+            ObsidianDocumentView(buffer: buffer, isActive: isActive)
+        } else { textEditor }
     }
 
     private var textEditor: some View {
