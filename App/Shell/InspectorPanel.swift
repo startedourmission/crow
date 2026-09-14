@@ -173,6 +173,8 @@ struct InspectorPanel: View {
             }
             if activeProject == nil {
                 projectList
+                Spacer(minLength: 0)
+                GitRepositoryAccountFooter(repository: nil)
             } else if let path = activeProject {
                 GitProjectStatusView(path: path, refreshID: refreshID)
                     .id(gitScopeID + "-" + path)
@@ -278,6 +280,9 @@ struct GitProjectStatusView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            GitRepositoryAccountFooter(repository: status.repository)
+        }
         .task(id: "\(model.selectedWorkspaceID)-\(model.selectedWorkspace.connection)-\(refreshID)") {
             status.error = nil
             let state = model.current
@@ -304,5 +309,62 @@ struct GitProjectStatusView: View {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
+    }
+}
+
+
+private struct GitRepositoryAccountFooter: View {
+    @Environment(AppModel.self) private var model
+    let repository: RepositorySnapshot?
+    @State private var showingSettings = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            CrowDivider()
+            VStack(alignment: .leading, spacing: 7) {
+                if let repository {
+                    if let remote = repository.remote {
+                        Label(remote.displayAddress, systemImage: "network")
+                            .textSelection(.enabled).help(remote.displayAddress)
+                            .accessibilityIdentifier("crow.git-remote")
+                        Text(remote.name + " · " + remote.transport)
+                            .foregroundStyle(CrowTheme.textDim)
+                    } else {
+                        Label("No remote configured", systemImage: "network")
+                            .foregroundStyle(CrowTheme.textDim)
+                    }
+                    if !repository.authorName.isEmpty || !repository.authorEmail.isEmpty {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(repository.authorName.isEmpty ? "Commit author" : "Author · " + repository.authorName)
+                                if !repository.authorEmail.isEmpty {
+                                    Text(repository.authorEmail).foregroundStyle(CrowTheme.textDim)
+                                }
+                            }
+                        } icon: { Image(systemName: "person") }
+                        .textSelection(.enabled).help("Git commit author (user.name / user.email)")
+                        .accessibilityIdentifier("crow.git-author")
+                    }
+                }
+                Button { showingSettings = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.crop.circle")
+                        if let account = model.gitAccounts.account {
+                            Text("Saved GitHub · @" + account.login)
+                        } else {
+                            Text(model.gitAccounts.storageError == nil ? "Set Up GitHub Account" : "Git Account Unavailable")
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "gearshape")
+                    }.contentShape(Rectangle())
+                }
+                .buttonStyle(CrowButtonStyle()).help("Git Accounts")
+                .accessibilityIdentifier("crow.git-account-settings")
+            }.padding(.horizontal, 12).padding(.bottom, 12)
+        }
+        .font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
+        .background(CrowTheme.bg1)
+        .onAppear { model.gitAccounts.reload() }
+        .sheet(isPresented: $showingSettings) { GitSettingsView().environment(model) }
     }
 }

@@ -4,7 +4,7 @@ import Sparkle
 import SwiftUI
 
 @MainActor final class CrowAppDelegate: NSObject, NSApplicationDelegate {
-    weak var model: AppModel?
+    weak var windows: WorkspaceWindowStore?
     let updaterController: SPUStandardUpdaterController?
 
     override init() {
@@ -27,21 +27,26 @@ import SwiftUI
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model else { return .terminateNow }
-        guard model.hasUnsavedChanges else { model.persist(); return .terminateNow }
+        let models = Array(windows?.models.values ?? [:].values)
+        guard models.contains(where: \.hasUnsavedChanges) else {
+            models.forEach { $0.persist() }; return .terminateNow
+        }
         switch confirmDrafts() {
         case .alertFirstButtonReturn:
             Task {
-                let saved = await model.saveAll()
-                model.persist()
+                var saved = true
+                for model in models {
+                    if !(await model.saveAll()) { saved = false; break }
+                    model.persist()
+                }
                 sender.reply(toApplicationShouldTerminate: saved)
             }
             return .terminateLater
-        case .alertThirdButtonReturn: model.persist(); return .terminateNow
+        case .alertThirdButtonReturn: models.forEach { $0.persist() }; return .terminateNow
         default: return .terminateCancel
         }
     }
-    func applicationWillTerminate(_ notification: Notification) { model?.shutdown() }
+    func applicationWillTerminate(_ notification: Notification) { windows?.shutdown() }
 }
 
 @MainActor private func confirmDrafts() -> NSApplication.ModalResponse {
@@ -57,17 +62,24 @@ import SwiftUI
 struct WindowCloseGuard: NSViewRepresentable {
     let model: AppModel
     var floating = false
+    var onActivate: (() -> Void)?
+    var onClose: (() -> Void)?
     func makeNSView(context: Context) -> GuardView {
-        let view = GuardView(model: model); view.floating = floating; return view
+        let view = GuardView(model: model); view.floating = floating
+        view.onActivate = onActivate; view.onClose = onClose
+        return view
     }
     func updateNSView(_ view: GuardView, context: Context) {
         view.floating = floating
+        view.onActivate = onActivate; view.onClose = onClose
         // Apply after SwiftUI has updated the content's minimum size.
         Task { @MainActor [weak view] in view?.applyFloatingMode() }
     }
     final class GuardView: NSView, NSWindowDelegate {
         let model: AppModel
         var floating = false
+        var onActivate: (() -> Void)?
+        var onClose: (() -> Void)?
         let floatingController = FloatingWindowController()
         // NSObject's forwarding hooks are nonisolated. AppKit invokes these
         // window-delegate hooks on the main thread, like the assignment below.
@@ -89,6 +101,7 @@ struct WindowCloseGuard: NSViewRepresentable {
             }
             if let window, window.delegate !== self { previous = window.delegate; window.delegate = self }
             applyFloatingMode()
+            if window?.isKeyWindow == true { onActivate?() }
         }
         func applyFloatingMode() {
             guard let window else { return }
@@ -105,6 +118,14 @@ struct WindowCloseGuard: NSViewRepresentable {
             floatingController.waitingForFullscreenExit = false
             applyFloatingMode()
             previous?.windowDidExitFullScreen?(notification)
+        }
+        func windowDidBecomeKey(_ notification: Notification) {
+            onActivate?()
+            previous?.windowDidBecomeKey?(notification)
+        }
+        func windowWillClose(_ notification: Notification) {
+            onClose?()
+            previous?.windowWillClose?(notification)
         }
         override func responds(to selector: Selector!) -> Bool {
             if super.responds(to: selector) { return true }
@@ -139,11 +160,13 @@ extension EnvironmentValues {
 
 struct CrowMacSceneView: View {
     let model: AppModel
+    var onActivate: (() -> Void)?
+    var onClose: (() -> Void)?
     @State private var floating = false
     var body: some View {
         CrowRootView().environment(model).environment(\.crowFloatingMode, $floating)
             .frame(minWidth: floating ? 360 : 640, minHeight: floating ? 280 : 400)
-            .background(WindowCloseGuard(model: model, floating: floating))
+            .background(WindowCloseGuard(model: model, floating: floating, onActivate: onActivate, onClose: onClose))
     }
 }
 

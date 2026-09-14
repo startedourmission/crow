@@ -185,11 +185,13 @@ struct CrowSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingKeys = false
     @State private var showingSnippets = false
+    @State private var showingGit = false
     var body: some View {
         @Bindable var model = model
         NavigationStack {
             Form {
                 Button { showingKeys = true } label: { Label("SSH Keys", systemImage: "key") }
+                Button { showingGit = true } label: { Label("Git Accounts", systemImage: "point.3.connected.trianglepath.dotted") }
                 Button { showingSnippets = true } label: { Label("Snippets", systemImage: "text.badge.plus") }
                 #if os(iOS)
                 NavigationLink("Keyboard Bar") { KeyboardBarSettingsView().environment(model) }
@@ -205,6 +207,7 @@ struct CrowSettingsView: View {
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+        .sheet(isPresented: $showingGit) { GitSettingsView().environment(model) }
         .sheet(isPresented: $showingKeys) { SSHKeysView().environment(model) }
         .sheet(isPresented: $showingSnippets) { SnippetsView().environment(model) }
         #if os(macOS)

@@ -118,6 +118,9 @@ final class SSHIntegrationTests: XCTestCase {
         try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
         try run("/usr/bin/git", ["init", "-q", "-b", "crow-fixture", repository.path])
         try Data("changed".utf8).write(to: repository.appendingPathComponent("changed file.txt"))
+        try run("/usr/bin/git", ["-C", repository.path, "remote", "add", "origin", "https://fixture:never-display-this@github.com/owner/fixture.git"])
+        try run("/usr/bin/git", ["-C", repository.path, "config", "user.name", "Crow Fixture"])
+        try run("/usr/bin/git", ["-C", repository.path, "config", "user.email", "fixture@example.org"])
         let remoteGit = try await connection.gitStatus(path: repository.path)
         let localGit = try await GitRepository.read(path: repository.path)
         let discovered = try await connection.gitProjects(path: root.path)
@@ -140,6 +143,10 @@ final class SSHIntegrationTests: XCTestCase {
         }
         XCTAssertEqual(URL(fileURLWithPath: remoteGit.root).resolvingSymlinksInPath(), repository.resolvingSymlinksInPath())
         XCTAssertEqual(remoteGit.status, localGit.status)
+        XCTAssertEqual(remoteGit.remote, localGit.remote)
+        XCTAssertEqual(remoteGit.remote?.displayAddress, "github.com/owner/fixture")
+        XCTAssertEqual(remoteGit.authorName, "Crow Fixture")
+        XCTAssertEqual(remoteGit.authorEmail, "fixture@example.org")
         XCTAssertTrue(remoteGit.status.branch.contains("crow-fixture"))
         XCTAssertTrue(remoteGit.status.changes.contains { $0.path == "changed file.txt" && $0.status == "??" })
         do {

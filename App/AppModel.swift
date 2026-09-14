@@ -82,6 +82,7 @@ final class AppModel {
     var editingHost: SSHHost?
     var pendingHostEditor = false
     var pendingHostConnection: SSHHost?
+    let gitAccounts = GitAccountStore()
     var settingsVisible = false
     var screenRequest: ScreenRequest?
     #if os(iOS)
@@ -98,6 +99,8 @@ final class AppModel {
     var reverseSSHConnections: [HostID: ReverseSSHSession] = [:]
     @ObservationIgnored private var sshBridge: SystemSSHBridge?
     #endif
+    let windowID: UUID
+    @ObservationIgnored var onPersist: ((SessionSnapshot) -> Void)?
     let vaultURL: URL
     let sessionURL: URL
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
@@ -110,7 +113,8 @@ final class AppModel {
     private let emptyState = WorkspaceState(.init(
         workspace: Workspace(name: "No Folder", kind: .local, connection: .local), rootPath: ""))
 
-    init(vaultURL: URL? = nil, sessionURL: URL? = nil) {
+    init(vaultURL: URL? = nil, sessionURL: URL? = nil, windowID: UUID = UUID()) {
+        self.windowID = windowID
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         var defaultVault = documents.appendingPathComponent("CrowVault", isDirectory: true)
         #if os(macOS)
@@ -791,62 +795,125 @@ final class AppModel {
         guard canMoveFile(drag, to: folder) else { return Task {} }
         let state = current
         return Task {
-            let affected = state.snapshot.buffers.filter { $0.path == drag.path || $0.path.hasPrefix(drag.path + "/") }
-            guard !affected.contains(where: { saving.contains($0.id) }),
-                  !state.movingPaths.contains(where: { drag.path == $0 || drag.path.hasPrefix($0 + "/") || $0.hasPrefix(drag.path + "/") }) else {
-                errorMessage = "Wait for the current save or move to finish."; return
-            }
-            state.movingPaths.insert(drag.path)
-            defer { state.movingPaths.remove(drag.path) }
-            do {
-                let source: String, parent: String, root: String
-                if state.snapshot.workspace.isRemote {
-                    guard let remote = state.remote else { throw FileFailure.disconnected }
-                    root = state.snapshot.rootPath
-                    parent = try await remote.realPath(folder)
-                    source = (try await remote.realPath((drag.path as NSString).deletingLastPathComponent) as NSString).appendingPathComponent(drag.name)
-                } else {
-                    root = URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
-                    parent = URL(fileURLWithPath: folder).resolvingSymlinksInPath().path
-                    source = URL(fileURLWithPath: drag.path).deletingLastPathComponent().resolvingSymlinksInPath()
-                        .appendingPathComponent(drag.name).path
-                    guard try URL(fileURLWithPath: parent).resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-                        throw CocoaError(.fileWriteInvalidFileName)
-                    }
-                }
-                func within(_ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
-                guard within(source), within(parent), source != root,
-                      !drag.isDirectory || (parent != source && !parent.hasPrefix(source + "/")) else {
-                    throw CommandError("Files can only be moved within this vault, outside their own subfolders.")
-                }
-                let destination = (parent as NSString).appendingPathComponent(drag.name)
-                guard destination != source else { return }
-                if state.snapshot.workspace.isRemote {
-                    guard let remote = state.remote else { throw FileFailure.disconnected }
-                    guard try await !remote.list(parent).contains(where: { $0.name == drag.name }) else { throw CocoaError(.fileWriteFileExists) }
-                    try await remote.rename(source, to: destination)
-                } else {
-                    guard (try? FileManager.default.attributesOfItem(atPath: destination)) == nil else { throw CocoaError(.fileWriteFileExists) }
-                    try FileManager.default.moveItem(atPath: source, toPath: destination)
-                }
-                state.explorer.didRename(from: drag.path, to: destination)
-                for index in state.snapshot.buffers.indices {
-                    let path = state.snapshot.buffers[index].path
-                    if path == drag.path || path.hasPrefix(drag.path + "/") {
-                        state.snapshot.buffers[index].path = destination + path.dropFirst(drag.path.count)
-                    }
-                }
-                let working = state.snapshot.directoryPath
-                if working == drag.path || working.hasPrefix(drag.path + "/") {
-                    state.snapshot.directoryPath = destination + working.dropFirst(drag.path.count)
-                }
-                state.explorer.selectedPath = destination
-                await state.explorer.reveal(.init(name: drag.name, path: destination, isDirectory: false))
-                if selectedWorkspaceID == state.id { refreshFiles() }
-                statusMessage = "Moved \(drag.name) to \(state.explorer.relativePath(parent))"
-                schedulePersist()
-            } catch { report(error) }
+            do { try await performFileMove(drag, to: folder, in: state) }
+            catch { report(error) }
         }
+    }
+
+    func moveOpenFile(_ id: BufferID, to folder: String) async throws {
+        guard let (state, index) = locate(id) else { throw CommandError("This file is no longer open.") }
+        let drag = ExplorerFileDrag(workspaceID: state.id, path: state.snapshot.buffers[index].path, isDirectory: false)
+        try await performFileMove(drag, to: folder, in: state)
+    }
+
+    private func performFileMove(_ drag: ExplorerFileDrag, to folder: String, in state: WorkspaceState) async throws {
+        let connection = state.remote
+        let affected = state.snapshot.buffers.filter { $0.path == drag.path || $0.path.hasPrefix(drag.path + "/") }
+        guard !affected.contains(where: { saving.contains($0.id) }),
+              !state.movingPaths.contains(where: { drag.path == $0 || drag.path.hasPrefix($0 + "/") || $0.hasPrefix(drag.path + "/") }) else {
+            throw CommandError("Wait for the current save or move to finish.")
+        }
+        state.movingPaths.insert(drag.path)
+        defer { state.movingPaths.remove(drag.path) }
+        let source: String, parent: String, root: String
+        if state.snapshot.workspace.isRemote {
+            guard let remote = connection else { throw FileFailure.disconnected }
+            root = try await remote.realPath(state.snapshot.rootPath)
+            parent = try await remote.realPath(folder)
+            source = (try await remote.realPath((drag.path as NSString).deletingLastPathComponent) as NSString).appendingPathComponent(drag.name)
+        } else {
+            root = URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
+            parent = URL(fileURLWithPath: folder).resolvingSymlinksInPath().path
+            source = URL(fileURLWithPath: drag.path).deletingLastPathComponent().resolvingSymlinksInPath()
+                .appendingPathComponent(drag.name).path
+            guard try URL(fileURLWithPath: parent).resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
+        }
+        func within(_ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
+        guard within(source), within(parent), source != root,
+              !drag.isDirectory || (parent != source && !parent.hasPrefix(source + "/")) else {
+            throw CommandError("Files can only be moved within this vault, outside their own subfolders.")
+        }
+        let destination = (parent as NSString).appendingPathComponent(drag.name)
+        guard destination != source else { return }
+        if state.snapshot.workspace.isRemote {
+            guard let remote = connection else { throw FileFailure.disconnected }
+            guard try await !remote.list(parent).contains(where: { $0.name == drag.name }) else { throw CocoaError(.fileWriteFileExists) }
+            try Task.checkCancellation()
+            guard state.remote === remote, states.contains(where: { $0 === state }) else { throw FileFailure.disconnected }
+            try await remote.rename(source, to: destination)
+        } else {
+            guard (try? FileManager.default.attributesOfItem(atPath: destination)) == nil else { throw CocoaError(.fileWriteFileExists) }
+            try FileManager.default.moveItem(atPath: source, toPath: destination)
+        }
+        state.explorer.didRename(from: drag.path, to: destination)
+        for index in state.snapshot.buffers.indices {
+            let path = state.snapshot.buffers[index].path
+            if path == drag.path || path.hasPrefix(drag.path + "/") {
+                state.snapshot.buffers[index].path = destination + path.dropFirst(drag.path.count)
+            }
+        }
+        let working = state.snapshot.directoryPath
+        if working == drag.path || working.hasPrefix(drag.path + "/") {
+            state.snapshot.directoryPath = destination + working.dropFirst(drag.path.count)
+        }
+        state.explorer.selectedPath = destination
+        await state.explorer.reveal(.init(name: drag.name, path: destination, isDirectory: false))
+        if selectedWorkspaceID == state.id { refreshFiles() }
+        statusMessage = "Moved \(drag.name) to \(state.explorer.relativePath(parent))"
+        schedulePersist()
+    }
+
+    func fileMoveFolders(_ id: BufferID, at path: String) async throws -> (path: String, root: String, folders: [FileEntry]) {
+        guard let (state, _) = locate(id) else { throw CommandError("This file is no longer open.") }
+        let root = state.snapshot.rootPath
+        let resolved: String, canonicalRoot: String
+        let folders: [FileEntry]
+        if state.snapshot.workspace.isRemote {
+            let remote = try fileConnection(in: state)
+            canonicalRoot = try await remote.realPath(root)
+            resolved = try await remote.realPath(path)
+            guard resolved == canonicalRoot || resolved.hasPrefix(canonicalRoot == "/" ? "/" : canonicalRoot + "/") else {
+                throw CommandError("Choose a folder inside this workspace.")
+            }
+            folders = try await remote.list(resolved).filter { $0.isDirectory && $0.name != "." && $0.name != ".." }
+            guard state.remote === remote else { throw FileFailure.disconnected }
+        } else {
+            canonicalRoot = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
+            (resolved, folders) = try await Task.detached(priority: .utility) {
+                let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+                guard url.path == canonicalRoot || url.path.hasPrefix(canonicalRoot == "/" ? "/" : canonicalRoot + "/") else {
+                    throw CommandError("Choose a folder inside this workspace.")
+                }
+                let entries = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])
+                return (url.path, try entries.filter { try $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true }
+                    .map { FileEntry(name: $0.lastPathComponent, path: $0.path, isDirectory: true) })
+            }.value
+        }
+        try Task.checkCancellation()
+        guard locate(id)?.0 === state else { throw CommandError("This file is no longer open.") }
+        return (resolved, canonicalRoot, folders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+    }
+
+    /// Export the original bytes, or the current draft when a text file has unsaved edits.
+    func downloadOpenFile(_ id: BufferID) async throws -> Data {
+        guard let (state, index) = locate(id) else { throw CommandError("This file is no longer open.") }
+        let buffer = state.snapshot.buffers[index], connection = state.remote
+        guard !state.movingPaths.contains(buffer.path) else { throw CommandError("Wait for the file move to finish.") }
+        if buffer.isDirty && !buffer.isImage { return Data(buffer.text.utf8) }
+        let data: Data
+        if buffer.isRemote {
+            guard let connection else { throw FileFailure.disconnected }
+            data = try await connection.readData(buffer.path, maximumSize: FileDownload.sizeLimit)
+        } else {
+            data = try await Task.detached(priority: .utility) { try FileDownload.read(buffer.path) }.value
+        }
+        try Task.checkCancellation()
+        guard let (latestState, latestIndex) = locate(id), latestState === state,
+              state.remote === connection, state.snapshot.buffers[latestIndex].path == buffer.path,
+              !state.movingPaths.contains(buffer.path) else { throw CommandError("The file changed location. Try downloading it again.") }
+        return data
     }
     @discardableResult func trash(_ entry: FileEntry) -> Task<Void, Never> {
         let state = current
@@ -1239,11 +1306,16 @@ final class AppModel {
             guard !Task.isCancelled else { return }; self?.persist()
         }
     }
+    var sessionSnapshot: SessionSnapshot {
+        SessionSnapshot(hosts: hosts, workspaces: states.map(\.snapshot), selectedWorkspaceID: selectedWorkspaceID, settings: settings)
+    }
     func persist() {
         guard persistenceAvailable else { return }
-        do { try TextFiles.saveSession(.init(hosts: hosts, workspaces: states.map(\.snapshot),
-            selectedWorkspaceID: selectedWorkspaceID, settings: settings), to: sessionURL) }
-        catch { report(error) }
+        do {
+            let snapshot = sessionSnapshot
+            try TextFiles.saveSession(snapshot, to: sessionURL)
+            onPersist?(snapshot)
+        } catch { report(error) }
     }
     func suspend() {
         fileRefreshPaused = true; persist()

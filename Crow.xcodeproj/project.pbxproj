@@ -128,6 +128,20 @@
 		F1D875AE7E648744754BA3F2 /* noVNC-pako-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D8C5ED657682901320A3B6E /* noVNC-pako-LICENSE.txt */; };
 		F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
 		F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */; };
+		CDA0CFD9DB554DC5B398E168 /* GitAccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5741438401E04C73A66A29D2 /* GitAccountStore.swift */; };
+		6FFA4A193B364B9194D88C3E /* GitAccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5741438401E04C73A66A29D2 /* GitAccountStore.swift */; };
+		D77BF5BE208240E49EEC88E5 /* GitSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8136E789F0A42EDA7DE5D75 /* GitSettingsView.swift */; };
+		233835890D8547FC903560B5 /* GitSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8136E789F0A42EDA7DE5D75 /* GitSettingsView.swift */; };
+		433F25E01F13439396B5797E /* GitAccountTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E246750E6544CFB26E2782 /* GitAccountTests.swift */; };
+		597C3850E49E4820B0A92CBA /* GitAccountTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E246750E6544CFB26E2782 /* GitAccountTests.swift */; };
+		A8821DCDC4ED46F5B73FC954 /* EditorFileMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */; };
+		BDBFB28B536246E59CC3651A /* EditorFileMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */; };
+		F028D31C8B724250B171C720 /* EditorFileActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE7C542793644FDB079010F /* EditorFileActionTests.swift */; };
+		03FF56B223F344A2BCE45D4E /* EditorFileActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE7C542793644FDB079010F /* EditorFileActionTests.swift */; };
+		4175A8E7D5B743F4A6F837D1 /* WorkspaceWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */; };
+		4DBF075E27064714BCADDCD5 /* WorkspaceWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */; };
+		38DA1903B03F4B229E81C806 /* WorkspaceWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */; };
+		A2E61456EF244A7A8E2FB399 /* WorkspaceWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -211,6 +225,13 @@
 		EABE90007D32A5AB08E781B6 /* noVNC-MPL-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "noVNC-MPL-2.0.txt"; sourceTree = "<group>"; };
 		F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowAppTests.swift; sourceTree = "<group>"; };
 		F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
+		5741438401E04C73A66A29D2 /* GitAccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitAccountStore.swift; sourceTree = "<group>"; };
+		D8136E789F0A42EDA7DE5D75 /* GitSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitSettingsView.swift; sourceTree = "<group>"; };
+		97E246750E6544CFB26E2782 /* GitAccountTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitAccountTests.swift; sourceTree = "<group>"; };
+		75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFileMenu.swift; sourceTree = "<group>"; };
+		0BE7C542793644FDB079010F /* EditorFileActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFileActionTests.swift; sourceTree = "<group>"; };
+		9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindowStore.swift; sourceTree = "<group>"; };
+		C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindowTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -246,8 +267,10 @@
 				75FF130C71180BF8D69923FE /* ActivityBar.swift */,
 				9D32992D5A11A39787F52729 /* CrowRootView.swift */,
 				9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */,
+				75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */,
 				339F8BF0F81F188A4D8C5EB2 /* FloatingWorkspaceView.swift */,
 				3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */,
+				D8136E789F0A42EDA7DE5D75 /* GitSettingsView.swift */,
 				661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */,
 				18B58CEDCD01E6C219105813 /* InspectorPanel.swift */,
 				81CDA3E505278504B945809C /* SidebarView.swift */,
@@ -289,11 +312,14 @@
 				624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */,
 				2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */,
 				9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */,
+				C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */,
 				6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */,
+				0BE7C542793644FDB079010F /* EditorFileActionTests.swift */,
 				1060A874F96F1D04933A95A4 /* InputToolsTests.swift */,
 				5D62E4109A64D19EB1B58385 /* ScreenIntegrationChecks.swift */,
 				04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */,
 				A3F192DCE11FE3F8039758CB /* SSHKeyStoreTests.swift */,
+				97E246750E6544CFB26E2782 /* GitAccountTests.swift */,
 				D3349169196FAD9BE6A89FEB /* TerminalIntegrationTests.swift */,
 			);
 			path = Tests;
@@ -360,7 +386,9 @@
 			children = (
 				D2B0182A2707E63DEF43B27F /* FileRevision.swift */,
 				61B3B2623FE25570F04A96B0 /* GitRepository.swift */,
+				5741438401E04C73A66A29D2 /* GitAccountStore.swift */,
 				AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */,
+				9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */,
 				3281820F331A8C3742CC86D3 /* RemoteConnection.swift */,
 				BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */,
 				624990E2268E1F485C34E974 /* SSHKeyStore.swift */,
@@ -566,14 +594,18 @@
 				14635E6904C97EB5FB0C9841 /* CrowRootView.swift in Sources */,
 				767549249E14A0CCD8308B5D /* CrowTheme.swift in Sources */,
 				3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */,
+				A8821DCDC4ED46F5B73FC954 /* EditorFileMenu.swift in Sources */,
 				BF6A37C016DE363A14BF9C1A /* FileRevision.swift in Sources */,
 				8A17E1C119C88F637133B6A2 /* FloatingWorkspaceView.swift in Sources */,
 				39F5CBE7547B34B6416D0A08 /* GitRepository.swift in Sources */,
+				CDA0CFD9DB554DC5B398E168 /* GitAccountStore.swift in Sources */,
 				B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */,
+				233835890D8547FC903560B5 /* GitSettingsView.swift in Sources */,
 				9CB1043741E0F4CF0B113E73 /* InputToolsSettingsView.swift in Sources */,
 				C3266AD20FD3C67651ECE542 /* InspectorPanel.swift in Sources */,
 				F075436F4BBAC56896666DE8 /* KeyboardAccessory.swift in Sources */,
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
+				4DBF075E27064714BCADDCD5 /* WorkspaceWindowStore.swift in Sources */,
 				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
 				978311A499FE46CAA5F8E8B4 /* ImagePreview.swift in Sources */,
@@ -605,10 +637,13 @@
 				2C65D5FA8F68B3A1C10435D2 /* EchoTerminalFixture.swift in Sources */,
 				EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */,
 				360C0A7D789693230AC287A7 /* EditorIntegrationTests.swift in Sources */,
+				38DA1903B03F4B229E81C806 /* WorkspaceWindowTests.swift in Sources */,
 				281688703B0CD69F2388B850 /* ExternalFileRefreshTests.swift in Sources */,
+				F028D31C8B724250B171C720 /* EditorFileActionTests.swift in Sources */,
 				7FC5DFA40E531A3B34244973 /* InputToolsTests.swift in Sources */,
 				A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */,
 				431A6D4C0D162573EEA7D7C8 /* SSHKeyStoreTests.swift in Sources */,
+				433F25E01F13439396B5797E /* GitAccountTests.swift in Sources */,
 				085F059008DBF1CE015F2E34 /* ScreenIntegrationChecks.swift in Sources */,
 				229AD114289C014C78DDE79A /* TerminalIntegrationTests.swift in Sources */,
 			);
@@ -625,14 +660,18 @@
 				4599E366C3CADC1BC26025D3 /* CrowRootView.swift in Sources */,
 				6D3AB6ED854E7E279D03D831 /* CrowTheme.swift in Sources */,
 				E0838A98A97611535C881A1A /* EditorAreaView.swift in Sources */,
+				BDBFB28B536246E59CC3651A /* EditorFileMenu.swift in Sources */,
 				DD4F6B69AAD6938989797A11 /* FileRevision.swift in Sources */,
 				5874B115554064B2200ADF03 /* FloatingWorkspaceView.swift in Sources */,
 				48EF039C2F38D4BE74C798F0 /* GitRepository.swift in Sources */,
+				6FFA4A193B364B9194D88C3E /* GitAccountStore.swift in Sources */,
 				26FEA4DA9372CD1E0D934BE4 /* HostEditorView.swift in Sources */,
+				D77BF5BE208240E49EEC88E5 /* GitSettingsView.swift in Sources */,
 				0E711C041E0E67C8F8E62F44 /* InputToolsSettingsView.swift in Sources */,
 				49630C707BCE221ECA00E8CA /* InspectorPanel.swift in Sources */,
 				89BFA1C55D992D8B5A873757 /* KeyboardAccessory.swift in Sources */,
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
+				4175A8E7D5B743F4A6F837D1 /* WorkspaceWindowStore.swift in Sources */,
 				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
 				9FC987AB24A64B98AC27F31C /* ImagePreview.swift in Sources */,
@@ -664,10 +703,13 @@
 				67E2475B239B9403EBB7E291 /* EchoTerminalFixture.swift in Sources */,
 				0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */,
 				D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */,
+				A2E61456EF244A7A8E2FB399 /* WorkspaceWindowTests.swift in Sources */,
 				8D99C0C0E2E1C51ABFC932D9 /* ExternalFileRefreshTests.swift in Sources */,
+				03FF56B223F344A2BCE45D4E /* EditorFileActionTests.swift in Sources */,
 				DD79F454BF6855023C332AF5 /* InputToolsTests.swift in Sources */,
 				6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */,
 				5BDCD19C97620FB6671759C7 /* SSHKeyStoreTests.swift in Sources */,
+				597C3850E49E4820B0A92CBA /* GitAccountTests.swift in Sources */,
 				01A2E0CF88FF0A51767FD9AA /* ScreenIntegrationChecks.swift in Sources */,
 				5BF82CF74F73CF09F2B2A893 /* TerminalIntegrationTests.swift in Sources */,
 			);

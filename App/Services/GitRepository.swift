@@ -4,6 +4,9 @@ import CrowCore
 struct RepositorySnapshot: Sendable {
     let root: String
     let status: GitStatus
+    let remote: GitRemoteInfo?
+    let authorName: String
+    let authorEmail: String
 }
 
 struct GitProjectList: Sendable {
@@ -15,16 +18,40 @@ enum GitRepository {
     static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     static func query(path: String) -> String {
         let git = "git --no-optional-locks -c core.fsmonitor=false -C " + quote(path)
-        return "crow_git_root=$(\(git) rev-parse --show-toplevel) && printf '%s\\0' \"$crow_git_root\" && \(git) status --porcelain=v1 -z --branch --untracked-files=normal && printf 'CROW_GIT_STATUS_END\\0'"
+        return """
+        crow_git_root=$(\(git) rev-parse --show-toplevel) && {
+          printf '%s\\0' "$crow_git_root"
+          crow_git_branch=$(\(git) symbolic-ref --quiet --short HEAD 2>/dev/null || :)
+          crow_git_remote=$(\(git) config --get "branch.$crow_git_branch.remote" || :)
+          if [ -z "$crow_git_remote" ] || [ "$crow_git_remote" = . ]; then
+            if \(git) remote get-url origin >/dev/null 2>&1; then crow_git_remote=origin
+            else crow_git_remote=$(\(git) remote | head -n 1); fi
+          fi
+          crow_git_url=$(\(git) remote get-url "$crow_git_remote" 2>/dev/null || :)
+          printf '%s\\0' "$crow_git_remote" "$crow_git_url"
+          printf '%s\\0' "$(\(git) config --get user.name || :)" "$(\(git) config --get user.email || :)"
+          \(git) status --porcelain=v1 -z --branch --untracked-files=normal && printf 'CROW_GIT_STATUS_END\\0'
+        }
+        """
     }
     static func parse(_ data: Data) throws -> RepositorySnapshot {
         let end = Data("CROW_GIT_STATUS_END\0".utf8)
-        guard data.suffix(end.count) == end, let separator = data.firstIndex(of: 0), separator < data.count - end.count else {
+        guard data.suffix(end.count) == end else {
             throw failure("Git status did not complete. Check folder access and that Git is installed on this host.")
         }
-        let root = String(decoding: data[..<separator], as: UTF8.self)
-        guard root.hasPrefix("/") else { throw failure("Git did not return an absolute repository path.") }
-        return RepositorySnapshot(root: root, status: GitStatus(porcelain: data.subdata(in: data.index(after: separator)..<(data.endIndex - end.count))))
+        let payload = data.dropLast(end.count)
+        var cursor = payload.startIndex
+        var fields: [String] = []
+        for _ in 0..<5 {
+            guard let separator = payload[cursor...].firstIndex(of: 0) else {
+                throw failure("Git returned incomplete repository information.")
+            }
+            fields.append(String(decoding: payload[cursor..<separator], as: UTF8.self))
+            cursor = payload.index(after: separator)
+        }
+        guard fields[0].hasPrefix("/") else { throw failure("Git did not return an absolute repository path.") }
+        return RepositorySnapshot(root: fields[0], status: GitStatus(porcelain: Data(payload[cursor...])),
+            remote: GitRemoteInfo(name: fields[1], url: fields[2]), authorName: fields[3], authorEmail: fields[4])
     }
 
     /// Discover worktrees, including the selected folder itself, without entering .git

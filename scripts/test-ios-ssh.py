@@ -6,6 +6,7 @@ Only generated test keys are used; the Mac's SSH configuration is unchanged.
 """
 
 import argparse
+import base64
 import getpass
 import json
 from pathlib import Path
@@ -41,6 +42,11 @@ def main():
         project.mkdir()
         subprocess.run(["/usr/bin/git", "init", "-q", "-b", "crow-fixture", str(project)], check=True)
         (project / "note.md").write_text("# Changed remote note\n")
+        subprocess.run(["/usr/bin/git", "-C", str(project), "remote", "add", "origin", "git@github.com:fixture/repository.git"], check=True)
+        subprocess.run(["/usr/bin/git", "-C", str(project), "config", "user.name", "iPad Fixture"], check=True)
+        subprocess.run(["/usr/bin/git", "-C", str(project), "config", "user.email", "fixture@example.org"], check=True)
+        (project / "download.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1cAAAAASUVORK5CYII="))
+        (project / "Move Destination").mkdir()
         for name in ("host-key", "user-key"):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
         with socket.socket() as sock:

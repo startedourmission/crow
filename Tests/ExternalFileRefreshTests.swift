@@ -168,5 +168,24 @@ import CrowCore
         let saved = await model.saveBuffer(buffer.id, overwrite: true)
         XCTAssertFalse(saved)
         XCTAssertEqual(try Data(contentsOf: path), updated)
+        var phase = "download original image"
+        do {
+            let download = try await model.downloadOpenFile(buffer.id)
+            XCTAssertEqual(download, updated, "Download the original remote image bytes")
+            let target = root.appendingPathComponent("image move destination " + UUID().uuidString)
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            phase = "browse move destinations"
+            let folders = try await model.fileMoveFolders(buffer.id, at: root.path)
+            XCTAssertTrue(folders.folders.contains { $0.name == target.lastPathComponent })
+            phase = "move image"
+            try await model.moveOpenFile(buffer.id, to: target.path)
+            XCTAssertEqual(URL(fileURLWithPath: model.selectedBuffer!.path).resolvingSymlinksInPath(), target.appendingPathComponent(path.lastPathComponent).resolvingSymlinksInPath())
+            phase = "download moved image"
+            let movedDownload = try await model.downloadOpenFile(buffer.id)
+            XCTAssertEqual(movedDownload, updated)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path.path))
+        } catch {
+            throw CommandError("Remote file action failed during \(phase): \(error)")
+        }
     }
 }

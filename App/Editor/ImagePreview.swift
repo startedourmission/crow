@@ -127,16 +127,19 @@ struct CrowImagePreviewView: View {
                 Image(systemName: "photo").foregroundStyle(CrowTheme.textDim)
             }
             Spacer(minLength: 4)
-            Button { zoom = nil } label: { Text("Fit").foregroundStyle(zoom == nil ? CrowTheme.accent : CrowTheme.textDim) }
-                .help("Fit Image to Window").accessibilityLabel("Fit Image to Window")
-            Button("100%") { zoom = 1 }.help("Actual Size")
-            Button { changeZoom(by: 1 / 1.25, viewport: viewport) } label: { Image(systemName: "minus.magnifyingglass") }
-                .accessibilityLabel("Zoom Out")
-            Button { changeZoom(by: 1.25, viewport: viewport) } label: { Image(systemName: "plus.magnifyingglass") }
-                .accessibilityLabel("Zoom In")
+            Group {
+                Button { zoom = nil } label: { Text("Fit").foregroundStyle(zoom == nil ? CrowTheme.accent : CrowTheme.textDim) }
+                    .help("Fit Image to Window").accessibilityLabel("Fit Image to Window")
+                Button("100%") { zoom = 1 }.help("Actual Size")
+                Button { changeZoom(by: 1 / 1.25, viewport: viewport) } label: { Image(systemName: "minus.magnifyingglass") }
+                    .accessibilityLabel("Zoom Out")
+                Button { changeZoom(by: 1.25, viewport: viewport) } label: { Image(systemName: "plus.magnifyingglass") }
+                    .accessibilityLabel("Zoom In")
+            }.disabled(preview == nil)
+            EditorFileMenu(buffer: buffer)
         }
         .font(.system(size: 12)).buttonStyle(CrowButtonStyle())
-        .disabled(preview == nil).padding(.horizontal, 12).frame(height: 32)
+        .padding(.horizontal, 12).frame(height: 32)
         .windowDragExcluded()
     }
 

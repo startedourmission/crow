@@ -15,7 +15,7 @@ struct ScreenPresentation: ViewModifier {
         content.onChange(of: model.screenRequest?.id) { _, id in
             guard let id else { return }
             model.screenRequest = nil
-            openWindow(id: "server-screen", value: id)
+            openWindow(id: "server-screen", value: ScreenWindowID(windowID: model.windowID, workspaceID: id))
         }
         #else
         content.fullScreenCover(item: Bindable(model).screenRequest) { request in

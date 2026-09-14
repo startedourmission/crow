@@ -3,18 +3,22 @@ import CrowCore
 
 @main
 struct CrowApp: App {
-    @State private var model = AppModel()
     #if os(macOS)
+    @State private var windows = WorkspaceWindowStore()
+    @FocusedValue(\.crowWindowModel) private var focusedModel
+    private var model: AppModel? { focusedModel ?? windows.activeModel }
     @NSApplicationDelegateAdaptor(CrowAppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
+    #else
+    @State private var model = AppModel()
     #endif
 
     var body: some Scene {
         WindowGroup(id: "workspace") {
             #if os(macOS)
-            CrowMacSceneView(model: model)
+            CrowWorkspaceWindow(windows: windows)
                 .preferredColorScheme(.light)
-                .onAppear { appDelegate.model = model }
+                .onAppear { appDelegate.windows = windows }
             #else
             CrowRootView()
                 .environment(model)
@@ -33,72 +37,76 @@ struct CrowApp: App {
                 Button("New Window") { openWindow(id: "workspace") }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("New File") {
-                    model.newUntitledBuffer()
+                    model?.newUntitledBuffer()
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                Button("Open Folder…") { model.folderImporterVisible = true }
+                Button("Open Folder…") { model?.folderImporterVisible = true }
                     .keyboardShortcut("o", modifiers: .command)
                 Button("Save") {
-                    if !NSApp.sendAction(#selector(CodeTextView.saveDocument(_:)), to: nil, from: nil) { model.saveSelectedBuffer() }
+                    if !NSApp.sendAction(#selector(CodeTextView.saveDocument(_:)), to: nil, from: nil) { model?.saveSelectedBuffer() }
                 }.keyboardShortcut("s", modifiers: .command)
-                    .disabled(model.inspectedBuffer == nil || model.inspectedBuffer?.isImage == true)
-                Button("Save All") { Task { await model.saveAll() } }.keyboardShortcut("s", modifiers: [.command, .option])
+                    .disabled(model?.inspectedBuffer == nil || model?.inspectedBuffer?.isImage == true)
+                Button("Save All") { Task { await model?.saveAll() } }.keyboardShortcut("s", modifiers: [.command, .option])
                 Button("Close Tab") {
-                    if let pane = model.current.snapshot.layout?.activePane, let tab = pane.selected {
-                        model.closeTab(tab, in: pane.id)
+                    if let pane = model?.current.snapshot.layout?.activePane, let tab = pane.selected {
+                        model?.closeTab(tab, in: pane.id)
                     }
                 }
                     .keyboardShortcut("w", modifiers: .command)
             }
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { model.settingsVisible = true }.keyboardShortcut(",", modifiers: .command)
-                Button("SSH Keys…") { model.sshKeysVisible = true }
+                Button("Settings…") { model?.settingsVisible = true }.keyboardShortcut(",", modifiers: .command)
+                Button("SSH Keys…") { model?.sshKeysVisible = true }
             }
             CommandGroup(after: .textEditing) {
                 Button("Find and Replace…") {
-                    model.findInCurrentDocument()
-                }.keyboardShortcut("f", modifiers: .command).disabled(model.inspectedBuffer == nil || model.inspectedBuffer?.isImage == true)
-                Button("Search Files…") { model.focusFileSearch() }
-                    .keyboardShortcut("f", modifiers: [.command, .shift]).disabled(!model.hasWorkspace)
-                Button("Increase Font Size") { model.adjustFontSize(by: 1) }
+                    model?.findInCurrentDocument()
+                }.keyboardShortcut("f", modifiers: .command).disabled(model?.inspectedBuffer == nil || model?.inspectedBuffer?.isImage == true)
+                Button("Search Files…") { model?.focusFileSearch() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift]).disabled(model?.hasWorkspace != true)
+                Button("Increase Font Size") { model?.adjustFontSize(by: 1) }
                     .keyboardShortcut("+", modifiers: .command)
-                Button("Increase Font Size (Alternate)") { model.adjustFontSize(by: 1) }
+                Button("Increase Font Size (Alternate)") { model?.adjustFontSize(by: 1) }
                     .keyboardShortcut("=", modifiers: .command)
-                Button("Decrease Font Size") { model.adjustFontSize(by: -1) }
+                Button("Decrease Font Size") { model?.adjustFontSize(by: -1) }
                     .keyboardShortcut("-", modifiers: .command)
             }
             CommandGroup(after: .sidebar) {
                 Button("Toggle Sidebar") {
-                    model.sidebarVisible.toggle()
+                    if let model { model.sidebarVisible.toggle() }
                 }
                 .keyboardShortcut("b", modifiers: .command)
-                Button("Toggle Right Sidebar") { model.inspectorVisible.toggle() }
+                Button("Toggle Right Sidebar") { if let model { model.inspectorVisible.toggle() } }
                     .keyboardShortcut("b", modifiers: [.command, .option])
                 Button("Toggle Terminal") {
-                    model.terminalVisible.toggle()
+                    if let model { model.terminalVisible.toggle() }
                 }
                 .keyboardShortcut("`", modifiers: .control)
-                Button("New Terminal") { model.newTerminal() }.keyboardShortcut("t", modifiers: [.command, .shift])
+                Button("New Terminal") { model?.newTerminal() }.keyboardShortcut("t", modifiers: [.command, .shift])
                 Button("Split Right") {
-                    if let pane = model.current.snapshot.layout?.activePane, let tab = pane.selected {
-                        model.splitTab(tab, in: pane.id, placement: .right)
+                    if let pane = model?.current.snapshot.layout?.activePane, let tab = pane.selected {
+                        model?.splitTab(tab, in: pane.id, placement: .right)
                     }
                 }.keyboardShortcut("\\", modifiers: .command)
                 ForEach(1...9, id: \.self) { number in
-                    Button("Select Tab \(number)") { model.selectNumberedTab(number) }
+                    Button("Select Tab \(number)") { model?.selectNumberedTab(number) }
                         .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
-                        .disabled((model.current.snapshot.layout?.activePane?.tabs.count ?? 0) < number)
+                        .disabled((model?.current.snapshot.layout?.activePane?.tabs.count ?? 0) < number)
                 }
             }
         }
         #endif
         #if os(macOS)
-        WindowGroup("Server Screen", id: "server-screen", for: WorkspaceID.self) { $workspaceID in
-            if let workspaceID {
-                RemoteScreenView(workspaceID: workspaceID)
-                    .environment(model)
+        WindowGroup("Server Screen", id: "server-screen", for: ScreenWindowID.self) { $screenID in
+            if let screenID, let owner = windows.model(for: screenID.windowID) {
+                RemoteScreenView(workspaceID: screenID.workspaceID)
+                    .environment(owner)
+                    .focusedSceneValue(\.crowWindowModel, owner)
                     .preferredColorScheme(.light)
                     .tint(CrowTheme.accent)
+            } else {
+                ContentUnavailableView("Workspace Window Closed", systemImage: "desktopcomputer",
+                    description: Text("Open screen sharing from a connected SSH workspace."))
             }
         }
         .windowStyle(.titleBar)

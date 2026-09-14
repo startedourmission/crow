@@ -150,6 +150,7 @@ struct CrowEditorView: View {
                     .accessibilityLabel(findVisible ? "Hide Find and Replace" : "Find and Replace")
                     .accessibilityIdentifier("crow.document-find-toggle")
                     .windowDragExcluded()
+                EditorFileMenu(buffer: buffer)
             }
             .buttonStyle(CrowButtonStyle())
             .padding(.horizontal, 12)

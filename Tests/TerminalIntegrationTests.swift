@@ -194,6 +194,9 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         let projects = try await remote.gitProjects(path: fixture.directory)
         XCTAssertEqual(projects.paths, [repository.root], "A repository vault must be listed before selecting its status")
         XCTAssertTrue(repository.status.branch.contains("crow-fixture"))
+        XCTAssertEqual(repository.remote?.displayAddress, "github.com/fixture/repository")
+        XCTAssertEqual(repository.authorName, "iPad Fixture")
+        XCTAssertEqual(repository.authorEmail, "fixture@example.org")
         XCTAssertTrue(repository.status.changes.contains { $0.path == "note.md" })
         func screen(_ target: TerminalSession? = nil) -> String {
             let terminal = (target ?? session).view.getTerminal()
@@ -295,6 +298,20 @@ final class IOSTerminalIntegrationTests: XCTestCase {
             GitProjectStatusView(path: repository.root + "/missing-project", refreshID: UUID(), status: failedGitState).environment(model))
         try await wait("Failed Git status must display an error instead of remaining blank") { failedGitState.error != nil }
         XCTAssertNil(failedGitState.repository)
+
+        let imagePath = (fixture.directory as NSString).appendingPathComponent("download.png")
+        model.openFile(.init(name: "download.png", path: imagePath, isDirectory: false))
+        let image = try XCTUnwrap(model.selectedBuffer)
+        XCTAssertTrue(image.isImage)
+        let imageBytes = try await model.downloadOpenFile(image.id)
+        XCTAssertEqual(imageBytes, InputToolsTests.png)
+        let moveFolders = try await model.fileMoveFolders(image.id, at: fixture.directory)
+        let destination = try XCTUnwrap(moveFolders.folders.first { $0.name == "Move Destination" })
+        try await model.moveOpenFile(image.id, to: destination.path)
+        XCTAssertEqual(model.selectedBuffer?.path, destination.path + "/download.png")
+        let movedBytes = try await model.downloadOpenFile(image.id)
+        XCTAssertEqual(movedBytes, imageBytes)
+
 
         model.suspend()
         model.disconnect(host)

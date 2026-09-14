@@ -103,10 +103,10 @@ struct CrowRootView: View {
 
 struct RegularWorkspaceView: View {
     @Environment(AppModel.self) private var model
-    @AppStorage("crow.sidebarWidth") private var sidebarWidth = Double(CrowTheme.sidebarWidth)
+    @SceneStorage("crow.sidebarWidth") private var sidebarWidth = (UserDefaults.standard.object(forKey: "crow.sidebarWidth") as? Double) ?? Double(CrowTheme.sidebarWidth)
     @State private var sidebarDragStart: CGFloat?
     @State private var liveSidebarWidth: CGFloat?
-    @AppStorage("crow.inspectorWidth") private var savedInspectorWidth = 260.0
+    @SceneStorage("crow.inspectorWidth") private var savedInspectorWidth = (UserDefaults.standard.object(forKey: "crow.inspectorWidth") as? Double) ?? 260.0
     @State private var inspectorDragStart: CGFloat?
     @State private var liveInspectorWidth: CGFloat?
 
