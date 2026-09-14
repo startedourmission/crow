@@ -119,6 +119,11 @@ struct CrowEditorView: View {
     @State private var confirmReload = false
 
     var body: some View {
+        if buffer.isImage { CrowImagePreviewView(buffer: buffer) }
+        else { textEditor }
+    }
+
+    private var textEditor: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text(buffer.language.label)
@@ -628,7 +633,7 @@ private struct WorkspacePaneView: View {
                     Image(systemName: {
                         switch tab {
                         case .terminal: return "terminal"
-                        case .file: return "doc.text"
+                        case .file(let id): return model.buffers.first { $0.id == id }?.isImage == true ? "photo" : "doc.text"
                         case .start: return "square.grid.2x2"
                         }
                     }())

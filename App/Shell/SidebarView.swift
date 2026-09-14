@@ -528,6 +528,7 @@ struct SidebarView: View {
     }
 
     private func icon(for name: String) -> String {
+        if ImagePreview.supports(name) { return "photo" }
         switch LanguageMode.infer(filename: name) {
         case .markdown: return "doc.richtext"
         case .json, .yaml, .toml, .ini: return "curlybraces"

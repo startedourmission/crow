@@ -32,6 +32,7 @@ struct RemoteScreenView: View {
     let workspaceID: WorkspaceID
     @State private var screen = RemoteScreenSession()
     @State private var port = "5900"
+    @State private var connectionOptions = false
     @State private var username = ""
     @State private var password = ""
     private var workspace: WorkspaceState? { model.states.first { $0.id == workspaceID } }
@@ -39,54 +40,10 @@ struct RemoteScreenView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                HStack {
-                    if screen.active {
-                        Text(screen.connected ? "Connected through SSH" : "Connecting…").font(.caption)
-                        if !screen.connected { ProgressView().controlSize(.small) }
-                        Spacer()
-                        Button("Disconnect") { screen.stop() }
-                    } else {
-                        Text("VNC port").font(.caption)
-                        TextField("5900", text: $port).textFieldStyle(.roundedBorder).frame(maxWidth: 100)
-                            #if os(iOS)
-                            .keyboardType(.numberPad)
-                            #endif
-                        Spacer()
-                        Button("Connect") {
-                            guard let workspace, let value = Int(port) else { return }
-                            screen.connect(in: workspace, port: value)
-                        }
-                        .disabled(!screen.ready || workspace?.snapshot.workspace.connection != .connected || !(1...65535).contains(Int(port) ?? 0))
-                        .accessibilityIdentifier("crow.screen.connect")
-                    }
-                    #if os(macOS)
-                    Toggle("Fit", isOn: Bindable(screen).fitToWindow).toggleStyle(.checkbox)
-                        .help("Fit the remote screen to this window")
-                    Toggle("View Only", isOn: Bindable(screen).viewOnly).toggleStyle(.checkbox)
-                        .help("View without sending keyboard or mouse input")
-                    Menu {
-                        Toggle("Sync Clipboard", isOn: Bindable(screen).clipboardSync)
-                        Toggle("Include Images (Mac Server)", isOn: Bindable(screen).includeClipboardImages)
-                            .disabled(!screen.clipboardSync)
-                    } label: {
-                        Label("Clipboard", systemImage: screen.clipboardSync ? "checkmark.square" : "square")
-                    }
-                    .disabled(screen.viewOnly)
-                    .help("Sync the client clipboard; image support uses the Mac SSH account’s desktop clipboard")
-                    #endif
-                }.padding(12)
                 if let error = screen.error {
                     Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).padding(12)
                         .accessibilityIdentifier("crow.screen.error")
                 }
-                #if os(macOS)
-                if let error = screen.clipboardError {
-                    HStack {
-                        Text(error + " Text clipboard remains available.").font(.caption).foregroundStyle(.red).textSelection(.enabled)
-                        Button("Retry") { screen.retryClipboard() }
-                    }.padding(.horizontal, 12)
-                }
-                #endif
                 ScreenWebView(screen: screen)
                     .overlay {
                         if !screen.active {
@@ -108,7 +65,18 @@ struct RemoteScreenView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { screen.stop(); dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { screenMenu } }
+            .alert("Connect to Server Screen", isPresented: $connectionOptions) {
+                TextField("VNC port", text: $port)
+                    #if os(iOS)
+                    .keyboardType(.numberPad)
+                    #endif
+                Button("Connect") {
+                    guard let workspace, let value = Int(port), (1...65535).contains(value) else { return }
+                    screen.connect(in: workspace, port: value)
+                }.disabled(!(1...65535).contains(Int(port) ?? 0))
+                Button("Cancel", role: .cancel) { }
+            } message: { Text("VNC port on the SSH server (usually 5900).") }
             .alert(screen.credentialTypes.contains("username") ? "Screen Sharing Account" : "VNC Password",
                    isPresented: Binding(get: { !screen.credentialTypes.isEmpty }, set: { _ in })) {
                 if screen.credentialTypes.contains("username") {
@@ -135,6 +103,40 @@ struct RemoteScreenView: View {
         .onChange(of: workspace?.snapshot.workspace.connection) { _, connection in
             if connection != .connected { screen.stop() }
         }
+    }
+
+    private var screenMenu: some View {
+        Menu {
+            if screen.active {
+                Text(screen.connected ? "Connected through SSH" : "Connecting…")
+                Button("Disconnect", systemImage: "network.slash") { screen.stop() }
+            } else {
+                Button("Connect…", systemImage: "network") { connectionOptions = true }
+                    .disabled(!screen.ready || workspace?.snapshot.workspace.connection != .connected)
+                    .accessibilityIdentifier("crow.screen.connect")
+            }
+            Divider()
+            Toggle("Fit to Window", isOn: Bindable(screen).fitToWindow)
+            Toggle("View Only", isOn: Bindable(screen).viewOnly)
+            #if os(macOS)
+            Divider()
+            Toggle("Sync Clipboard", isOn: Bindable(screen).clipboardSync)
+                .disabled(screen.viewOnly)
+            Toggle("Include Images (Mac Server)", isOn: Bindable(screen).includeClipboardImages)
+                .disabled(screen.viewOnly || !screen.clipboardSync)
+            if let error = screen.clipboardError {
+                Text(error)
+                Button("Retry Clipboard Sync", systemImage: "arrow.clockwise") { screen.retryClipboard() }
+            }
+            #endif
+            Divider()
+            Button("Close", systemImage: "xmark") { screen.stop(); dismiss() }
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .menuIndicator(.hidden)
+        .accessibilityLabel("Screen Controls")
+        .accessibilityIdentifier("crow.screen.menu")
     }
 
     private var instructions: String {

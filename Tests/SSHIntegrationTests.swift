@@ -113,6 +113,7 @@ final class SSHIntegrationTests: XCTestCase {
             XCTAssertEqual((directory[.posixPermissions] as? NSNumber)?.intValue, 0o700)
         }
         try verifyImage(await connection.uploadClipboardImage(InputToolsTests.png))
+        try await ImagePreviewChecks.verifyRemote(connection, root: root)
         let repository = root.appendingPathComponent("repo with ' spaces")
         try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
         try run("/usr/bin/git", ["init", "-q", "-b", "crow-fixture", repository.path])
@@ -243,6 +244,7 @@ final class SSHIntegrationTests: XCTestCase {
         let native = try XCTUnwrap(imported.remote)
         try await ScreenIntegrationChecks.verify(in: imported, port: screenPort, events: screenEvents)
         try verifyImage(await native.uploadClipboardImage(InputToolsTests.png))
+        try await ImagePreviewChecks.verifyRemote(native, root: root)
         XCTAssertNotNil(localTerminal.imagePasteContext?(), "A manually typed SSH command must associate image paste with its own terminal")
         let closedChannel = try SystemSFTP(spec: XCTUnwrap(imported.systemSSH))
         _ = try await closedChannel.list(root.path)

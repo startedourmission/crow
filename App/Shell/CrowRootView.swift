@@ -386,18 +386,21 @@ private struct PhoneWorkspaceBar: View {
                 }
                 if canClose {
                     Button {
-                        if model.compactSurface == .editor { model.saveSelectedBuffer() }
+                        if model.compactSurface == .editor {
+                            if let buffer = model.selectedBuffer, buffer.isImage { model.closeBuffer(buffer.id) }
+                            else { model.saveSelectedBuffer() }
+                        }
                         else { model.terminalCloseRequest = model.current.snapshot.selectedTerminalID }
                     } label: {
                         Group {
-                            if model.compactSurface == .editor {
+                            if model.compactSurface == .editor && model.selectedBuffer?.isImage != true {
                                 SaveDiskIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                                     .frame(width: 17, height: 17)
                             } else { Image(systemName: "xmark.circle").font(.system(size: 16)) }
                         }.frame(width: 36, height: 44).contentShape(Rectangle())
                     }
-                    .accessibilityLabel(model.compactSurface == .editor ? "Save File" : "Close Terminal")
-                    .accessibilityIdentifier(model.compactSurface == .editor ? "crow.phone.save" : "crow.phone.close-terminal")
+                    .accessibilityLabel(model.compactSurface == .editor ? (model.selectedBuffer?.isImage == true ? "Close Image" : "Save File") : "Close Terminal")
+                    .accessibilityIdentifier(model.compactSurface == .editor ? (model.selectedBuffer?.isImage == true ? "crow.phone.close-image" : "crow.phone.save") : "crow.phone.close-terminal")
                 }
             }
             .background(CrowTheme.bg2, in: RoundedRectangle(cornerRadius: 5))
@@ -532,7 +535,7 @@ private struct PhoneWorkspaceBar: View {
                 }
             }
             Button("Save File", systemImage: "square.and.arrow.down") { model.saveSelectedBuffer() }
-                .disabled(model.selectedBuffer == nil)
+                .disabled(model.selectedBuffer == nil || model.selectedBuffer?.isImage == true)
             Button("Close File", systemImage: "xmark") {
                 if let id = model.selectedBufferID { model.closeBuffer(id) }
             }.disabled(model.selectedBuffer == nil)

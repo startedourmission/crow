@@ -39,10 +39,10 @@ private final class ScreenBrowserView: WKWebView {
     var viewOnly = false { didSet { configureViewer() } }
     var fitToWindow = true { didSet { configureViewer() } }
     #if os(macOS)
-    var clipboardSync = false {
+    var clipboardSync = true {
         didSet { resetClipboard(); configureViewer(); monitorClipboard() }
     }
-    var includeClipboardImages = false { didSet { resetClipboard(); configureViewer() } }
+    var includeClipboardImages = true { didSet { resetClipboard(); configureViewer() } }
     private(set) var clipboardError: String?
     var pasteboard: NSPasteboard = .general
     var remotePasteboardName: String?

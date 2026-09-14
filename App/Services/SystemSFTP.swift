@@ -116,6 +116,9 @@ final class SystemSFTP: @unchecked Sendable {
     func read(_ path: String, maximumSize: Int = TextFiles.sizeLimit) async throws -> String {
         try await run { try $0.read(path, maximumSize: maximumSize) }
     }
+    func readData(_ path: String, maximumSize: Int) async throws -> Data {
+        try await run { try $0.readData(path, maximumSize: maximumSize) }
+    }
     func write(_ text: String, path: String, expected: String?, overwrite: Bool) async throws {
         try await run { wire in
             if !overwrite, let expected, try wire.read(path) != expected { throw FileFailure.conflict }
@@ -432,6 +435,9 @@ final class SystemSFTP: @unchecked Sendable {
         func close(_ handle: Data) throws { _ = try request(4, .bytes(handle)) }
         func rename(_ source: String, _ destination: String) throws { _ = try request(18, .string(source) + .string(destination)) }
         func read(_ path: String, maximumSize: Int = TextFiles.sizeLimit) throws -> String {
+            try TextFiles.decode(readData(path, maximumSize: maximumSize))
+        }
+        func readData(_ path: String, maximumSize: Int) throws -> Data {
             guard (try stat(path).size ?? 0) <= UInt64(maximumSize) else { throw FileFailure.tooLarge }
             let handle = try open(path, flags: 1); defer { try? close(handle) }
             var data = Data()
@@ -443,7 +449,7 @@ final class SystemSFTP: @unchecked Sendable {
                 data.append(chunk)
                 guard data.count <= maximumSize else { throw FileFailure.tooLarge }
             }
-            return try TextFiles.decode(data)
+            return data
         }
     }
     /// Drain stderr continuously without letting a noisy server block or grow memory unboundedly.

@@ -27,7 +27,8 @@ is sent immediately, including IME composition, and Done dismisses it. Special
 keys scroll independently so Keyboard and View Only remain visible. Touch gestures
 and hardware keys use noVNC's canvas handlers, with native WebKit touch handling
 enabled and browser panning disabled only over the remote screen. The
-Mac's Clipboard menu enables synchronization: local clipboard changes
+The native screen toolbar contains a single controls menu. On Mac, Sync Clipboard
+and Include Images are enabled by default and can be changed there. Local clipboard changes
 are sent while the viewer is active, and incoming text updates the Mac clipboard
 without echoing it back. Sync is off by default and pauses in View Only mode.
 Servers advertising Apple authentication use the SSH/AppKit clipboard bridge

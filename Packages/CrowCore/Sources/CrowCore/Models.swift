@@ -196,6 +196,10 @@ public struct FileEntry: Identifiable, Hashable, Sendable {
 }
 
 public struct OpenBuffer: Identifiable, Hashable, Codable, Sendable {
+    public enum ContentKind: String, Codable, Sendable { case text, image }
+    // Optional for sessions saved before image previews were supported.
+    public var contentKind: ContentKind? = nil
+    public var isImage: Bool { contentKind == .image }
     public var id: BufferID
     public var title: String
     public var path: String

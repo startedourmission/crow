@@ -37,7 +37,17 @@ def serve(port_file, events_file):
         try:
             sock.settimeout(60)
             send(b"RFB 003.008\n")
-            assert read(12) == b"RFB 003.008\n"
+            greeting = read(12)
+            if greeting == b"CROW FLOOD\r\n":
+                # Exercise SSH teardown while substantial inbound data is still in flight.
+                record(type="flood-start")
+                try:
+                    for _ in range(2048):
+                        sock.sendall(bytes(32768))
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            assert greeting == b"RFB 003.008\n"
             # Mac-style ordering: account authentication first, then VNC password.
             send(b"\x02\x1e\x02")
             assert read(1) == b"\x02"

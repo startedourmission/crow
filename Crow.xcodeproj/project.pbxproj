@@ -53,6 +53,7 @@
 		5DFA447ACDEE32322ED5D776 /* noVNC-AUTHORS.txt in Resources */ = {isa = PBXBuildFile; fileRef = AAACAB37C24CCD7B65615743 /* noVNC-AUTHORS.txt */; };
 		625238F79BADC8151633A02F /* MarkdownEditor-LICENSES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */; };
 		62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
+		9FC987AB24A64B98AC27F31C /* ImagePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A606BBA36A074764AF873412 /* ImagePreview.swift */; };
 		62D7B43D9414FAF15CAE2878 /* noVNC-BSD-3-Clause.txt in Resources */ = {isa = PBXBuildFile; fileRef = 99A0D14EB92B5053E7DCB3F7 /* noVNC-BSD-3-Clause.txt */; };
 		6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
 		67E2475B239B9403EBB7E291 /* EchoTerminalFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */; };
@@ -89,6 +90,7 @@
 		AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4B9BD8562188F49D3A7528 /* MacLifecycle.swift */; };
 		ABACF798FB51E0E27B5574D6 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */; };
 		AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
+		978311A499FE46CAA5F8E8B4 /* ImagePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A606BBA36A074764AF873412 /* ImagePreview.swift */; };
 		AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */; };
 		B09A2B69C85652902D15946E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
 		B25D63E7821D7C09C8D785EE /* HostEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AB3C28673F053D82E7D7F7D /* HostEditorView.swift */; };
@@ -109,7 +111,9 @@
 		D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
 		D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF130C71180BF8D69923FE /* ActivityBar.swift */; };
 		DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = DE53485A258DA8FF8E438A1C /* Citadel */; };
+		2862FABA5B094AA9B87BE746 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = 8174FD0B233445CEB6887931 /* NIOSSH */; };
 		DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 22349BC58B8FD19F9A28CF2B /* Citadel */; };
+		AF545B8786424BEE8921AF7C /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = 9DDBE12A8F3240DE91ED65F8 /* NIOSSH */; };
 		DD4F6B69AAD6938989797A11 /* FileRevision.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B0182A2707E63DEF43B27F /* FileRevision.swift */; };
 		DD79F454BF6855023C332AF5 /* InputToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1060A874F96F1D04933A95A4 /* InputToolsTests.swift */; };
 		DFACF071DF461B8E8B3D7DE6 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
@@ -192,6 +196,7 @@
 		BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReverseSSH.swift; sourceTree = "<group>"; };
 		BFB7AF7430341FE5EEFCF14F /* SystemSFTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemSFTP.swift; sourceTree = "<group>"; };
 		C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeEditor.swift; sourceTree = "<group>"; };
+		A606BBA36A074764AF873412 /* ImagePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreview.swift; sourceTree = "<group>"; };
 		C7B742B462C9437666459DC7 /* SSHKeysView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeysView.swift; sourceTree = "<group>"; };
 		CB9788339A1AB51301E2DF81 /* CrowTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CrowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D2B0182A2707E63DEF43B27F /* FileRevision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileRevision.swift; sourceTree = "<group>"; };
@@ -216,6 +221,7 @@
 				7FCD9CC26EC36C5B9A873052 /* CrowCore in Frameworks */,
 				038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */,
 				DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */,
+				AF545B8786424BEE8921AF7C /* NIOSSH in Frameworks */,
 				9D1F73D97BC4699A52439627 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -227,6 +233,7 @@
 				BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */,
 				6AEE338C0C08B197480FE40C /* SwiftTerm in Frameworks */,
 				DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */,
+				2862FABA5B094AA9B87BE746 /* NIOSSH in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -260,6 +267,7 @@
 				172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */,
 				DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */,
 				C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */,
+				A606BBA36A074764AF873412 /* ImagePreview.swift */,
 			);
 			path = Editor;
 			sourceTree = "<group>";
@@ -437,6 +445,7 @@
 				CC5D04CB9ACC760C88D98F53 /* CrowCore */,
 				797792777CAD6CD2D456EBF8 /* SwiftTerm */,
 				22349BC58B8FD19F9A28CF2B /* Citadel */,
+				9DDBE12A8F3240DE91ED65F8 /* NIOSSH */,
 				8A57E5BB59B15020241DAD01 /* Sparkle */,
 			);
 			productName = "Crow-macOS";
@@ -460,6 +469,7 @@
 				2095F40A89154572BBF0B9AA /* CrowCore */,
 				E3E72F32FB75DFF106C081F5 /* SwiftTerm */,
 				DE53485A258DA8FF8E438A1C /* Citadel */,
+				8174FD0B233445CEB6887931 /* NIOSSH */,
 			);
 			productName = "Crow-iOS";
 			productReference = 643351A73DF6ED8D3D6E4193 /* Crow.app */;
@@ -486,6 +496,7 @@
 			mainGroup = 19496BAFC18CA285F1D341DB;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				0BC58620B7FE411FB19F27F6 /* XCRemoteSwiftPackageReference "NIOSSH" */,
 				5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */,
 				6774923512252B0B5D84C882 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				DA93A4625938760287CAC88B /* XCRemoteSwiftPackageReference "SwiftTerm" */,
@@ -565,6 +576,7 @@
 				AA23EB7F0A3D08E406D172D9 /* MacLifecycle.swift in Sources */,
 				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
+				978311A499FE46CAA5F8E8B4 /* ImagePreview.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
 				B86EDD8210B36668CEABE612 /* RemoteScreenSession.swift in Sources */,
 				EFE59F8F94B5B9DF43E597FD /* RemoteScreenView.swift in Sources */,
@@ -623,6 +635,7 @@
 				9AADDDB507BD99DEC635ED23 /* MacLifecycle.swift in Sources */,
 				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
+				9FC987AB24A64B98AC27F31C /* ImagePreview.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
 				5021315983A367254FC391AF /* RemoteScreenSession.swift in Sources */,
 				BF4AF95C56770D6B7EB35793 /* RemoteScreenView.swift in Sources */,
@@ -1061,6 +1074,14 @@
 				minimumVersion = 1.20.0;
 			};
 		};
+		0BC58620B7FE411FB19F27F6 /* XCRemoteSwiftPackageReference "NIOSSH" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Wellz26/swift-nio-ssh.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.3.7;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1072,6 +1093,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */;
 			productName = Citadel;
+		};
+		9DDBE12A8F3240DE91ED65F8 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0BC58620B7FE411FB19F27F6 /* XCRemoteSwiftPackageReference "NIOSSH" */;
+			productName = NIOSSH;
 		};
 		797792777CAD6CD2D456EBF8 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1091,6 +1117,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5D5257ADA73F8EF0B36718F4 /* XCRemoteSwiftPackageReference "Citadel" */;
 			productName = Citadel;
+		};
+		8174FD0B233445CEB6887931 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0BC58620B7FE411FB19F27F6 /* XCRemoteSwiftPackageReference "NIOSSH" */;
+			productName = NIOSSH;
 		};
 		E3E72F32FB75DFF106C081F5 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -308,8 +308,12 @@ final class RemoteConnection {
     }
 
     func read(_ path: String, maximumSize: Int = TextFiles.sizeLimit) async throws -> String {
+        try TextFiles.decode(await readData(path, maximumSize: maximumSize))
+    }
+
+    func readData(_ path: String, maximumSize: Int = TextFiles.sizeLimit) async throws -> Data {
         #if os(macOS)
-        if let system { return try await system.read(path, maximumSize: maximumSize) }
+        if let system { return try await system.readData(path, maximumSize: maximumSize) }
         #endif
         let sftp = try await files()
         let attributes = try await sftp.getAttributes(at: path)
@@ -317,6 +321,7 @@ final class RemoteConnection {
         let bytes = try await sftp.withFile(filePath: path, flags: .read) { file in
             var data = Data()
             while true {
+                try Task.checkCancellation()
                 let chunk = try await file.read(from: UInt64(data.count), length: 32_768)
                 if chunk.readableBytes == 0 { break }
                 data.append(contentsOf: chunk.readableBytesView)
@@ -324,7 +329,7 @@ final class RemoteConnection {
             }
             return data
         }
-        return try TextFiles.decode(bytes)
+        return bytes
     }
 
     func write(_ text: String, path: String, expected: String?, overwrite: Bool = false) async throws {

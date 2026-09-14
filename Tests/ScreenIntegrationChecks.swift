@@ -10,10 +10,55 @@ import UIKit
 
 /// Used with real Citadel and OpenSSH connections, and the loopback RFB fixture.
 @MainActor enum ScreenIntegrationChecks {
+    private static func verifyStreamingClose(in state: WorkspaceState, port: Int, events: String) async throws {
+        let connection = try XCTUnwrap(state.remote)
+        for iteration in 0..<5 {
+            let before = try await connection.read(events)
+            let transport = ScreenTransport()
+            defer { transport.close() }
+            let stream = try await transport.open(in: state, port: port)
+            var iterator = stream.makeAsyncIterator()
+            var greeting = Data()
+            while greeting.count < 12, let part = try await iterator.next() { greeting.append(part) }
+            XCTAssertEqual(greeting, Data("RFB 003.008\n".utf8))
+            try await transport.send(Data("CROW FLOOD\r\n".utf8))
+            if iteration == 0 {
+                // A stalled renderer fills the bounded queue. The handler closes from
+                // channelRead while NIO still has buffered frames to deliver.
+                try await Task.sleep(for: .milliseconds(500))
+                var overflow = false
+                do { while try await iterator.next() != nil { } }
+                catch { overflow = error.localizedDescription.contains("faster than it could be displayed") }
+                XCTAssertTrue(overflow, "A slow consumer should close only the screen transport, without trapping NIO")
+                // Match RemoteScreenSession's cleanup after the stream reports an error.
+                transport.close()
+            } else {
+                var received = 0
+                while received < 100_000 + iteration * 7919, let data = try await iterator.next() { received += data.count }
+                transport.close() // User closes the screen in the middle of a transfer.
+                transport.close() // Repeated stop must be harmless.
+            }
+            var closed = false
+            for _ in 0..<100 {
+                let tail = try await connection.read(events).dropFirst(before.count)
+                if tail.contains("\"type\": \"closed\"") { closed = true; break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertTrue(closed, "Screen channel must close promptly while SSH/SFTP remain usable")
+            XCTAssertTrue(connection.isConnected)
+        }
+    }
+
     static func verify(in state: WorkspaceState, port: Int, events: String) async throws {
+        try await verifyStreamingClose(in: state, port: port, events: events)
         let previousEvents = try await XCTUnwrap(state.remote).read(events)
         let viewer = RemoteScreenSession()
         #if os(macOS)
+        XCTAssertTrue(viewer.clipboardSync)
+        XCTAssertTrue(viewer.includeClipboardImages)
+        // Exercise the explicit off state first, then each sync mode below.
+        viewer.clipboardSync = false
+        viewer.includeClipboardImages = false
         let pasteboard = NSPasteboard(name: .init("crow-screen-test-" + UUID().uuidString))
         viewer.pasteboard = pasteboard
         defer { pasteboard.releaseGlobally() }

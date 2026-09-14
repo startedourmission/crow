@@ -44,7 +44,7 @@ final class AppModel {
         fileSearchFocusRequest += 1
     }
     func findInCurrentDocument() {
-        guard inspectedBuffer != nil else { return }
+        guard let buffer = inspectedBuffer, !buffer.isImage else { return }
         documentFindRequest += 1
     }
     func adjustFontSize(by amount: Double) {
@@ -74,6 +74,7 @@ final class AppModel {
     var conflictRequest: BufferID?
     var externallyChangedBuffers: Set<BufferID> = []
     var externalFileErrors: [BufferID: String] = [:]
+    var imagePreviews: [BufferID: ImagePreview] = [:]
     var deleteRequest: FileEntry?
     var hostKeyChallenge: HostKeyChallenge?
     var folderImporterVisible = false
@@ -330,6 +331,12 @@ final class AppModel {
         disconnect(state)
         state.refreshGeneration = UUID()
         state.accessURL?.stopAccessingSecurityScopedResource(); state.accessURL = nil
+        for buffer in state.snapshot.buffers {
+            imagePreviews.removeValue(forKey: buffer.id)
+            observedFileRevisions.removeValue(forKey: buffer.id)
+            externalFileErrors.removeValue(forKey: buffer.id)
+            externallyChangedBuffers.remove(buffer.id)
+        }
         states.remove(at: index)
         if selectedWorkspaceID == id {
             selectedWorkspaceID = states.isEmpty ? emptyState.id : states[min(index, states.count - 1)].id
@@ -542,7 +549,9 @@ final class AppModel {
             ensureLayout(state); state.snapshot.layout?.open(.file(existing.id))
             state.maximizedPaneID = nil; compactSurface = .editor; schedulePersist(); return
         }
-        if !state.snapshot.workspace.isRemote {
+        if ImagePreview.supports(entry.path) {
+            addBuffer(path: entry.path, text: "", to: state, image: true)
+        } else if !state.snapshot.workspace.isRemote {
             do { addBuffer(path: entry.path, text: try TextFiles.read(URL(fileURLWithPath: entry.path)), to: state) }
             catch { report(error) }
         } else {
@@ -557,12 +566,13 @@ final class AppModel {
         compactSurface = .editor
     }
 
-    private func addBuffer(path: String, text: String, to state: WorkspaceState) {
+    private func addBuffer(path: String, text: String, to state: WorkspaceState, image: Bool = false) {
         if let existing = state.snapshot.buffers.first(where: { $0.path == path }) {
             state.snapshot.selectedBufferID = existing.id; return
         }
         var buffer = OpenBuffer(title: (path as NSString).lastPathComponent, path: path, text: text,
             language: LanguageMode.infer(filename: path), isRemote: state.snapshot.workspace.isRemote)
+        buffer.contentKind = image ? .image : .text
         buffer.savedText = text
         state.snapshot.buffers.append(buffer); state.snapshot.selectedBufferID = buffer.id
         ensureLayout(state); state.snapshot.layout?.open(.file(buffer.id)); state.maximizedPaneID = nil
@@ -570,7 +580,7 @@ final class AppModel {
     }
 
     func updateBufferText(_ id: BufferID, _ text: String) {
-        guard let (state, index) = locate(id) else { return }
+        guard let (state, index) = locate(id), !state.snapshot.buffers[index].isImage else { return }
         let wasDirty = state.snapshot.buffers[index].isDirty
         state.snapshot.buffers[index].text = text
         state.snapshot.buffers[index].isDirty = text != state.snapshot.buffers[index].savedText
@@ -604,6 +614,30 @@ final class AppModel {
             let contentInterval: TimeInterval = (revision.size ?? 0) > 262_144 ? 30 : 5
             if !force, !discardChanges, let previous, previous.path == buffer.path, previous.revision == revision,
                !previous.verifyAgain, Date().timeIntervalSince(previous.checkedAt) < contentInterval { return }
+            if buffer.isImage {
+                let preview: ImagePreview
+                let after: FileRevision
+                if let connection, buffer.isRemote {
+                    let data: Data
+                    do { data = try await connection.readData(buffer.path, maximumSize: ImagePreview.sizeLimit) }
+                    catch FileFailure.tooLarge { throw ImagePreview.Failure.tooLarge }
+                    preview = try await Task.detached(priority: .utility) { try ImagePreview.decode(data) }.value
+                    after = try await connection.revision(buffer.path)
+                } else {
+                    (preview, after) = try await Task.detached(priority: .utility) {
+                        (try ImagePreview.read(buffer.path), try FileRevision.local(buffer.path))
+                    }.value
+                }
+                guard !Task.isCancelled, !fileRefreshPaused, after == revision,
+                      let (currentState, currentIndex) = locate(id), currentState === state,
+                      state.remote === connection, state.snapshot.buffers[currentIndex].path == buffer.path,
+                      !state.movingPaths.contains(where: { buffer.path == $0 || buffer.path.hasPrefix($0 + "/") }) else { return }
+                imagePreviews[id] = preview
+                externalFileErrors.removeValue(forKey: id)
+                observedFileRevisions[id] = ObservedFileRevision(path: buffer.path, revision: revision, checkedAt: Date(),
+                    verifyAgain: buffer.isRemote && previous?.revision != revision)
+                return
+            }
             let text: String
             let after: FileRevision
             if let connection, buffer.isRemote {
@@ -641,13 +675,14 @@ final class AppModel {
             guard !Task.isCancelled, let (currentState, currentIndex) = locate(id), currentState === state,
                   state.snapshot.buffers[currentIndex].path == buffer.path, state.remote === connection else { return }
             observedFileRevisions.removeValue(forKey: id)
-            let message = "Could not refresh this file. Your open text is kept. \(error.localizedDescription)"
+            let message = buffer.isImage ? "Could not load this image. \(error.localizedDescription)"
+                : "Could not refresh this file. Your open text is kept. \(error.localizedDescription)"
             if externalFileErrors[id] != message { externalFileErrors[id] = message }
         }
     }
 
     @discardableResult func saveBuffer(_ id: BufferID, overwrite: Bool = false) async -> Bool {
-        guard let (state, index) = locate(id), !saving.contains(id) else { return false }
+        guard let (state, index) = locate(id), !state.snapshot.buffers[index].isImage, !saving.contains(id) else { return false }
         guard !state.movingPaths.contains(where: { state.snapshot.buffers[index].path == $0 || state.snapshot.buffers[index].path.hasPrefix($0 + "/") }) else {
             statusMessage = "Wait for the file move to finish before saving."; return false
         }
@@ -685,6 +720,7 @@ final class AppModel {
     func discardBuffer(_ id: BufferID) {
         guard let (state, _) = locate(id) else { return }
         state.snapshot.buffers.removeAll { $0.id == id }
+        imagePreviews.removeValue(forKey: id)
         observedFileRevisions.removeValue(forKey: id)
         externallyChangedBuffers.remove(id); externalFileErrors.removeValue(forKey: id)
         state.snapshot.layout?.remove(.file(id))

@@ -24,6 +24,9 @@ packages:
   Citadel:
     url: https://github.com/orlandos-nl/Citadel
     exactVersion: 0.12.1
+  NIOSSH:
+    url: https://github.com/Wellz26/swift-nio-ssh.git
+    exactVersion: 0.3.7
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     exactVersion: 2.9.6
@@ -83,6 +86,8 @@ targetTemplates:
         product: SwiftTerm
       - package: Citadel
         product: Citadel
+      - package: NIOSSH
+        product: NIOSSH
 
 targets:
   Crow-iOS:

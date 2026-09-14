@@ -41,6 +41,7 @@ struct CrowApp: App {
                 Button("Save") {
                     if !NSApp.sendAction(#selector(CodeTextView.saveDocument(_:)), to: nil, from: nil) { model.saveSelectedBuffer() }
                 }.keyboardShortcut("s", modifiers: .command)
+                    .disabled(model.inspectedBuffer == nil || model.inspectedBuffer?.isImage == true)
                 Button("Save All") { Task { await model.saveAll() } }.keyboardShortcut("s", modifiers: [.command, .option])
                 Button("Close Tab") {
                     if let pane = model.current.snapshot.layout?.activePane, let tab = pane.selected {
@@ -56,7 +57,7 @@ struct CrowApp: App {
             CommandGroup(after: .textEditing) {
                 Button("Find and Replace…") {
                     model.findInCurrentDocument()
-                }.keyboardShortcut("f", modifiers: .command).disabled(model.inspectedBuffer == nil)
+                }.keyboardShortcut("f", modifiers: .command).disabled(model.inspectedBuffer == nil || model.inspectedBuffer?.isImage == true)
                 Button("Search Files…") { model.focusFileSearch() }
                     .keyboardShortcut("f", modifiers: [.command, .shift]).disabled(!model.hasWorkspace)
                 Button("Increase Font Size") { model.adjustFontSize(by: 1) }

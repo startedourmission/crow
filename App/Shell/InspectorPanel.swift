@@ -51,7 +51,7 @@ struct InspectorPanel: View {
         .background(CrowTheme.bg1)
         .crowForeground(CrowTheme.text)
         .task(id: buffer) {
-            guard let buffer else { outline = []; outlineBufferID = nil; return }
+            guard let buffer, !buffer.isImage else { outline = []; outlineBufferID = nil; return }
             if outlineBufferID != buffer.id { outline = []; outlineBufferID = buffer.id }
             do {
                 try await Task.sleep(for: .milliseconds(180))
@@ -106,7 +106,15 @@ struct InspectorPanel: View {
             if let buffer {
                 Text(buffer.title).font(.system(size: 11, weight: .medium))
                     .lineLimit(1).truncationMode(.middle).padding(12)
-                if outline.isEmpty {
+                if buffer.isImage {
+                    if let preview = model.imagePreviews[buffer.id] {
+                        Text("\(preview.format) · \(preview.width) × \(preview.height)")
+                            .font(.system(size: 12)).crowForeground(CrowTheme.textDim).padding(.horizontal, 12)
+                    }
+                    Text(buffer.path).font(.system(size: 11)).textSelection(.enabled)
+                        .crowForeground(CrowTheme.textDim).padding(12)
+                    Spacer()
+                } else if outline.isEmpty {
                     Text(buffer.language == .markdown ? "No headings" : "No recognized functions or methods")
                         .font(.system(size: 12)).crowForeground(CrowTheme.textDim).padding(12)
                     Spacer()
