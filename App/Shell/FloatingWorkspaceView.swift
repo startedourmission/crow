@@ -55,7 +55,7 @@ struct FloatingWorkspaceView: View {
                         ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
                             Button("Terminal \(index + 1)") { model.current.snapshot.selectedTerminalID = id; model.schedulePersist() }
                         }
-                        Button("Close Terminal…") { model.terminalCloseRequest = model.current.snapshot.selectedTerminalID }
+                        Button("Close Terminal") { model.requestTerminalClose(model.current.snapshot.selectedTerminalID) }
                     } else if model.compactSurface == .editor {
                         ForEach(model.buffers) { buffer in
                             Button(buffer.title + (buffer.isDirty ? " •" : "")) { model.selectedBufferID = buffer.id }

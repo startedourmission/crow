@@ -7,6 +7,44 @@ import SwiftUI
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testOnlyWorkingSessionsAskBeforeClosing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-close-state-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        model.newTerminal()
+        let ready = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        model.requestTerminalClose(ready)
+        XCTAssertNil(model.terminalCloseRequest); XCTAssertFalse(model.current.snapshot.terminalIDs.contains(ready))
+        let id = try XCTUnwrap(model.newAgentTerminal(.claude))
+        let session = model.terminal(id, in: model.current); session.running = true
+        session.view.feed(text: "Working (esc to interrupt)\r\n")
+        model.requestTerminalClose(id)
+        XCTAssertEqual(model.terminalCloseRequest, id); XCTAssertTrue(model.current.snapshot.terminalIDs.contains(id))
+        session.view.feed(text: "\u{1b}[2J\u{1b}[HDo you want to proceed?\r\n❯ 1. Yes\r\n2. No\r\n")
+        model.terminalCloseRequest = nil
+        model.requestTerminalClose(id)
+        XCTAssertNil(model.terminalCloseRequest); XCTAssertFalse(model.current.snapshot.terminalIDs.contains(id))
+    }
+
+    @MainActor func testRemovingHostAlsoRemovesItsWorkspaces() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-remove-host-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let host = SSHHost(name: "Test", hostname: "192.0.2.50", username: "fixture")
+        model.hosts = [host]
+        for path in ["/first", "/second"] { model.states.append(WorkspaceState(.init(workspace: .init(name: path, kind: .remote(hostID: host.id, path: path), connection: .disconnected), rootPath: path))) }
+        model.removeHost(host)
+        XCTAssertFalse(model.hosts.contains { $0.id == host.id })
+        XCTAssertFalse(model.workspaceHostIDs.contains(host.id))
+        XCTAssertFalse(model.states.contains { $0.snapshot.workspace.hostID == host.id })
+    }
+
+    func testSSHPasswordSelectionOverridesConfigWithoutChangingDestination() throws {
+        let line = try SSHCommandView.connectionCommand("ssh -p 2222 user@host", authentication: "password", identityPath: "")
+        let args = try SSHCommand(line).arguments
+        XCTAssertEqual(Array(args.suffix(3)), ["-p", "2222", "user@host"])
+        XCTAssertTrue(args.contains("PubkeyAuthentication=no")); XCTAssertTrue(args.contains("PreferredAuthentications=keyboard-interactive,password"))
+    }
     @MainActor func testAgentUsesRegularTerminalLifecycleAndMetadata() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("crow-agent-terminal-" + UUID().uuidString)
         let model = AppModel(vaultURL: directory)

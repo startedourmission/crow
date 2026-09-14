@@ -52,7 +52,20 @@ struct TmuxPanel: View {
                     Image(systemName: "plus").frame(width: 24, height: 28).contentShape(Rectangle())
                 }.help("New tmux session").accessibilityLabel("New tmux session")
             }.buttonStyle(.plain).disabled(busy).font(.system(size: 11)).padding(.horizontal, 10).frame(height: 34)
-            if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(10) }
+            if let error {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    if error.contains("tmux is not installed") {
+                        Button {
+                            model.activateWorkspace(target.id, reconnect: false)
+                            model.openCommandTerminal(command: Self.installCommand)
+                            onAttach?()
+                        } label: { Image(systemName: "arrow.down.circle").font(.system(size: 16)) }
+                            .help("Install tmux on this host").accessibilityLabel("Install tmux")
+                            .accessibilityIdentifier("crow.tmux.install")
+                    }
+                }.padding(10)
+            }
             if expanded {
                 VStack(alignment: .leading, spacing: 5) {
                     if sessions.isEmpty && !busy && error == nil {
@@ -90,6 +103,20 @@ struct TmuxPanel: View {
                 Text("This ends the processes in “\(closing?.name ?? "")” for all attached clients. Closing the last pane also closes its window; closing the last window ends its session.")
             }
     }
+
+    static let installCommand = TerminalCommand.environment + """
+    if command -v tmux >/dev/null 2>&1; then tmux -V;
+    elif command -v brew >/dev/null 2>&1; then brew install tmux;
+    elif command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y tmux;
+    elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y tmux;
+    elif command -v yum >/dev/null 2>&1; then sudo yum install -y tmux;
+    elif command -v pacman >/dev/null 2>&1; then sudo pacman -S --needed tmux;
+    elif command -v apk >/dev/null 2>&1; then sudo apk add tmux;
+    elif command -v zypper >/dev/null 2>&1; then sudo zypper install tmux;
+    else printf '%s\\n' 'Install a package manager (Homebrew on macOS), then install tmux.'; fi
+    printf '\\n%s\\n' 'Return to the tmux panel and refresh after installation.'
+    exec "${SHELL:-/bin/sh}" -l
+    """
 
     private func sessionGroup(_ session: TmuxSession) -> some View {
         let location = TmuxLocation(sessionID: session.id)

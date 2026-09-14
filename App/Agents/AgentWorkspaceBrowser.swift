@@ -16,7 +16,6 @@ struct AgentWorkspaceBrowser: View {
     @State private var removeHost: SSHHost?
     @State private var renaming: AgentTerminalRoute?
     @State private var name = ""
-    @State private var closing: UUID?
     @State private var folderSource: WorkspaceID?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
@@ -78,12 +77,7 @@ struct AgentWorkspaceBrowser: View {
             .alert("Remove SSH host?", isPresented: Binding(get: { removeHost != nil }, set: { if !$0 { removeHost = nil } }), presenting: removeHost) { host in
                 Button("Remove", role: .destructive) { model.removeHost(host) }
                 Button("Cancel", role: .cancel) { }
-            } message: { _ in Text("The saved credentials will be removed from this device. Server files will not be changed.") }
-            .alert("Close this terminal?", isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } })) {
-                Button("Close Terminal", role: .destructive) { if let id = closing { model.closeTerminal(id) }; closing = nil }
-                    .keyboardShortcut(.defaultAction)
-                Button("Cancel", role: .cancel) { closing = nil }
-            } message: { Text("The terminal and its running commands will be terminated.") }
+            } message: { _ in Text("Remove this host, its workspaces and saved credentials from Crow. Server files will not be changed.") }
             .alert("Rename session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
                 TextField("Name", text: $name)
                 Button("Save") {
@@ -288,25 +282,47 @@ struct AgentWorkspaceBrowser: View {
         case .idle: CrowTheme.textDim
         default: agent == nil && session?.running == true ? .green : CrowTheme.textDim
         }
-        return Button { model.openAgentTerminal(id, workspaceID: state.id); onOpen?() } label: {
+        return HStack(spacing: 0) {
+            Button { model.openAgentTerminal(id, workspaceID: state.id); onOpen?() } label: {
             HStack(spacing: 7) {
-                Circle().fill(statusColor).frame(width: 6, height: 6)
+                SessionActivityLight(color: statusColor, spinning: activity == .needsInput)
                 if let agent { AgentProviderIcon(provider: agent.provider, size: 13) }
                 else { Image(systemName: "terminal").font(.system(size: 11)) }
                 Text(title).font(.system(size: 12)).lineLimit(1)
                 Spacer(minLength: 0)
-                Text(activity?.title ?? (session?.running == true ? "Running" : session?.status ?? "Ready"))
-                    .font(.system(size: 9, weight: activity == .needsInput ? .semibold : .regular))
-                    .foregroundStyle(statusColor).lineLimit(1)
-                    .help(agent == nil ? "Terminal status" : "Estimated from the agent’s terminal screen. Needs input includes questions and approvals.")
-            }.padding(8).padding(.leading, 28).frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
-        }.accessibilityIdentifier("crow.agents.session." + id.uuidString)
+            }.padding(.vertical, 8).padding(.leading, 36).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityValue(activity?.title ?? (session?.running == true ? "Running" : "Ready"))
+                .accessibilityIdentifier("crow.agents.session." + id.uuidString)
+            Button { model.requestTerminalClose(id) } label: {
+                Image(systemName: "xmark").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                    .frame(width: 28, height: 30).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Close terminal").accessibilityLabel("Close " + title)
+                .accessibilityIdentifier("crow.agents.close." + id.uuidString)
+        }.background(selected ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
             .contextMenu {
                 if let agent {
                     Button("Rename…") { name = agent.title; renaming = .init(workspaceID: state.id, terminalID: id) }
                 }
-                Button("Close terminal…", role: .destructive) { closing = id }
+                Button("Close terminal", role: .destructive) { model.requestTerminalClose(id) }
             }
+    }
+}
+
+private struct SessionActivityLight: View {
+    let color: Color
+    let spinning: Bool
+    @State private var rotating = false
+
+    var body: some View {
+        Group {
+            if spinning {
+                Circle().trim(from: 0.12, to: 0.85).stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .rotationEffect(.degrees(rotating ? 360 : 0))
+                    .onAppear { rotating = true }
+                    .onDisappear { rotating = false }
+                    .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: rotating)
+            } else { Circle().fill(color).padding(1) }
+        }.frame(width: 8, height: 8).accessibilityHidden(true)
     }
 }

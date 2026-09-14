@@ -402,7 +402,7 @@ private struct PhoneWorkspaceBar: View {
                             else if let buffer = model.selectedBuffer, buffer.isImage { model.closeBuffer(buffer.id) }
                             else { model.saveSelectedBuffer() }
                         }
-                        else { model.terminalCloseRequest = model.current.snapshot.selectedTerminalID }
+                        else { model.requestTerminalClose(model.current.snapshot.selectedTerminalID) }
                     } label: {
                         Group {
                             if model.compactSurface == .editor && browserID == nil && model.selectedBuffer?.isImage != true {
@@ -511,6 +511,9 @@ private struct PhoneWorkspaceBar: View {
         Button("Web Browser", systemImage: "globe") { model.newBrowser() }.disabled(!model.hasWorkspace)
         Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             .accessibilityIdentifier("crow.phone.workspaces")
+        Button("Automations", systemImage: "clock.arrow.2.circlepath") {
+            model.sidebarPane = .automation; model.sidebarVisible = true; model.compactSurface = .files
+        }.accessibilityIdentifier("crow.phone.automation")
         if model.selectedWorkspace.isRemote {
             Button("Server Screen", systemImage: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }
                 .disabled(model.selectedWorkspace.connection != .connected)

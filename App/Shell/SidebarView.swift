@@ -69,6 +69,8 @@ struct SidebarView: View {
             #endif
             if model.sidebarPane == .workspaces {
                 AgentWorkspaceBrowser()
+            } else if model.sidebarPane == .automation {
+                AutomationPanel()
             } else if model.hasWorkspace {
                 filesList
             } else {

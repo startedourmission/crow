@@ -306,7 +306,7 @@ final class AppModel {
             if (current.snapshot.layout?.allTabs.filter { $0 == tab }.count ?? 0) > 1 {
                 current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
             } else { closeBuffer(id) }
-        case .terminal(let id): terminalCloseRequest = id
+        case .terminal(let id): requestTerminalClose(id)
         case .browser(let id):
             current.snapshot.layout?.remove(tab, from: paneID)
             if current.snapshot.layout?.allTabs.contains(tab) != true {
@@ -1231,13 +1231,15 @@ final class AppModel {
     }
     func removeHost(_ host: SSHHost) {
         do {
+            let workspaces = states.filter { $0.snapshot.workspace.hostID == host.id }
+            guard !workspaces.contains(where: { $0.snapshot.buffers.contains(where: \.isDirty) }) else {
+                throw CommandError("Save or close this host's unsaved files before removing it.")
+            }
             #if os(macOS)
             reverseSSHConnections.removeValue(forKey: host.id)?.stop()
             #endif
             try SecureStore.remove(host.id.rawValue.uuidString); hosts.removeAll { $0.id == host.id }
-            for state in states {
-                if case .remote(let id, _) = state.snapshot.workspace.kind, id == host.id { disconnect(state) }
-            }
+            for state in workspaces { removeWorkspace(state.id) }
             schedulePersist()
         } catch { report(error) }
     }
@@ -1485,7 +1487,16 @@ final class AppModel {
         current.snapshot.layout?.open(.terminal(id)); current.maximizedPaneID = nil
         terminalVisible = true; schedulePersist()
     }
+    func requestTerminalClose(_ id: UUID?) {
+        guard let id, let state = states.first(where: { $0.snapshot.terminalIDs.contains(id) }) else { return }
+        let session = state.terminals[id]
+        session?.updateAgentActivity()
+        if session?.isWorking == true { terminalCloseRequest = id }
+        else { closeTerminal(id) }
+    }
+
     func closeTerminal(_ id: UUID) {
+        if terminalCloseRequest == id { terminalCloseRequest = nil }
         guard let state = states.first(where: { $0.snapshot.terminalIDs.contains(id) }) else { return }
         state.terminals[id]?.stop(); state.terminals[id] = nil; state.snapshot.terminalIDs.removeAll { $0 == id }
         state.snapshot.layout?.remove(.terminal(id))

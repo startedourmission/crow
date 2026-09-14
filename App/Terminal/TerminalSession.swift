@@ -35,6 +35,20 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     @ObservationIgnored private var activityNeedsSettledFrame = false
     @ObservationIgnored private var activityScreenHash: Int?
     private(set) var currentDirectory: String?
+    private(set) var shellWorking = false
+    var isWorking: Bool {
+        guard running else { return false }
+        if agentProvider != nil { return agentActivity == .working }
+        // Closing an attached tmux client leaves the server's jobs running.
+        if tmuxLocation != nil { return false }
+        #if os(macOS)
+        if !workspace.isRemote, let process = (view as? CrowLocalTerminalView)?.process, process.running {
+            let foreground = tcgetpgrp(process.childfd)
+            return foreground > 0 && foreground != getpgid(process.shellPid)
+        }
+        #endif
+        return shellWorking
+    }
     var imagePasteMessage: String?
     var imagePasteInProgress = false
     @ObservationIgnored var imagePasteContext: (() -> String?)?
@@ -75,7 +89,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         view.selectedTextBackgroundColor = NSColor(CrowTheme.bg3)
         if let local = view as? CrowLocalTerminalView {
             local.processDelegate = self
-            local.onInput = { [weak self] in self?.onBytes?($0) }
+            local.onInput = { [weak self] in self?.receivedInput($0) }
             local.onOutput = { [weak self] in self?.agentDidReceiveOutput() }
             return
         }
@@ -192,7 +206,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         #if os(macOS)
         (view as? LocalProcessTerminalView)?.terminate()
         #endif
-        running = false; status = "Closed"
+        running = false; shellWorking = false; status = "Closed"
     }
 
     private func connected(_ writer: RemoteWriter) {
@@ -253,7 +267,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     }
 
     func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
-        onBytes?(Array(data))
+        receivedInput(Array(data))
         guard let writer else { return }
         let bytes = Array(data), previous = inputTask
         inputTask = Task { [weak self] in
@@ -261,6 +275,13 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             guard !Task.isCancelled else { return }
             do { try await writer.value.write(ByteBuffer(bytes: bytes)) }
             catch { self?.status = error.localizedDescription }
+        }
+    }
+
+    private func receivedInput(_ bytes: [UInt8]) {
+        onBytes?(bytes)
+        if running, agentProvider == nil, currentDirectory != nil, bytes.contains(13) || bytes.contains(10) {
+            shellWorking = true
         }
     }
 
@@ -302,6 +323,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) { self.title = title }
     func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
         currentDirectory = SSHCommand.terminalDirectory(directory)
+        if currentDirectory != nil { shellWorking = false }
     }
     func scrolled(source: SwiftTerm.TerminalView, position: Double) {}
     func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {}
