@@ -77,11 +77,11 @@ connected host, and reverse-SSH startup/reconnect preserve the current sidebar
 selection rather than automatically opening Files or Hosts.
 
 The loopback test opens two independent SSH transports to the same server account
-and enables both reverse endpoints. It checks simultaneous execution through each
-client's own command, rejection of commands used from the other transport or with
-`SSH_CONNECTION` missing, and that turning one endpoint Off preserves the other.
-This connection check prevents accidental cross-client use, not deliberate bypass
-by someone with access to the same server account and its private key files.
+and enables both reverse endpoints. It checks simultaneous execution, explicit
+client commands invoked from another SSH transport or with missing/stale
+`SSH_CONNECTION` (agent/tmux environments), and independent Off. Each command
+pins its endpoint's host key and uses a unique temporary client identity; unrelated
+keys are rejected. Off removes that endpoint's entire private bundle directory.
 
 An **explicitly opt-in** live check can use an existing authenticated control socket:
 

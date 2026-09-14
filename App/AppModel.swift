@@ -823,10 +823,21 @@ final class AppModel {
                 let recovery: String
                 if state.snapshot.workspace.isRemote {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
-                    recovery = try await remote.trash(entry)
+                    recovery = try await remote.trash(entry, rootPath: state.snapshot.rootPath)
                 } else {
-                    let folder = URL(fileURLWithPath: state.snapshot.rootPath).appendingPathComponent(".crow-trash", isDirectory: true)
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let root = URL(fileURLWithPath: state.snapshot.rootPath)
+                    let storage = root.appendingPathComponent(".crow", isDirectory: true)
+                    let folder = storage.appendingPathComponent("recovery", isDirectory: true)
+                    guard !folder.path.hasPrefix(entry.path + "/") else { throw FileFailure.invalidName }
+                    for directory in [storage, folder] {
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                        let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+                        guard attributes[.type] as? FileAttributeType == .typeDirectory else { throw FileFailure.invalidName }
+                    }
+                    let legacy = root.appendingPathComponent(".crow-trash", isDirectory: true)
+                    if legacy.path != entry.path, FileManager.default.fileExists(atPath: legacy.path) {
+                        try FileManager.default.moveItem(at: legacy, to: folder.appendingPathComponent("legacy-" + UUID().uuidString))
+                    }
                     let target = folder.appendingPathComponent(UUID().uuidString + "-" + entry.name)
                     try FileManager.default.moveItem(atPath: entry.path, toPath: target.path); recovery = target.path
                 }

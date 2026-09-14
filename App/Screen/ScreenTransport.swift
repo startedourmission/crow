@@ -134,6 +134,7 @@ private final class ScreenChannelHandler: ChannelInboundHandler, @unchecked Send
         var revision: Int?
         var png: String?
         var text: String?
+        var includeImages: Bool?
     }
     nonisolated static let outputLimit = 32 * 1024 * 1024
     static let helper = #"""
@@ -162,6 +163,10 @@ function run(args) {
         board.clearContents;
         if (!board.setDataForType(data, $.NSPasteboardTypePNG)) throw Error('Could not write the image clipboard.');
         board.setDataForType(rep.TIFFRepresentation, $.NSPasteboardTypeTIFF);
+        if (request.text != null) {
+            if (request.text.length > 1000000) throw Error('Clipboard text is too large.');
+            if (!board.setStringForType(request.text, $.NSPasteboardTypeString)) throw Error('Could not write the text clipboard.');
+        }
         return JSON.stringify({revision: Number(board.changeCount)});
     }
     if (request.text != null) {
@@ -172,15 +177,16 @@ function run(args) {
     }
     const revision = Number(board.changeCount);
     if (request.revision === revision) return JSON.stringify({revision});
-    let image = board.dataForType($.NSPasteboardTypePNG);
-    if (!image || image.isNil()) image = board.dataForType($.NSPasteboardTypeTIFF);
+    let image = request.includeImages === false ? null : board.dataForType($.NSPasteboardTypePNG);
+    if (request.includeImages !== false && (!image || image.isNil())) image = board.dataForType($.NSPasteboardTypeTIFF);
+    const text = board.stringForType($.NSPasteboardTypeString);
+    const result = text && !text.isNil() ? {revision, text: ObjC.unwrap(text)} : {revision};
     if (image && !image.isNil()) {
         const png = bitmap(image).representationUsingTypeProperties($.NSPNGFileType, $({}));
         if (!png || png.isNil() || png.length > limit) throw Error('Clipboard image exceeds 20 MB.');
-        return JSON.stringify({revision, png: ObjC.unwrap(png.base64EncodedStringWithOptions(0))});
+        result.png = ObjC.unwrap(png.base64EncodedStringWithOptions(0));
     }
-    const text = board.stringForType($.NSPasteboardTypeString);
-    return JSON.stringify(text && !text.isNil() ? {revision, text: ObjC.unwrap(text)} : {revision});
+    return JSON.stringify(result);
 }
 """#
 
@@ -194,7 +200,7 @@ function run(args) {
         } else if let client = state.remote?.client {
             output = try await withThrowingTaskGroup(of: Data.self) { group in
                 group.addTask {
-                    var data = Data(), completed = false
+                    var data = Data(), diagnostic = Data(), completed = false
                     do {
                         try await client.withExec(command) { inbound, outbound in
                             for offset in stride(from: 0, to: input.count, by: 32768) {
@@ -204,11 +210,20 @@ function run(args) {
                             for try await chunk in inbound {
                                 try Task.checkCancellation()
                                 if case .stdout(let bytes) = chunk { data.append(contentsOf: bytes.readableBytesView) }
+                                if case .stderr(let bytes) = chunk { diagnostic.append(contentsOf: bytes.readableBytesView) }
                                 guard data.count <= outputLimit else { throw CommandError("Image clipboard response exceeds 32 MB.") }
+                                guard diagnostic.count <= 8192 else { throw CommandError("Image clipboard command failed.") }
                             }
                             completed = true
                         }
                     } catch ChannelError.alreadyClosed where completed { }
+                    catch {
+                        if !diagnostic.isEmpty { throw CommandError("Image clipboard: " + String(decoding: diagnostic.prefix(2000), as: UTF8.self)) }
+                        throw error
+                    }
+                    if data.isEmpty, !diagnostic.isEmpty {
+                        throw CommandError("Image clipboard: " + String(decoding: diagnostic.prefix(2000), as: UTF8.self))
+                    }
                     return data
                 }
                 group.addTask {
@@ -221,15 +236,15 @@ function run(args) {
         } else { throw FileFailure.disconnected }
         try Task.checkCancellation()
         guard let result = try? JSONDecoder().decode(Packet.self, from: output), result.revision != nil else {
-            throw CommandError("Image clipboard requires a Mac server and an SSH account matching its logged-in desktop user.")
+            throw CommandError("The Mac clipboard helper did not return a valid response. Check that this SSH account can access its desktop clipboard.")
         }
         return result
     }
 
     private static func command(length: Int, pasteboardName: String?) -> String {
-        let check = pasteboardName == nil
-            ? "test \"$(/usr/bin/id -u)\" = \"$(/usr/bin/stat -f %u /dev/console)\" || exit 1; " : ""
-        return check + "exec /usr/bin/osascript -l JavaScript -e " + GitRepository.quote(helper)
+        // /dev/console can belong to root while the user's GUI session still exists.
+        // Use the SSH account's own pasteboard service; do not infer access from console ownership.
+        return "exec /usr/bin/osascript -l JavaScript -e " + GitRepository.quote(helper)
             + " -- " + String(length) + " " + GitRepository.quote(pasteboardName ?? "")
     }
 
@@ -238,14 +253,17 @@ function run(args) {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let inputURL = root.appendingPathComponent("input"), outputURL = root.appendingPathComponent("output")
+        let errorURL = root.appendingPathComponent("error")
         try input.write(to: inputURL)
         FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errorURL.path, contents: nil)
         let stdin = try FileHandle(forReadingFrom: inputURL), stdout = try FileHandle(forWritingTo: outputURL)
-        defer { try? stdin.close(); try? stdout.close() }
+        let stderr = try FileHandle(forWritingTo: errorURL)
+        defer { try? stdin.close(); try? stdout.close(); try? stderr.close() }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = ["-T"] + spec.multiplexArguments + [command]
-        process.standardInput = stdin; process.standardOutput = stdout; process.standardError = FileHandle.nullDevice
+        process.standardInput = stdin; process.standardOutput = stdout; process.standardError = stderr
         try process.run()
         defer { if process.isRunning { process.terminate() } }
         let deadline = Date().addingTimeInterval(20)
@@ -255,11 +273,17 @@ function run(args) {
             guard ((try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) <= 32 * 1024 * 1024 else {
                 throw CommandError("Image clipboard response exceeds 32 MB.")
             }
+            guard ((try? errorURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) <= 8192 else {
+                throw CommandError("Image clipboard command failed.")
+            }
             Thread.sleep(forTimeInterval: 0.025)
         }
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            throw CommandError("Image clipboard requires a Mac server and an SSH account matching its logged-in desktop user.")
+            let detail = String(decoding: (try Data(contentsOf: errorURL)).prefix(2000), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw CommandError(detail.isEmpty ? "The Mac clipboard command failed (SSH exit \(process.terminationStatus))."
+                : "Image clipboard: " + detail)
         }
         let data = try Data(contentsOf: outputURL)
         guard data.count <= 32 * 1024 * 1024 else { throw CommandError("Image clipboard response exceeds 32 MB.") }

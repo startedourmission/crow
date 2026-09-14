@@ -190,8 +190,9 @@ import AppKit
         _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments + [command + " " + SystemSSHBridge.quote(edit)])
         let editedText = try String(contentsOf: edited, encoding: .utf8)
         try require(editedText == "client-edit", "Server could not edit a client file")
-        let directories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-        let bundle = directories.first { $0.lastPathComponent.hasPrefix(".crow-client-") }!
+        let bundles = root.appendingPathComponent(".crow/reverse-ssh")
+        let directories = try FileManager.default.contentsOfDirectory(at: bundles, includingPropertiesForKeys: nil)
+        let bundle = directories.first { UUID(uuidString: $0.lastPathComponent) != nil }!
         let wrapper = try String(contentsOf: bundle.appendingPathComponent("connect"), encoding: .utf8)
         let parts = wrapper.components(separatedBy: " -p ")
         let reversePort = String(parts[1].split(separator: " ")[0])
@@ -229,30 +230,22 @@ import AppKit
         async let secondOutput = ReverseSSHCommand.remote(otherSpec, command: otherCommand + " -T 'printf SECOND_CLIENT'")
         let outputs = try await (firstOutput, secondOutput)
         try require(outputs.0 == "FIRST_CLIENT" && outputs.1 == "SECOND_CLIENT", "Simultaneous clients could not use their own reverse endpoints")
-        let forbiddenFile = root.appendingPathComponent("wrong-client-executed")
-        let forbiddenCommand = "touch " + SystemSSHBridge.quote(forbiddenFile.path)
+        // Codex subprocesses and tmux may retain another SSH transport's environment.
+        // The explicit command still selects its own private identity and pinned Mac.
         for (source, target) in [(spec, otherCommand), (otherSpec, command)] {
-            do {
-                _ = try await ReverseSSHCommand.remote(source, command: target + " -T " + SystemSSHBridge.quote(forbiddenCommand))
-                throw CommandError("Another client's reverse command was accepted")
-            } catch let error as CommandError {
-                try require(error.message.contains("belongs to a different SSH connection"), "Unexpected cross-client error: \(error.message)")
-            }
+            let result = try await ReverseSSHCommand.remote(source, command: target + " -T 'printf AGENT_OK'")
+            try require(result == "AGENT_OK", "An agent on another SSH transport could not use the explicit client command")
         }
-        // Detached shells and reused tmux environments must not silently select a client.
-        do {
-            _ = try await ReverseSSHCommand.remote(spec,
-                command: "unset SSH_CONNECTION; " + command + " -T " + SystemSSHBridge.quote(forbiddenCommand))
-            throw CommandError("A command without SSH_CONNECTION was accepted")
-        } catch let error as CommandError {
-            try require(error.message.contains("belongs to a different SSH connection"), "Unexpected missing-connection error: \(error.message)")
+        for prefix in ["unset SSH_CONNECTION; ", "SSH_CONNECTION='stale tmux connection'; export SSH_CONNECTION; "] {
+            let result = try await ReverseSSHCommand.remote(spec,
+                command: prefix + command + " -T 'printf DETACHED_AGENT_OK'")
+            try require(result == "DETACHED_AGENT_OK", "A detached or stale agent environment blocked the explicit client command")
         }
-        try require(!FileManager.default.fileExists(atPath: forbiddenFile.path), "A rejected command executed on a client")
-        try require(session.isEnabled && otherSession.isEnabled, "Rejecting a wrong client disabled an endpoint")
+        try require(session.isEnabled && otherSession.isEnabled, "Agent execution disabled an endpoint")
         await otherSession.stopAndWait()
         let survivor = try await ReverseSSHCommand.remote(spec, command: command + " -T 'printf FIRST_STILL_ALIVE'")
         try require(survivor == "FIRST_STILL_ALIVE", "Stopping another client's endpoint interrupted the first")
-        print("PASS simultaneous same-account clients, cross-client command rejection, missing connection rejection, independent Off")
+        print("PASS simultaneous clients, agent execution with absent/stale SSH_CONNECTION, independent Off")
         let outputURL = root.appendingPathComponent("live-output")
         FileManager.default.createFile(atPath: outputURL.path, contents: nil)
         let output = try FileHandle(forWritingTo: outputURL)
@@ -280,8 +273,8 @@ import AppKit
         do { try await wait("Restart did not finish") { session.connectCommand != nil || !session.isEnabled } }
         catch { throw CommandError("Restart did not finish: \(session.status)") }
         try require(session.connectCommand != nil && session.connectCommand != command, "Restart reused revoked credentials")
-        let restartedBundle = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-            .first { $0.lastPathComponent.hasPrefix(".crow-client-") }!
+        let restartedBundle = try FileManager.default.contentsOfDirectory(at: bundles, includingPropertiesForKeys: nil)
+            .first { UUID(uuidString: $0.lastPathComponent) != nil }!
         try Data("#!/bin/sh\nexit 42\n".utf8).write(to: restartedBundle.appendingPathComponent("connect"))
         try await wait("Broken reverse route stayed On while the master remained alive") { !session.isEnabled }
         try require(session.connectCommand == nil, "A broken reverse route still advertised a command")

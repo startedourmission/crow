@@ -72,7 +72,7 @@ struct RemoteScreenView: View {
                         Label("Clipboard", systemImage: screen.clipboardSync ? "checkmark.square" : "square")
                     }
                     .disabled(screen.viewOnly)
-                    .help("Sync the client clipboard; image support requires the same Mac desktop and SSH account")
+                    .help("Sync the client clipboard; image support uses the Mac SSH account’s desktop clipboard")
                     #endif
                 }.padding(12)
                 if let error = screen.error {
@@ -81,7 +81,10 @@ struct RemoteScreenView: View {
                 }
                 #if os(macOS)
                 if let error = screen.clipboardError {
-                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal, 12)
+                    HStack {
+                        Text(error + " Text clipboard remains available.").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                        Button("Retry") { screen.retryClipboard() }
+                    }.padding(.horizontal, 12)
                 }
                 #endif
                 ScreenWebView(screen: screen)
@@ -138,7 +141,7 @@ struct RemoteScreenView: View {
         #if os(macOS)
         "Click the screen to use your keyboard and mouse. Turn off Fit to pan at actual size."
         #else
-        "Touch or click to control. Use the text field below the screen to type from a phone or tablet. Turn off Fit to pan at actual size."
+        "Touch or click to control. Tap Keyboard to type directly on the server, or use a hardware keyboard after selecting the screen. Turn off Fit to pan at actual size."
         #endif
     }
 }

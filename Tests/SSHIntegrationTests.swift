@@ -159,8 +159,15 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(listed.contains { $0.name == "remote.txt" })
         let renamed = root.appendingPathComponent("renamed.txt").path
         try await connection.rename(path, to: renamed)
+        let legacyTrash = root.appendingPathComponent(".crow-trash-" + UUID().uuidString + "-old.txt")
+        try Data("old remote recovery".utf8).write(to: legacyTrash)
         let trash = try await connection.trash(.init(name: "renamed.txt", path: renamed, isDirectory: false))
         XCTAssertTrue(FileManager.default.fileExists(atPath: trash))
+        XCTAssertTrue(trash.hasPrefix(root.appendingPathComponent(".crow/recovery").path + "/"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyTrash.path))
+        let recovered = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent(".crow/recovery"), includingPropertiesForKeys: nil)
+        let migrated = try XCTUnwrap(recovered.first { $0.lastPathComponent.hasPrefix("legacy-") })
+        XCTAssertEqual(try String(contentsOf: migrated, encoding: .utf8), "old remote recovery")
 
         let session = TerminalSession(id: UUID(), workspace: Workspace(name: "SSH",
             kind: .remote(hostID: host.id, path: root.path), connection: .connected),
@@ -262,6 +269,7 @@ final class SSHIntegrationTests: XCTestCase {
         try await native.rename(nativePath, to: nativeRenamed)
         let nativeTrash = try await native.trash(.init(name: "renamed native.txt", path: nativeRenamed, isDirectory: false))
         XCTAssertTrue(FileManager.default.fileExists(atPath: nativeTrash))
+        XCTAssertTrue(nativeTrash.hasPrefix(root.appendingPathComponent(".crow/recovery").path + "/"))
         try await model.connectCommand(command)
         XCTAssertEqual(model.selectedWorkspaceID, imported.id)
         XCTAssertEqual(model.hosts.count, 1, "The one-line UI should reuse the imported host")

@@ -46,7 +46,10 @@ private final class ScreenBrowserView: WKWebView {
     private(set) var clipboardError: String?
     var pasteboard: NSPasteboard = .general
     var remotePasteboardName: String?
+    var serverIsMac = false { didSet { resetClipboard(); configureViewer() } }
+    private var usesNativeClipboard: Bool { serverIsMac || includeClipboardImages }
     private var clipboardChangeCount: Int?
+    private var clipboardEpoch = UUID()
     private var clipboardTask: Task<Void, Never>?
     private weak var clipboardWorkspace: WorkspaceState?
     private var remoteClipboardRevision: Int?
@@ -77,7 +80,10 @@ private final class ScreenBrowserView: WKWebView {
         #endif
         messages.owner = self; webView.navigationDelegate = self
         #if os(iOS)
-        webView.scrollView.isScrollEnabled = false
+        // Keep WebKit's native touch handling enabled. The page owns panning of
+        // the remote desktop; disabling its scroll view also interferes with input.
+        webView.scrollView.bounces = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         #endif
         guard let url = Bundle.main.url(forResource: "screen", withExtension: "html") else {
             error = "The screen viewer is missing from this build."; return
@@ -164,7 +170,7 @@ private final class ScreenBrowserView: WKWebView {
         #if os(macOS)
         let desktop = true
         let clipboard = clipboardSync && !viewOnly
-        let vncClipboard = clipboard && !includeClipboardImages
+        let vncClipboard = clipboard && (!usesNativeClipboard || clipboardError != nil)
         #else
         let desktop = false
         let clipboard = false
@@ -180,9 +186,11 @@ private final class ScreenBrowserView: WKWebView {
     }
     #if os(macOS)
     private func resetClipboard() {
+        clipboardEpoch = UUID()
         clipboardChangeCount = nil; remoteClipboardRevision = nil
         nextClipboardPoll = .distantPast; clipboardError = nil
     }
+    func retryClipboard() { resetClipboard(); configureViewer(); monitorClipboard() }
     private func monitorClipboard() {
         clipboardTask?.cancel(); clipboardTask = nil
         guard connected, clipboardSync else { return }
@@ -196,7 +204,11 @@ private final class ScreenBrowserView: WKWebView {
 
     func syncClipboardIfNeeded() async {
         await configuring?.value
-        if includeClipboardImages { await syncNativeClipboard(); return }
+        if usesNativeClipboard, clipboardError == nil {
+            await syncNativeClipboard()
+            if clipboardError == nil { return }
+            await configuring?.value
+        }
         guard connected, clipboardSync, !viewOnly, pasteboard.changeCount != clipboardChangeCount else { return }
         clipboardChangeCount = pasteboard.changeCount
         guard let text = pasteboard.string(forType: .string), text.utf8.count <= 1_000_000 else { return }
@@ -206,25 +218,25 @@ private final class ScreenBrowserView: WKWebView {
     }
 
     private func receiveClipboard(_ text: String) {
-        guard clipboardSync, !includeClipboardImages, !viewOnly, connected, text.utf8.count <= 1_000_000 else { return }
+        guard clipboardSync, (!usesNativeClipboard || clipboardError != nil), !viewOnly, connected, text.utf8.count <= 1_000_000 else { return }
         pasteboard.clearContents(); pasteboard.setString(text, forType: .string)
         clipboardChangeCount = pasteboard.changeCount
     }
 
     func syncNativeClipboard(pullOnly: Bool = false) async {
-        guard connected, clipboardSync, includeClipboardImages, !viewOnly,
+        guard connected, clipboardSync, usesNativeClipboard, !viewOnly,
               clipboardError == nil, !transferringClipboard, let state = clipboardWorkspace else { return }
-        let id = identifier, localRevision = pasteboard.changeCount
-        var request = MacScreenClipboard.Packet(revision: remoteClipboardRevision)
+        let id = identifier, epoch = clipboardEpoch, localRevision = pasteboard.changeCount
+        var request = MacScreenClipboard.Packet(revision: remoteClipboardRevision, includeImages: includeClipboardImages)
         do {
             if !pullOnly, clipboardChangeCount != localRevision {
-                if let png = try ClipboardImage.png(from: pasteboard) { request.png = png.base64EncodedString() }
-                else if let text = pasteboard.string(forType: .string), text.utf8.count <= 1_000_000 { request.text = text }
+                if includeClipboardImages, let png = try ClipboardImage.png(from: pasteboard) { request.png = png.base64EncodedString() }
+                if let text = pasteboard.string(forType: .string), text.utf8.count <= 1_000_000 { request.text = text }
             } else if !pullOnly, Date() < nextClipboardPoll { return }
             transferringClipboard = true
             defer { transferringClipboard = false }
             let response = try await MacScreenClipboard.exchange(request, in: state, pasteboardName: remotePasteboardName)
-            guard identifier == id, connected, clipboardSync, includeClipboardImages, !viewOnly else { return }
+            guard identifier == id, clipboardEpoch == epoch, connected, clipboardSync, usesNativeClipboard, !viewOnly else { return }
             nextClipboardPoll = Date().addingTimeInterval(1.5)
             guard pasteboard.changeCount == localRevision else { return }
             if let encoded = response.png {
@@ -237,12 +249,20 @@ private final class ScreenBrowserView: WKWebView {
                 guard let png = try ClipboardImage.png(from: scratch) else { throw CommandError("Invalid clipboard image.") }
                 pasteboard.clearContents(); pasteboard.setData(png, forType: .png)
                 if let image = NSImage(data: png), let tiff = image.tiffRepresentation { pasteboard.setData(tiff, forType: .tiff) }
-            } else if let text = response.text, text.utf8.count <= 1_000_000 {
-                pasteboard.clearContents(); pasteboard.setString(text, forType: .string)
+            }
+            if let text = response.text, text.utf8.count <= 1_000_000 {
+                if response.png == nil { pasteboard.clearContents() }
+                pasteboard.setString(text, forType: .string)
             }
             remoteClipboardRevision = response.revision
             clipboardChangeCount = pasteboard.changeCount
-        } catch { if identifier == id { clipboardError = error.localizedDescription } }
+        } catch {
+            if identifier == id, clipboardEpoch == epoch {
+                clipboardError = error.localizedDescription
+                clipboardChangeCount = nil
+                configureViewer()
+            }
+        }
     }
 
     private func pasteFromClient(_ modifiers: [String: Bool]) {
@@ -256,7 +276,9 @@ private final class ScreenBrowserView: WKWebView {
             guard identifier == id, connected, clipboardSync, !viewOnly else { return }
             clipboardChangeCount = nil
             await syncClipboardIfNeeded()
-            guard identifier == id, connected, clipboardSync, !viewOnly, clipboardError == nil else { return }
+            guard identifier == id, connected, clipboardSync, !viewOnly else { return }
+            // Do not paste unrelated server contents when an image could not be delivered.
+            if clipboardError != nil, pasteboard.availableType(from: [.png, .tiff]) != nil { return }
             do { try await javascript("window.crowScreen.finishPaste(modifiers, id)", ["modifiers": modifiers, "id": id]) }
             catch { if identifier == id { fail(error.localizedDescription) } }
         }
@@ -266,13 +288,14 @@ private final class ScreenBrowserView: WKWebView {
         let id = identifier
         Task { [weak self] in
             guard let self else { return }
+            await configuring?.value
             do { try await javascript("window.crowScreen.nativeShortcut(key, id)", ["key": key, "id": id]) }
             catch { if identifier == id { fail(error.localizedDescription) } }
         }
     }
 
     private func copiedOnServer() {
-        guard includeClipboardImages else { return }
+        guard usesNativeClipboard else { return }
         let id = identifier
         Task { [weak self] in
             // Remote applications update their pasteboard after the key event.
@@ -295,6 +318,7 @@ private final class ScreenBrowserView: WKWebView {
         case "connected":
             connected = true; deadline?.cancel(); deadline = nil
             #if os(macOS)
+            serverIsMac = body["appleServer"] as? Bool ?? false
             monitorClipboard()
             #endif
         case "clipboard":

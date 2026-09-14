@@ -22,16 +22,26 @@ WKWebView script. Screen data and input are bounded and tagged per session so
 closing or reconnecting cannot deliver old input to a new connection.
 
 On macOS the viewer opens in a separate, resizable window with native Fit and
-View Only controls. The mobile keyboard controls stay available on iOS. The
+View Only controls. On iOS, Keyboard opens a live input field; committed text
+is sent immediately, including IME composition, and Done dismisses it. Special
+keys scroll independently so Keyboard and View Only remain visible. Touch gestures
+and hardware keys use noVNC's canvas handlers, with native WebKit touch handling
+enabled and browser panning disabled only over the remote screen. The
 Mac's Clipboard menu enables synchronization: local clipboard changes
 are sent while the viewer is active, and incoming text updates the Mac clipboard
 without echoing it back. Sync is off by default and pauses in View Only mode.
-Text mode uses the server's VNC clipboard support (Unicode requires extended
-clipboard support). Include Images uses an SSH command with macOS's built-in
-AppKit scripting bridge for PNG/TIFF images and Unicode text in both directions.
-It requires the SSH account to match the active Mac desktop user, installs no
+Servers advertising Apple authentication use the SSH/AppKit clipboard bridge
+for text as well as images, including with Include Images off. Other servers use
+VNC text clipboard support (Unicode requires extended clipboard support).
+Include Images enables PNG/TIFF transfer over the same SSH bridge. When a
+clipboard offers both text and an image, both representations are preserved.
+It accesses the SSH account's own desktop pasteboard, installs no
 remote files or services, and bounds images to 20 MB / 40 megapixels. Files are
-not transferred. Command/Ctrl-V synchronizes the client clipboard before issuing
+not transferred. Console ownership is not used as an access check: a locked or
+inactive console may belong to root while the user's desktop session still exists.
+If the image helper fails, VNC text synchronization and paste shortcuts continue
+to work, with the actual helper error displayed and a Retry action available.
+Command/Ctrl-V synchronizes the client clipboard before issuing
 remote Paste; Copy copies the remote selection and retrieves the result. Apple
 servers retain Command/Option mappings instead of noVNC's PC-oriented mapping.
 Empty server cursors use noVNC's visible dot cursor fallback.
@@ -55,6 +65,8 @@ authentication and checks the DES response for the fixed test password `fixture`
 The checks reject a wrong password before retrying with the correct one.
 It is never included in the app or used as a real screen server. The integration
 checks exercise the actual WKWebView and SSH transport on macOS (Citadel and
-OpenSSH) and iOS (Citadel). Run iOS checks with the repository's
+OpenSSH) and iOS (Citadel), including synthetic DOM touch gestures, hardware key
+events, live input and IME commits. These checks do not synthesize UIKit touches
+or test a physical iPad keyboard. Run iOS checks with the repository's
 `scripts/test-ios-ssh.py SIMULATOR_UDID`; macOS checks are included in
 `SSHIntegrationTests`.

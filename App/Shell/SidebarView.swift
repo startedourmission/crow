@@ -197,16 +197,6 @@ struct SidebarView: View {
 
     private var filesList: some View {
         VStack(spacing: 0) {
-            Button { model.showHiddenFiles.toggle() } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: model.showHiddenFiles ? "checkmark.square.fill" : "square")
-                    Text("Show hidden files").font(.system(size: 11))
-                    Spacer(minLength: 0)
-                }.contentShape(Rectangle())
-            }
-            .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).padding(.vertical, 6)
-            .accessibilityValue(model.showHiddenFiles ? "On" : "Off")
-            .accessibilityIdentifier("crow.files.show-hidden").windowDragExcluded()
             if model.selectedWorkspace.isRemote {
                 HStack(spacing: 6) {
                     if model.selectedWorkspace.connection == .connecting { ProgressView().controlSize(.mini) }
@@ -313,6 +303,8 @@ struct SidebarView: View {
                 }
                 Button("Rename…") { renameEntry = entry; entryName = entry.name; naming = true }
                 Button("Move to Recovery Folder…", role: .destructive) { model.deleteRequest = entry }
+                Divider()
+                hiddenFilesToggle
             }
             #if os(macOS)
             .overlay {
@@ -323,6 +315,7 @@ struct SidebarView: View {
             .windowDragExcluded()
             #endif
         }
+        .contextMenu { hiddenFilesToggle }
         #if os(iOS)
         .listStyle(.plain)
         .contentMargins(.horizontal, 0, for: .scrollContent)
@@ -369,6 +362,11 @@ struct SidebarView: View {
             }
         }
         }
+    }
+
+    private var hiddenFilesToggle: some View {
+        Toggle("Show Hidden Files", isOn: Bindable(model).showHiddenFiles)
+            .accessibilityIdentifier("crow.files.show-hidden")
     }
 
     private func activate(_ entry: FileEntry) {
@@ -652,7 +650,7 @@ struct CopyClientCommandButton: View {
         }
         .buttonStyle(CrowButtonStyle())
         .accessibilityLabel(title).accessibilityIdentifier("crow.reverse-ssh-copy")
-        .help("Run this command in the Crow SSH connection that enabled Reverse SSH. Append a command to execute it on this Mac.")
+        .help("Run this command on the server, including from an agent or tmux session. It connects only to the Mac that generated it. Append a command to execute on that Mac.")
         .task(id: feedbackID) {
             guard feedbackID != nil else { return }
             do { try await Task.sleep(for: .milliseconds(1600)); copied = nil }

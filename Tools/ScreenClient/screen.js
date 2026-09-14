@@ -49,6 +49,8 @@ function applyOptions() {
     if (!rfb) return;
     rfb.viewOnly = viewOnly;
     rfb.scaleViewport = fit; rfb.clipViewport = !fit; rfb.dragViewport = !fit;
+    document.getElementById('keyboard').disabled = viewOnly;
+    document.getElementById('text').disabled = viewOnly;
 }
 class SSHChannel {
     constructor(id) {
@@ -92,6 +94,7 @@ window.crowScreen = {
     },
     start(id) {
         rfb?.disconnect();
+        resetTyping();
         sessionID = id;
         const report = (action, extra) => post(action, extra, id);
         channel = new SSHChannel(id);
@@ -100,7 +103,7 @@ window.crowScreen = {
         rfb.showDotCursor = true;
         applyOptions();
         rfb.compressionLevel = 6; rfb.qualityLevel = 6;
-        rfb.addEventListener('connect', () => { report('connected'); rfb.focus(); });
+        rfb.addEventListener('connect', () => { report('connected', {appleServer: !!rfb._crowAppleServer}); rfb.focus(); });
         rfb.addEventListener('disconnect', e => report('disconnected', {clean: e.detail.clean}));
         rfb.addEventListener('securityfailure', e => report('error', {message: e.detail.reason || 'Screen authentication failed.'}));
         rfb.addEventListener('credentialsrequired', e => report('credentials', {types: e.detail.types}));
@@ -129,8 +132,65 @@ window.crowScreen = {
     stop(id) { if (sessionID === id) { rfb?.disconnect(); channel?.close(); } },
 };
 
+const input = document.getElementById('text');
+let typed = '', composing = false;
+const forwardedKeys = new Set();
+function resetTyping() { typed = ''; input.value = ''; composing = false; forwardedKeys.clear(); }
+function sendText(text) {
+    for (const character of text) {
+        const code = character.codePointAt(0);
+        rfb?.sendKey(code === 10 ? 65293 : code <= 255 ? code : 0x01000000 | code);
+    }
+}
+function flushTyping() {
+    if (composing || !rfb || viewOnly) return;
+    // Compare committed text so IME composition, replacement and deletion don't
+    // send partial syllables or duplicate the final composition input event.
+    const before = Array.from(typed), after = Array.from(input.value);
+    let prefix = 0;
+    while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+    for (let i = prefix; i < before.length; i++) rfb.sendKey(65288);
+    sendText(after.slice(prefix).join(''));
+    typed = input.value;
+}
+input.addEventListener('compositionstart', () => { composing = true; });
+input.addEventListener('compositionend', () => { composing = false; flushTyping(); });
+input.addEventListener('input', event => { if (!event.isComposing) flushTyping(); });
+input.addEventListener('beforeinput', event => {
+    if (!composing && event.inputType === 'deleteContentBackward' && input.value === '') {
+        event.preventDefault(); if (!viewOnly) rfb?.sendKey(65288);
+    }
+});
+for (const type of ['keydown', 'keyup']) input.addEventListener(type, event => {
+    if (composing || event.isComposing || event.keyCode === 229) return;
+    const special = /^(Enter|Tab|Escape|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown|Delete|Control|Alt|Meta|Shift|F\d{1,2})$/.test(event.key);
+    if (!special && !(event.ctrlKey || event.metaKey || event.altKey) && !forwardedKeys.has(event.code)) return;
+    // Text comes through input/composition events; hardware shortcuts and
+    // navigation keys still use noVNC's normal key-down/key-up tracking.
+    event.preventDefault(); event.stopPropagation();
+    if (type === 'keydown') forwardedKeys.add(event.code); else forwardedKeys.delete(event.code);
+    document.querySelector('#display canvas')?.dispatchEvent(new KeyboardEvent(type, event));
+});
+input.addEventListener('blur', () => {
+    // Releasing focus must not leave a modifier held on the remote desktop.
+    const canvas = document.querySelector('#display canvas');
+    for (const code of forwardedKeys) canvas?.dispatchEvent(new KeyboardEvent('keyup', {code}));
+    forwardedKeys.clear();
+});
+document.getElementById('keyboard').onclick = () => {
+    const row = document.getElementById('typing');
+    row.hidden = !row.hidden;
+    document.getElementById('keyboard').setAttribute('aria-expanded', String(!row.hidden));
+    if (row.hidden) { input.blur(); rfb?.focus(); }
+    else input.focus(); // Within the tap event so iOS can open the software keyboard.
+};
 document.querySelectorAll('[data-key]').forEach(button => {
-    button.addEventListener('click', () => { rfb?.sendKey(Number(button.dataset.key)); rfb?.focus(); });
+    // Keep an open software keyboard while tapping the special-key row.
+    button.addEventListener('mousedown', event => event.preventDefault());
+    button.addEventListener('click', () => {
+        rfb?.sendKey(Number(button.dataset.key));
+        if (!document.getElementById('typing').hidden) input.focus(); else rfb?.focus();
+    });
 });
 document.getElementById('secure-attention').onclick = () => rfb?.sendCtrlAltDel();
 document.getElementById('view-only').onchange = e => { viewOnly = e.target.checked; applyOptions(); };
@@ -138,12 +198,10 @@ document.getElementById('fit').onchange = e => {
     fit = e.target.checked; applyOptions();
 };
 document.getElementById('type').onclick = () => {
-    const input = document.getElementById('text');
-    for (const character of input.value) {
-        const code = character.codePointAt(0);
-        rfb?.sendKey(code <= 255 ? code : 0x01000000 | code);
-    }
-    input.value = ''; input.blur(); rfb?.focus();
+    flushTyping(); resetTyping(); input.blur();
+    document.getElementById('typing').hidden = true;
+    document.getElementById('keyboard').setAttribute('aria-expanded', 'false');
+    rfb?.focus();
 };
 window.addEventListener('error', e => post('error', {message: e.message || 'Screen viewer failed.'}));
 window.addEventListener('unhandledrejection', e => post('error', {message: String(e.reason)}));

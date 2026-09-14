@@ -87,7 +87,7 @@ struct CrowRootView: View {
         .alert("Move to recovery folder?", isPresented: Binding(get: { model.deleteRequest != nil }, set: { if !$0 { model.deleteRequest = nil } }), presenting: model.deleteRequest) { entry in
             Button("Move", role: .destructive) { model.trash(entry) }
             Button("Cancel", role: .cancel) {}
-        } message: { entry in Text("\(entry.name) will be moved to a hidden .crow-trash location. The recovery path will appear in the status bar.") }
+        } message: { entry in Text("\(entry.name) will be moved to .crow/recovery in this workspace. The recovery path will appear in the status bar.") }
         .alert("Verify SSH host key", isPresented: Binding(get: { model.hostKeyChallenge != nil }, set: { if !$0 { model.hostKeyChallenge = nil } }), presenting: model.hostKeyChallenge) { challenge in
             Button(challenge.changed ? "Replace Trusted Key" : "Trust and Connect", role: challenge.changed ? .destructive : nil) {
                 model.trustHostKey(challenge)

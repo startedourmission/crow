@@ -150,6 +150,19 @@ final class SystemSFTP: @unchecked Sendable {
     }
     func rename(_ source: String, to destination: String) async throws { try await run { try $0.rename(source, destination) } }
 
+    func ensurePrivateDirectory(_ path: String) async throws {
+        try await run { wire in
+            // MKDIR is exclusive; an existing directory is acceptable only after
+            // checking the directory itself, without following a symlink.
+            _ = try? wire.request(14, .string(path) + .u32(4) + .u32(0o700))
+            var response = try wire.request(7, .string(path), expecting: 105)
+            guard let mode = try response.attributes().permissions,
+                  mode & 0o170000 == 0o040000, mode & 0o777 == 0o700 else {
+                throw CommandError("Crow storage must be a private directory (permissions 700): \(path)")
+            }
+        }
+    }
+
     /// Never place a client access key in a world-readable directory or follow an existing file.
     func installReverseSSHBundle(at path: String, identity: String, knownHosts: String, command: String) async throws {
         try await run { wire in
@@ -174,7 +187,13 @@ final class SystemSFTP: @unchecked Sendable {
     }
 
     func removeReverseSSHBundle(at path: String) async throws {
-        guard (path as NSString).lastPathComponent.hasPrefix(".crow-client-") else {
+        let url = URL(fileURLWithPath: path)
+        let parent = url.deletingLastPathComponent()
+        let current = parent.lastPathComponent == "reverse-ssh" && parent.deletingLastPathComponent().lastPathComponent == ".crow"
+            && UUID(uuidString: url.lastPathComponent) != nil
+        let legacy = url.lastPathComponent.hasPrefix(".crow-client-")
+            && UUID(uuidString: String(url.lastPathComponent.dropFirst(".crow-client-".count))) != nil
+        guard current || legacy else {
             throw CommandError("Invalid Reverse SSH connection directory.")
         }
         try await run { wire in

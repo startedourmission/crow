@@ -382,9 +382,35 @@ final class RemoteConnection {
         try await files().rename(at: source, to: destination)
     }
 
-    func trash(_ entry: FileEntry) async throws -> String {
-        // Recoverable remote deletion: move to a uniquely named hidden sibling.
-        let target = (entry.path as NSString).deletingLastPathComponent + "/.crow-trash-" + UUID().uuidString + "-" + entry.name
+    private func ensurePrivateDirectory(_ path: String) async throws {
+        #if os(macOS)
+        if let system { try await system.ensurePrivateDirectory(path); return }
+        #endif
+        let sftp = try await files()
+        var attributes = SFTPFileAttributes(); attributes.permissions = 0o700
+        try? await sftp.createDirectory(atPath: path, attributes: attributes)
+        // Directory listings expose the link's own type; STAT alone follows links.
+        let parent = (path as NSString).deletingLastPathComponent
+        guard try await list(parent).contains(where: { $0.path == path && $0.isDirectory }),
+              let mode = try await sftp.getAttributes(at: path).permissions, mode & 0o777 == 0o700 else {
+            throw CommandError("Crow storage must be a private directory (permissions 700): \(path)")
+        }
+    }
+
+    func trash(_ entry: FileEntry, rootPath: String? = nil) async throws -> String {
+        let parent = (entry.path as NSString).deletingLastPathComponent
+        let root = rootPath ?? parent
+        let storage = (root as NSString).appendingPathComponent(".crow")
+        let recovery = storage + "/recovery"
+        guard !recovery.hasPrefix(entry.path + "/") else { throw FileFailure.invalidName }
+        try await ensurePrivateDirectory(storage)
+        try await ensurePrivateDirectory(recovery)
+        // Consolidate old sibling recovery entries without overwriting anything.
+        for old in try await list(parent) where old.path != entry.path && old.name.hasPrefix(".crow-trash-") {
+            guard UUID(uuidString: String(old.name.dropFirst(".crow-trash-".count).prefix(36))) != nil else { continue }
+            try await rename(old.path, to: recovery + "/legacy-" + UUID().uuidString + "-" + old.name)
+        }
+        let target = recovery + "/" + UUID().uuidString + "-" + entry.name
         try await rename(entry.path, to: target)
         return target
     }
