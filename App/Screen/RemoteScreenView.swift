@@ -4,6 +4,27 @@ import WebKit
 
 struct ScreenRequest: Identifiable { let id: WorkspaceID }
 
+struct ScreenPresentation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.onChange(of: model.screenRequest?.id) { _, id in
+            guard let id else { return }
+            model.screenRequest = nil
+            openWindow(id: "server-screen", value: id)
+        }
+        #else
+        content.fullScreenCover(item: Bindable(model).screenRequest) { request in
+            RemoteScreenView(workspaceID: request.id).environment(model)
+        }
+        #endif
+    }
+}
+
 struct RemoteScreenView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -38,11 +59,31 @@ struct RemoteScreenView: View {
                         .disabled(!screen.ready || workspace?.snapshot.workspace.connection != .connected || !(1...65535).contains(Int(port) ?? 0))
                         .accessibilityIdentifier("crow.screen.connect")
                     }
+                    #if os(macOS)
+                    Toggle("Fit", isOn: Bindable(screen).fitToWindow).toggleStyle(.checkbox)
+                        .help("Fit the remote screen to this window")
+                    Toggle("View Only", isOn: Bindable(screen).viewOnly).toggleStyle(.checkbox)
+                        .help("View without sending keyboard or mouse input")
+                    Menu {
+                        Toggle("Sync Clipboard", isOn: Bindable(screen).clipboardSync)
+                        Toggle("Include Images (Mac Server)", isOn: Bindable(screen).includeClipboardImages)
+                            .disabled(!screen.clipboardSync)
+                    } label: {
+                        Label("Clipboard", systemImage: screen.clipboardSync ? "checkmark.square" : "square")
+                    }
+                    .disabled(screen.viewOnly)
+                    .help("Sync the client clipboard; image support requires the same Mac desktop and SSH account")
+                    #endif
                 }.padding(12)
                 if let error = screen.error {
                     Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).padding(12)
                         .accessibilityIdentifier("crow.screen.error")
                 }
+                #if os(macOS)
+                if let error = screen.clipboardError {
+                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal, 12)
+                }
+                #endif
                 ScreenWebView(screen: screen)
                     .overlay {
                         if !screen.active {
@@ -51,7 +92,7 @@ struct RemoteScreenView: View {
                                 Text("View and control this SSH server’s desktop").font(.headline)
                                 Text("Enable Screen Sharing on a Mac, or a VNC server on Windows/Linux. Screen traffic uses your SSH connection. Screen sharing credentials may differ from SSH credentials.")
                                     .font(.callout)
-                                Text("Touch or click to control. Use the text field below the screen to type from a phone or tablet. Turn off Fit to pan at actual size.")
+                                Text(instructions)
                                     .font(.caption)
                             }
                             .multilineTextAlignment(.center).padding(24).frame(maxWidth: 480)
@@ -65,21 +106,40 @@ struct RemoteScreenView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { screen.stop(); dismiss() } } }
-            .alert("Screen Sharing Login", isPresented: Binding(get: { !screen.credentialTypes.isEmpty }, set: { _ in })) {
-                if screen.credentialTypes.contains("username") { TextField("Server username", text: $username) }
-                SecureField("Screen sharing password", text: $password)
+            .alert(screen.credentialTypes.contains("username") ? "Screen Sharing Account" : "VNC Password",
+                   isPresented: Binding(get: { !screen.credentialTypes.isEmpty }, set: { _ in })) {
+                if screen.credentialTypes.contains("username") {
+                    TextField("Server account name", text: $username)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                }
+                SecureField(screen.credentialTypes.contains("username") ? "Account password" : "VNC password", text: $password)
                 Button("Connect") { let value = password; password = ""; screen.authenticate(username: username, password: value) }
                 Button("Cancel", role: .cancel) { password = ""; screen.stop() }
-            } message: { Text("Use the screen sharing account or VNC password configured on the server.") }
+            } message: {
+                Text(screen.credentialTypes.contains("username")
+                    ? "Use an account allowed to share the server’s screen. On a Mac, enter the short account name and its login password."
+                    : "Enter the VNC password configured on the server. On a Mac, this is set under Screen Sharing → VNC viewers may control screen with password.")
+            }
         }
         #if os(macOS)
-        .frame(minWidth: 800, idealWidth: 1100, minHeight: 560, idealHeight: 760)
+        .frame(minWidth: 640, idealWidth: 1100, minHeight: 400, idealHeight: 760)
         #endif
         .onDisappear { password = ""; screen.stop() }
         .onChange(of: scenePhase) { _, phase in if phase == .background { screen.stop() } }
         .onChange(of: workspace?.snapshot.workspace.connection) { _, connection in
             if connection != .connected { screen.stop() }
         }
+    }
+
+    private var instructions: String {
+        #if os(macOS)
+        "Click the screen to use your keyboard and mouse. Turn off Fit to pan at actual size."
+        #else
+        "Touch or click to control. Use the text field below the screen to type from a phone or tablet. Turn off Fit to pan at actual size."
+        #endif
     }
 }
 

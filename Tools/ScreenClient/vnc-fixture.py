@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Loopback-only RFB fixture: fragmented pixels, credential flow, and input recording.
 
-This is a protocol test double, not a VNC server: any 16-byte auth response is accepted.
+This is a protocol test double, not a VNC server. It verifies the password "fixture".
 """
 import argparse
+import hmac
 import json
 import socket
 import struct
@@ -37,10 +38,18 @@ def serve(port_file, events_file):
             sock.settimeout(60)
             send(b"RFB 003.008\n")
             assert read(12) == b"RFB 003.008\n"
-            send(b"\x01\x02")  # One security type: VNC password challenge.
+            # Mac-style ordering: account authentication first, then VNC password.
+            send(b"\x02\x1e\x02")
             assert read(1) == b"\x02"
             send(bytes(range(16)))
-            read(16)
+            # Independent DES-ECB vector: challenge 00..0f, password "fixture",
+            # padded to 8 bytes and with each key byte's bits reversed (RFB 3.8).
+            expected = bytes.fromhex("b6cdfeac10a6a456b5d53a1644a7a475")
+            if not hmac.compare_digest(read(16), expected):
+                reason = b"Authentication or authorization failure"
+                send(struct.pack(">II", 1, len(reason)) + reason)
+                record(type="authentication-rejected")
+                return
             record(type="authentication")
             send(bytes(4))
             record(type="shared", value=read(1)[0])
@@ -61,17 +70,22 @@ def serve(port_file, events_file):
                     if not painted:
                         bpp, _, big_endian, _, red, _, _, shift, _, _ = struct.unpack(">BBBBHHHBBB3x", pixel_format)
                         pixel = (red << shift).to_bytes(bpp // 8, "big" if big_endian else "little")
-                        send(b"\x00\x00\x00\x01" + struct.pack(">HHHHi", 0, 0, 64, 48, 0) + pixel * 64 * 48)
+                        send(b"\x00\x00\x00\x02" + struct.pack(">HHHHi", 0, 0, 64, 48, 0) + pixel * 64 * 48
+                             + struct.pack(">HHHHi", 0, 0, 0, 0, -239))  # Empty cursor: viewer must keep a visible fallback.
                         painted = True
                 elif kind == 4:
                     down, key = struct.unpack(">B2xI", read(7))
                     record(type="key", down=down, key=key)
+                    if down and key == ord('c'):
+                        text = b"remote clipboard"
+                        send(b"\x03\x00\x00\x00" + struct.pack(">I", len(text)) + text)
                 elif kind == 5:
                     buttons, x, y = struct.unpack(">BHH", read(5))
                     record(type="pointer", buttons=buttons, x=x, y=y)
                 elif kind == 6:
                     read(3)
-                    read(struct.unpack(">I", read(4))[0])
+                    text = read(struct.unpack(">I", read(4))[0])
+                    record(type="clipboard", text=text.decode('latin-1'))
                 else:
                     raise ValueError(f"Unexpected client message: {kind}")
         except EOFError:

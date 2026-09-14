@@ -254,6 +254,7 @@ final class AppModel {
         switch tab {
         case .file(let id): current.snapshot.selectedBufferID = id
         case .terminal(let id): current.snapshot.selectedTerminalID = id
+        case .start: break
         }
         schedulePersist()
     }
@@ -265,6 +266,8 @@ final class AppModel {
                 current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
             } else { closeBuffer(id) }
         case .terminal(let id): terminalCloseRequest = id
+        case .start:
+            current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
         }
     }
     @discardableResult func moveTab(_ drag: WorkspaceTabDrag, to paneID: UUID,
@@ -286,6 +289,10 @@ final class AppModel {
             current.snapshot.terminalIDs.append(id); current.snapshot.selectedTerminalID = id
             current.snapshot.layout?.open(.terminal(id), in: paneID)
             _ = current.snapshot.layout?.move(.terminal(id), from: paneID, to: paneID, placement: placement)
+        } else if case .start = tab {
+            let newTab = WorkspaceTab.start(UUID())
+            current.snapshot.layout?.open(newTab, in: paneID)
+            _ = current.snapshot.layout?.move(newTab, from: paneID, to: paneID, placement: placement)
         } else {
             _ = current.snapshot.layout?.move(tab, from: paneID, to: paneID, placement: placement, copy: true)
         }
@@ -1156,6 +1163,14 @@ final class AppModel {
         return nil
         #endif
     }
+    func newTab(in paneID: UUID? = nil) {
+        guard hasWorkspace else { folderImporterVisible = true; return }
+        ensureLayout(current)
+        current.snapshot.layout?.open(.start(UUID()), in: paneID)
+        current.maximizedPaneID = nil
+        schedulePersist()
+    }
+
     func newTerminal() {
         guard hasWorkspace else { folderImporterVisible = true; return }
         ensureLayout(current)

@@ -297,6 +297,9 @@ struct SnippetsView: View {
                             Button("Edit") { editing = snippet }
                             Button("Delete", role: .destructive) { model.settings.textSnippets?.removeAll { $0.id == snippet.id } }
                         } label: { Image(systemName: "ellipsis").frame(width: 36, height: 44) }
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                            .buttonStyle(.plain).fixedSize()
+                            .accessibilityLabel("Options for " + snippet.name)
                     }
                 }
                 .onDelete { offsets in model.settings.textSnippets?.remove(atOffsets: offsets) }
@@ -329,12 +332,19 @@ private struct SnippetEditor: View {
         NavigationStack {
             Form {
                 TextField("Name", text: $snippet.name)
-                TextEditor(text: $snippet.text).font(.system(.body, design: .monospaced)).frame(minHeight: 220)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                Text("Inserts exactly this text without adding Enter.").font(.caption).foregroundStyle(.secondary)
+                Section {
+                    TextEditor(text: $snippet.text).font(.system(.body, design: .monospaced)).frame(minHeight: 220)
+                        .autocorrectionDisabled().accessibilityLabel("Snippet Text")
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                } header: { Text("Text") }
+                  footer: { Text("Inserts exactly this text without adding Enter.") }
+                Section {
+                    TextEditor(text: $snippet.memo).font(.body).frame(minHeight: 100)
+                        .accessibilityLabel("Memo").accessibilityIdentifier("crow.snippet.memo")
+                } header: { Text("Memo") }
+                  footer: { Text("Notes for this snippet. Not included when inserting text.") }
             }.formStyle(.grouped)
             .navigationTitle("Edit Snippet")
             .toolbar {
@@ -346,7 +356,7 @@ private struct SnippetEditor: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 380, minHeight: 400)
+        .frame(minWidth: 380, minHeight: 520)
         #endif
     }
 }

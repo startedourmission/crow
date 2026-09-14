@@ -40,15 +40,7 @@ struct CrowRootView: View {
             model.finishHostEditorDismissal()
         }) { HostEditorView(host: model.editingHost).environment(model) }
         .sheet(isPresented: Bindable(model).settingsVisible) { CrowSettingsView().environment(model) }
-        #if os(iOS)
-        .fullScreenCover(item: Bindable(model).screenRequest) { request in
-            RemoteScreenView(workspaceID: request.id).environment(model)
-        }
-        #else
-        .sheet(item: Bindable(model).screenRequest) { request in
-            RemoteScreenView(workspaceID: request.id).environment(model)
-        }
-        #endif
+        .modifier(ScreenPresentation())
         .sheet(isPresented: Bindable(model).sshKeysVisible) { SSHKeysView().environment(model) }
         .sheet(isPresented: Bindable(model).sshCommandVisible, onDismiss: {
             if model.pendingHostEditor { model.pendingHostEditor = false; model.hostEditorVisible = true }
@@ -125,9 +117,6 @@ struct RegularWorkspaceView: View {
               let sidebarAvailable = workspaceGeometry.size.width - (model.inspectorVisible ? inspectorWidth + ResizeHandle.thickness : 0)
               HStack(spacing: 0) {
                 ActivityBar()
-                    .overlay(alignment: .trailing) {
-                        Rectangle().fill(CrowTheme.border).frame(width: 1).allowsHitTesting(false)
-                    }
                     .padding(.top, SidebarTopBar.height)
                     .background(CrowTheme.bg1)
                     .windowDragBackground()
@@ -137,6 +126,12 @@ struct RegularWorkspaceView: View {
                     .overlay(alignment: .top) {
                         CrowDivider().padding(.top, SidebarTopBar.height).allowsHitTesting(false)
                     }
+                Rectangle()
+                    .fill(CrowTheme.border)
+                    .frame(width: 1)
+                    .padding(.top, SidebarTopBar.height)
+                    .background(CrowTheme.bg1)
+                    .allowsHitTesting(false)
                 if model.sidebarVisible {
                     VStack(spacing: 0) {
                         SidebarTopBar()

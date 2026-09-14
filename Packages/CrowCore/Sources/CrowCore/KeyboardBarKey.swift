@@ -45,5 +45,16 @@ public struct TextSnippet: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
     public var text: String
-    public init(id: UUID = UUID(), name: String, text: String) { self.id = id; self.name = name; self.text = text }
+    public var memo: String
+    public init(id: UUID = UUID(), name: String, text: String, memo: String = "") {
+        self.id = id; self.name = name; self.text = text; self.memo = memo
+    }
+    private enum CodingKeys: String, CodingKey { case id, name, text, memo }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        text = try values.decode(String.self, forKey: .text)
+        memo = try values.decodeIfPresent(String.self, forKey: .memo) ?? ""
+    }
 }

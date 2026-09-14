@@ -46,10 +46,17 @@ final class InputToolsTests: XCTestCase {
         var settings = try JSONDecoder().decode(EditorSettings.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(settings.effectiveKeyboardBarItems.map(\.key), ["Escape", "Tab", "Control", "Shift", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"])
         settings.keyboardBarItems = [KeyboardBarKey(key: "Tab", shift: true), KeyboardBarKey(key: "c", control: true)]
-        settings.textSnippets = [TextSnippet(name: "한글", text: "arbitrary ' text\nnext line")]
+        settings.textSnippets = [TextSnippet(name: "한글", text: "arbitrary ' text\nnext line", memo: "간단한 메모\n삽입하지 않는 설명")]
         let restored = try JSONDecoder().decode(EditorSettings.self, from: JSONEncoder().encode(settings))
         XCTAssertEqual(restored.keyboardBarItems, settings.keyboardBarItems)
         XCTAssertEqual(restored.textSnippets, settings.textSnippets)
+        let snippet = try XCTUnwrap(restored.textSnippets?.first)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snippet)) as? [String: Any])
+        legacy.removeValue(forKey: "memo")
+        let legacySnippet = try JSONDecoder().decode(TextSnippet.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(legacySnippet.memo, "")
+        XCTAssertEqual(legacySnippet.id, snippet.id)
+        XCTAssertEqual(legacySnippet.text, snippet.text)
         XCTAssertEqual(restored.effectiveKeyboardBarItems[0].terminalText(applicationCursor: false), "\u{1b}[Z")
         XCTAssertEqual(restored.effectiveKeyboardBarItems[1].terminalText(applicationCursor: false), "\u{03}")
         XCTAssertEqual(KeyboardBarKey(key: "ArrowLeft", control: true, shift: true).terminalText(applicationCursor: true), "\u{1b}[1;6D")

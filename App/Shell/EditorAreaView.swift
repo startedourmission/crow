@@ -237,6 +237,46 @@ struct CrowEditorView: View {
 }
 
 
+private struct NewTabPage: View {
+    @Environment(AppModel.self) private var model
+    let paneID: UUID
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("New Tab").font(.system(size: 22, weight: .semibold))
+                    Text(model.workspaceTitle).font(.system(size: 12)).crowForeground(CrowTheme.textDim)
+                        .lineLimit(1).truncationMode(.middle).padding(.bottom, 8)
+                    action("New Terminal", symbol: "terminal") {
+                        model.activatePane(paneID); model.newTerminal()
+                    }
+                    action("Browse Files", symbol: "folder") {
+                        model.activatePane(paneID)
+                        model.sidebarPane = .files; model.sidebarVisible = true
+                    }
+                    action("SSH Hosts", symbol: "network") {
+                        model.activatePane(paneID); model.showHosts()
+                    }
+                }
+                .frame(maxWidth: 320).padding(24)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+            }
+        }
+        .crowForeground(CrowTheme.text).background(CrowTheme.bg0)
+        .accessibilityIdentifier("crow.new-tab-page")
+    }
+
+    private func action(_ title: String, symbol: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Label(title, systemImage: symbol).font(.system(size: 13))
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).padding(8)
+                .background(CrowTheme.bg1, in: RoundedRectangle(cornerRadius: 5))
+                .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(CrowTheme.border) }
+        }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+    }
+}
+
 struct WorkspaceAreaView: View {
     @Environment(AppModel.self) private var model
     var body: some View {
@@ -477,6 +517,8 @@ private struct WorkspacePaneView: View {
                             }
                         case .terminal(let id):
                             terminal(id)
+                        case .start:
+                            NewTabPage(paneID: pane.id)
                         }
                     }
                 }
@@ -503,15 +545,29 @@ private struct WorkspacePaneView: View {
 
     private var header: some View {
         HStack(spacing: 2) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(pane.tabs, id: \.self) { tab in tabView(tab) }
+            ScrollViewReader { scroll in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(pane.tabs, id: \.self) { tab in tabView(tab).id(tab.key) }
+                        Button { model.newTab(in: pane.id) } label: { PanelActionIcon(symbol: "plus") }
+                            .buttonStyle(CrowButtonStyle())
+                            .frame(width: 32, height: 36)
+                            .help("New Tab").accessibilityLabel("New Tab")
+                            .accessibilityIdentifier("crow.pane.new-tab")
+                            .windowDragExcluded()
+                            .id("add-tab")
+                    }
+                }
+                #if os(macOS)
+                .overlay { WindowDragRegion() }
+                #endif
+                .onChange(of: pane.selected) { _, tab in
+                    if case .start = tab { scroll.scrollTo("add-tab", anchor: .trailing) }
+                    else if let tab { scroll.scrollTo(tab.key) }
                 }
             }
-            #if os(macOS)
-            .overlay { WindowDragRegion() }
-            #endif
             Menu {
+                Button("New Tab") { model.newTab(in: pane.id) }
                 Button("New Terminal Tab") { model.activatePane(pane.id); model.newTerminal() }
                 Button("SSH Command…") { model.sshCommandVisible = true }
                 if let tab = pane.selected {
@@ -558,6 +614,7 @@ private struct WorkspacePaneView: View {
 
     private func title(_ tab: WorkspaceTab) -> String {
         switch tab {
+        case .start: return "New Tab"
         case .file(let id): return model.buffers.first { $0.id == id }?.title ?? "File"
         case .terminal(let id): return "Terminal \((model.current.snapshot.terminalIDs.firstIndex(of: id) ?? 0) + 1)"
         }
@@ -568,7 +625,13 @@ private struct WorkspacePaneView: View {
         return HStack(spacing: 6) {
             Button { model.selectTab(tab, in: pane.id) } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: { if case .terminal = tab { return "terminal" }; return "doc.text" }())
+                    Image(systemName: {
+                        switch tab {
+                        case .terminal: return "terminal"
+                        case .file: return "doc.text"
+                        case .start: return "square.grid.2x2"
+                        }
+                    }())
                         .font(.system(size: 10))
                     Text(title(tab)).font(.system(size: 12)).lineLimit(1)
                     if dirty { Circle().fill(CrowTheme.accent).frame(width: 5, height: 5) }

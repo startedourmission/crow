@@ -4,6 +4,13 @@ import SwiftUI
 struct WorkspaceSwitcher: View {
     @Environment(AppModel.self) private var model
 
+    private var title: String {
+        if case .remote(let hostID, _) = model.selectedWorkspace.kind {
+            return model.hosts.first { $0.id == hostID }?.hostname ?? model.selectedWorkspace.name
+        }
+        return model.hasWorkspace ? model.selectedWorkspace.name : "Open Vault"
+    }
+
     var body: some View {
         Menu {
             ForEach(model.localWorkspaces) { workspace in
@@ -11,10 +18,8 @@ struct WorkspaceSwitcher: View {
                     Label(workspace.name, systemImage: workspace.id == model.selectedWorkspaceID ? "checkmark" : "folder")
                 }
             }
-            Divider()
-            Button("Saved SSH Hosts", systemImage: "server.rack") { model.showHosts() }
+            if !model.localWorkspaces.isEmpty { Divider() }
             Button("Open Folder…", systemImage: "folder.badge.plus") { model.folderImporterVisible = true }
-            Button("SSH Command…", systemImage: "network") { model.sshCommandVisible = true }
             if model.hasWorkspace && !model.selectedWorkspace.isRemote {
                 Divider()
                 workspaceActions(model.selectedWorkspace)
@@ -28,20 +33,26 @@ struct WorkspaceSwitcher: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "folder")
+                Image(systemName: model.selectedWorkspace.isRemote ? "globe" : "folder")
                     .crowForeground(CrowTheme.textDim)
-                Text(model.selectedWorkspace.isRemote ? "Workspaces" : (model.hasWorkspace ? model.selectedWorkspace.name : "Open Vault"))
+                Text(title)
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 2)
+                #if os(iOS)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
                     .crowForeground(CrowTheme.textDim)
+                #endif
             }
             .crowForeground(CrowTheme.text)
             .padding(.horizontal, 8).frame(height: 28).contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        #if os(macOS)
+        .menuIndicator(.visible)
+        #else
         .menuIndicator(.hidden)
+        #endif
         .fixedSize(horizontal: false, vertical: true)
         .crowMenuHover()
         .windowDragExcluded()
@@ -49,6 +60,7 @@ struct WorkspaceSwitcher: View {
         .background(CrowTheme.bg1)
         .windowDragBackground()
         .accessibilityLabel("Switch vault")
+        .accessibilityValue(title)
         .accessibilityIdentifier("crow.vault-menu")
         .contextMenu {
             if model.hasWorkspace && !model.selectedWorkspace.isRemote { workspaceActions(model.selectedWorkspace) }

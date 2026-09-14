@@ -1,14 +1,16 @@
 import SwiftUI
+import CrowCore
 
 @main
 struct CrowApp: App {
     @State private var model = AppModel()
     #if os(macOS)
     @NSApplicationDelegateAdaptor(CrowAppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
     #endif
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "workspace") {
             #if os(macOS)
             CrowMacSceneView(model: model)
                 .preferredColorScheme(.light)
@@ -28,6 +30,8 @@ struct CrowApp: App {
                     .disabled(appDelegate.updaterController == nil)
             }
             CommandGroup(replacing: .newItem) {
+                Button("New Window") { openWindow(id: "workspace") }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("New File") {
                     model.newUntitledBuffer()
                 }
@@ -86,6 +90,19 @@ struct CrowApp: App {
                 }
             }
         }
+        #endif
+        #if os(macOS)
+        WindowGroup("Server Screen", id: "server-screen", for: WorkspaceID.self) { $workspaceID in
+            if let workspaceID {
+                RemoteScreenView(workspaceID: workspaceID)
+                    .environment(model)
+                    .preferredColorScheme(.light)
+                    .tint(CrowTheme.accent)
+            }
+        }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1100, height: 760)
         #endif
     }
 }

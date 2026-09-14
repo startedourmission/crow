@@ -3,10 +3,12 @@ import Foundation
 public enum WorkspaceTab: Hashable, Codable, Sendable {
     case file(BufferID)
     case terminal(UUID)
+    case start(UUID)
     public var key: String {
         switch self {
         case .file(let id): return "file-\(id.rawValue)"
         case .terminal(let id): return "terminal-\(id)"
+        case .start(let id): return "start-\(id)"
         }
     }
 }
@@ -94,7 +96,13 @@ public struct WorkspaceLayout: Codable, Equatable, Sendable {
             select(tab, in: target?.id); return
         }
         if let index = panes.firstIndex(where: { $0.id == (paneID ?? activePaneID) }) {
-            panes[index].tabs.append(tab); panes[index].selected = tab; activePaneID = panes[index].id
+            if case .start = tab {
+                panes[index].tabs.append(tab)
+            } else if let selected = panes[index].selected, case .start = selected,
+                      let position = panes[index].tabs.firstIndex(of: selected) {
+                panes[index].tabs[position] = tab
+            } else { panes[index].tabs.append(tab) }
+            panes[index].selected = tab; activePaneID = panes[index].id
         } else {
             let pane = WorkspacePane(tabs: [tab]); panes.append(pane); activePaneID = pane.id
             if let root { self.root = .split(id: UUID(), axis: .horizontal, fraction: 0.5, first: root, second: .pane(pane.id)) }

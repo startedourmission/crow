@@ -8,9 +8,9 @@ struct SidebarTopBar: View {
     #endif
     // Match the workspace tab header so its divider continues across the window.
     static let height: CGFloat = 36
-    // Traffic-light clearance, horizontal padding, and the reopen button.
+    // Traffic-light clearance, horizontal padding, and the top-bar controls.
     #if os(macOS)
-    static let collapsedWidth: CGFloat = 36 + 24 + 28 + 36
+    static let collapsedWidth: CGFloat = 36 + 24 + 28 * 2 + 8
     #else
     static let collapsedWidth: CGFloat = 52
     #endif
@@ -135,9 +135,6 @@ struct SidebarView: View {
                 toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
                 toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
                 if model.canChooseRemoteProject {
-                    toolbarButton("Server Screen", symbol: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }
-                        .disabled(model.selectedWorkspace.connection != .connected)
-                        .accessibilityIdentifier("crow.files.server-screen")
                     toolbarButton("Choose Remote Project Folder", symbol: "folder") { choosingProject = true }
                         .accessibilityIdentifier("crow.files.choose-folder")
                         .disabled(model.selectedWorkspace.connection == .connecting)

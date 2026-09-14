@@ -366,6 +366,38 @@ final class CrowAppTests: XCTestCase {
         XCTAssertEqual(restored.current.snapshot.layout, model.current.snapshot.layout)
         XCTAssertEqual(restored.selectedBuffer?.text, "preserved draft")
     }
+    @MainActor func testNewTabPageDoesNotCreateTerminalAndRestoresBeforeChoosingContent() throws {
+        let model = fixture()
+        let paneID = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        let terminals = model.current.snapshot.terminalIDs
+        let buffers = model.buffers
+        let instances = model.current.terminals.mapValues(\.instanceID)
+        model.newTab(in: paneID)
+        let first = try XCTUnwrap(model.current.snapshot.layout?.activePane?.selected)
+        guard case .start = first else { return XCTFail("Plus must open a new tab page") }
+        model.newTab(in: paneID)
+        let second = try XCTUnwrap(model.current.snapshot.layout?.activePane?.selected)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(model.current.snapshot.terminalIDs, terminals)
+        XCTAssertEqual(model.buffers, buffers)
+        XCTAssertEqual(model.current.terminals.mapValues(\.instanceID), instances)
+        model.persist()
+        let restored = AppModel(vaultURL: model.vaultURL)
+        defer { restored.shutdown() }
+        XCTAssertEqual(restored.current.snapshot.layout, model.current.snapshot.layout)
+        restored.newTerminal()
+        let layout = try XCTUnwrap(restored.current.snapshot.layout)
+        XCTAssertEqual(layout.activePaneID, paneID)
+        XCTAssertTrue(layout.allTabs.contains(first))
+        XCTAssertFalse(layout.allTabs.contains(second), "Choosing content replaces only this new tab page")
+        XCTAssertEqual(layout.activePane?.selected, restored.current.snapshot.selectedTerminalID.map(WorkspaceTab.terminal))
+        XCTAssertEqual(restored.current.snapshot.terminalIDs.count, terminals.count + 1)
+        restored.closeTab(first, in: paneID)
+        XCTAssertNil(restored.closeRequest)
+        XCTAssertNil(restored.terminalCloseRequest)
+        XCTAssertFalse(restored.current.snapshot.layout?.allTabs.contains(first) == true)
+    }
+
     @MainActor func testWorkspaceContextTerminalTargetsClickedVault() throws {
         let model = fixture(), original = model.current
         let other = WorkspaceState(.init(workspace: Workspace(name: "Other", kind: .local, connection: .local), rootPath: model.vaultURL.path))

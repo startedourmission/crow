@@ -8,6 +8,15 @@ struct ActivityBar: View {
         VStack(spacing: 4) {
             paneButton(.files, symbol: "doc.text")
             paneButton(.hosts, symbol: "network")
+            Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 18)).crowForeground(CrowTheme.textDim)
+                    .frame(width: CrowTheme.activityWidth, height: 40)
+            }
+            .buttonStyle(CrowButtonStyle()).windowDragExcluded()
+            .help("Server Screen").accessibilityLabel("Server Screen")
+            .accessibilityIdentifier("crow.window.server-screen")
+            .disabled(!model.hasWorkspace || !model.selectedWorkspace.isRemote || model.selectedWorkspace.connection != .connected)
             #if os(macOS)
             MacSnippetButton(width: CrowTheme.activityWidth, height: 40)
             #else

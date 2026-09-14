@@ -61,9 +61,6 @@ struct TerminalPanelView: View {
             Spacer()
             Button { model.sshCommandVisible = true } label: { Image(systemName: "network.badge.shield.half.filled") }.help("SSH Command")
             if model.selectedWorkspace.isRemote {
-                Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: { Image(systemName: "desktopcomputer") }
-                    .help("Server Screen").accessibilityLabel("Server Screen")
-                    .disabled(model.selectedWorkspace.connection != .connected)
                 Menu {
                     Button("Reconnect") { model.reconnectCurrent() }
                     Button("Disconnect") { model.disconnectCurrent() }

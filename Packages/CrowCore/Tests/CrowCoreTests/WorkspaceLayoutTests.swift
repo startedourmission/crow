@@ -2,6 +2,21 @@ import XCTest
 @testable import CrowCore
 
 final class WorkspaceLayoutTests: XCTestCase {
+    func testNewTabPageMovesAndBecomesAFileInPlace() throws {
+        let file = BufferID(), terminal = UUID(), page = WorkspaceTab.start(UUID())
+        var layout = WorkspaceLayout(files: [file], selectedFile: file, terminals: [terminal], selectedTerminal: terminal)
+        let source = layout.panes[0].id, target = layout.panes[1].id
+        layout.open(page, in: source)
+        XCTAssertEqual(layout.panes[0].tabs, [.file(file), page])
+        XCTAssertTrue(layout.move(page, from: source, to: target, before: .terminal(terminal)))
+        let opened = WorkspaceTab.file(BufferID())
+        layout.open(opened, in: target)
+        XCTAssertEqual(layout.panes.first { $0.id == target }?.tabs, [opened, .terminal(terminal)])
+        XCTAssertFalse(layout.allTabs.contains(page))
+        XCTAssertEqual(layout.allTabs.filter { $0 == .file(file) }.count, 1)
+        XCTAssertEqual(try JSONDecoder().decode(WorkspaceLayout.self, from: JSONEncoder().encode(layout)), layout)
+    }
+
     func testLastFileCloseLeavesOnlyTerminalPane() throws {
         let file = BufferID(), terminal = UUID()
         var layout = WorkspaceLayout(files: [file], selectedFile: file, terminals: [terminal], selectedTerminal: terminal)

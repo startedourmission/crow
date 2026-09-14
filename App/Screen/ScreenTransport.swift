@@ -126,3 +126,144 @@ private final class ScreenChannelHandler: ChannelInboundHandler, @unchecked Send
     func channelInactive(context: ChannelHandlerContext) { sink.finish(); context.fireChannelInactive() }
     func errorCaught(context: ChannelHandlerContext, error: Error) { sink.finish(throwing: error); context.close(promise: nil) }
 }
+
+#if os(macOS)
+/// Uses the existing SSH account and macOS pasteboard APIs. No remote files or service are installed.
+@MainActor enum MacScreenClipboard {
+    struct Packet: Codable, Sendable {
+        var revision: Int?
+        var png: String?
+        var text: String?
+    }
+    nonisolated static let outputLimit = 32 * 1024 * 1024
+    static let helper = #"""
+ObjC.import('AppKit');
+function run(args) {
+    const limit = 20 * 1024 * 1024;
+    const length = Number(args[0]);
+    if (!(length > 0 && length <= 30 * 1024 * 1024)) throw Error('Clipboard request is too large.');
+    const input = $.NSMutableData.data;
+    while (input.length < length) {
+        const part = $.NSFileHandle.fileHandleWithStandardInput.readDataOfLength(Math.min(65536, length - input.length));
+        if (!part.length) throw Error('Incomplete clipboard request.');
+        input.appendData(part);
+    }
+    const request = JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(input, $.NSUTF8StringEncoding)));
+    const board = args[1] ? $.NSPasteboard.pasteboardWithName(args[1]) : $.NSPasteboard.generalPasteboard;
+    function bitmap(data) {
+        if (!data || !data.length || data.length > limit) throw Error('Clipboard image exceeds 20 MB.');
+        const rep = $.NSBitmapImageRep.imageRepWithData(data);
+        if (!rep || rep.isNil() || !(rep.pixelsWide > 0 && rep.pixelsHigh > 0 && rep.pixelsWide <= 40000000 / rep.pixelsHigh)) throw Error('Invalid clipboard image (maximum 40 megapixels).');
+        return rep;
+    }
+    if (request.png != null) {
+        const data = $.NSData.alloc.initWithBase64EncodedStringOptions(request.png, 0);
+        const rep = bitmap(data);
+        board.clearContents;
+        if (!board.setDataForType(data, $.NSPasteboardTypePNG)) throw Error('Could not write the image clipboard.');
+        board.setDataForType(rep.TIFFRepresentation, $.NSPasteboardTypeTIFF);
+        return JSON.stringify({revision: Number(board.changeCount)});
+    }
+    if (request.text != null) {
+        if (request.text.length > 1000000) throw Error('Clipboard text is too large.');
+        board.clearContents;
+        if (!board.setStringForType(request.text, $.NSPasteboardTypeString)) throw Error('Could not write the text clipboard.');
+        return JSON.stringify({revision: Number(board.changeCount)});
+    }
+    const revision = Number(board.changeCount);
+    if (request.revision === revision) return JSON.stringify({revision});
+    let image = board.dataForType($.NSPasteboardTypePNG);
+    if (!image || image.isNil()) image = board.dataForType($.NSPasteboardTypeTIFF);
+    if (image && !image.isNil()) {
+        const png = bitmap(image).representationUsingTypeProperties($.NSPNGFileType, $({}));
+        if (!png || png.isNil() || png.length > limit) throw Error('Clipboard image exceeds 20 MB.');
+        return JSON.stringify({revision, png: ObjC.unwrap(png.base64EncodedStringWithOptions(0))});
+    }
+    const text = board.stringForType($.NSPasteboardTypeString);
+    return JSON.stringify(text && !text.isNil() ? {revision, text: ObjC.unwrap(text)} : {revision});
+}
+"""#
+
+    static func exchange(_ packet: Packet, in state: WorkspaceState, pasteboardName: String? = nil) async throws -> Packet {
+        let input = try JSONEncoder().encode(packet)
+        let command = command(length: input.count, pasteboardName: pasteboardName)
+        let output: Data
+        if let spec = state.systemSSH {
+            let work = Task.detached { try run(spec: spec, command: command, input: input) }
+            output = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+        } else if let client = state.remote?.client {
+            output = try await withThrowingTaskGroup(of: Data.self) { group in
+                group.addTask {
+                    var data = Data(), completed = false
+                    do {
+                        try await client.withExec(command) { inbound, outbound in
+                            for offset in stride(from: 0, to: input.count, by: 32768) {
+                                try Task.checkCancellation()
+                                try await outbound.write(ByteBuffer(bytes: input[offset..<min(offset + 32768, input.count)]))
+                            }
+                            for try await chunk in inbound {
+                                try Task.checkCancellation()
+                                if case .stdout(let bytes) = chunk { data.append(contentsOf: bytes.readableBytesView) }
+                                guard data.count <= outputLimit else { throw CommandError("Image clipboard response exceeds 32 MB.") }
+                            }
+                            completed = true
+                        }
+                    } catch ChannelError.alreadyClosed where completed { }
+                    return data
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(20))
+                    throw CommandError("Image clipboard timed out. The screen connection remains open.")
+                }
+                defer { group.cancelAll() }
+                return try await group.next() ?? Data()
+            }
+        } else { throw FileFailure.disconnected }
+        try Task.checkCancellation()
+        guard let result = try? JSONDecoder().decode(Packet.self, from: output), result.revision != nil else {
+            throw CommandError("Image clipboard requires a Mac server and an SSH account matching its logged-in desktop user.")
+        }
+        return result
+    }
+
+    private static func command(length: Int, pasteboardName: String?) -> String {
+        let check = pasteboardName == nil
+            ? "test \"$(/usr/bin/id -u)\" = \"$(/usr/bin/stat -f %u /dev/console)\" || exit 1; " : ""
+        return check + "exec /usr/bin/osascript -l JavaScript -e " + GitRepository.quote(helper)
+            + " -- " + String(length) + " " + GitRepository.quote(pasteboardName ?? "")
+    }
+
+    nonisolated private static func run(spec: SystemSSHSpec, command: String, input: Data) throws -> Data {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-screen-clipboard-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inputURL = root.appendingPathComponent("input"), outputURL = root.appendingPathComponent("output")
+        try input.write(to: inputURL)
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        let stdin = try FileHandle(forReadingFrom: inputURL), stdout = try FileHandle(forWritingTo: outputURL)
+        defer { try? stdin.close(); try? stdout.close() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = ["-T"] + spec.multiplexArguments + [command]
+        process.standardInput = stdin; process.standardOutput = stdout; process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer { if process.isRunning { process.terminate() } }
+        let deadline = Date().addingTimeInterval(20)
+        while process.isRunning {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw CommandError("Image clipboard timed out.") }
+            guard ((try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) <= 32 * 1024 * 1024 else {
+                throw CommandError("Image clipboard response exceeds 32 MB.")
+            }
+            Thread.sleep(forTimeInterval: 0.025)
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw CommandError("Image clipboard requires a Mac server and an SSH account matching its logged-in desktop user.")
+        }
+        let data = try Data(contentsOf: outputURL)
+        guard data.count <= 32 * 1024 * 1024 else { throw CommandError("Image clipboard response exceeds 32 MB.") }
+        return data
+    }
+}
+#endif

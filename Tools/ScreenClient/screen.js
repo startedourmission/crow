@@ -3,6 +3,53 @@ import RFB from '@novnc/novnc';
 let sessionID = '';
 const post = (action, extra = {}, session = sessionID) => window.webkit.messageHandlers.screen.postMessage({action, session, ...extra});
 let rfb, channel;
+let viewOnly = false, fit = true;
+let clipboardEnabled = false;
+let vncClipboardEnabled = false;
+let heldModifiers = {};
+const swallowedKeys = new Set();
+const modifierKeys = [['ctrl', 65507, 'ControlLeft'], ['meta', 65515, 'MetaLeft'], ['alt', 65513, 'AltLeft'], ['shift', 65505, 'ShiftLeft']];
+class CrowRFB extends RFB {
+    _handleKeyEvent(keysym, code, down, ...rest) {
+        // noVNC normally maps a Mac client's left Command key to Alt for PC servers.
+        // Preserve Command/Option when the server advertises Apple authentication.
+        if (this._crowAppleServer) {
+            const keys = {MetaLeft: 65515, MetaRight: 65516, AltLeft: 65513, AltRight: 65514};
+            keysym = keys[code] ?? keysym;
+        }
+        super._handleKeyEvent(keysym, code, down, ...rest);
+    }
+}
+function sendShortcut(keysym, code, modifiers) {
+    if (!rfb || viewOnly) return;
+    const desired = {...modifiers};
+    if (rfb._crowAppleServer && desired.ctrl && !desired.meta) { desired.ctrl = false; desired.meta = true; }
+    for (const [name, key, code] of modifierKeys) rfb.sendKey(key, code, false);
+    for (const [name, key, code] of modifierKeys) if (desired[name]) rfb.sendKey(key, code, true);
+    rfb.sendKey(keysym, code, true); rfb.sendKey(keysym, code, false);
+    for (const [name, key, code] of modifierKeys) rfb.sendKey(key, code, !!heldModifiers[name]);
+}
+for (const type of ['keydown', 'keyup']) document.addEventListener(type, event => {
+    heldModifiers = {ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey, shift: event.shiftKey};
+    if (type === 'keyup' && swallowedKeys.delete(event.code)) {
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
+    if (type !== 'keydown' || !clipboardEnabled || viewOnly ||
+        !document.getElementById('display').contains(event.target) || !(event.ctrlKey || event.metaKey) ||
+        event.altKey || event.shiftKey || !['KeyC', 'KeyV'].includes(event.code)) return;
+    event.preventDefault(); event.stopImmediatePropagation(); swallowedKeys.add(event.code);
+    if (event.repeat) return;
+    if (event.code === 'KeyV') post('paste', {modifiers: heldModifiers});
+    else { sendShortcut(99, 'KeyC', heldModifiers); post('copy'); }
+}, true);
+window.addEventListener('blur', () => { heldModifiers = {}; swallowedKeys.clear(); });
+function applyOptions() {
+    document.getElementById('view-only').checked = viewOnly;
+    document.getElementById('fit').checked = fit;
+    if (!rfb) return;
+    rfb.viewOnly = viewOnly;
+    rfb.scaleViewport = fit; rfb.clipViewport = !fit; rfb.dragViewport = !fit;
+}
 class SSHChannel {
     constructor(id) {
         this.id = id;
@@ -36,21 +83,31 @@ class SSHChannel {
 }
 
 window.crowScreen = {
+    configure(readOnly, fitToWindow, desktop, clipboard = false, vncClipboard = clipboard) {
+        viewOnly = readOnly; fit = fitToWindow;
+        clipboardEnabled = clipboard;
+        vncClipboardEnabled = vncClipboard;
+        document.body.classList.toggle('desktop', desktop);
+        applyOptions();
+    },
     start(id) {
         rfb?.disconnect();
         sessionID = id;
         const report = (action, extra) => post(action, extra, id);
         channel = new SSHChannel(id);
-        rfb = new RFB(document.getElementById('display'), channel, {shared: true});
-        rfb.scaleViewport = true; rfb.resizeSession = false;
-        document.getElementById('view-only').checked = false;
-        document.getElementById('fit').checked = true;
+        rfb = new CrowRFB(document.getElementById('display'), channel, {shared: true});
+        rfb.resizeSession = false;
+        rfb.showDotCursor = true;
+        applyOptions();
         rfb.compressionLevel = 6; rfb.qualityLevel = 6;
         rfb.addEventListener('connect', () => { report('connected'); rfb.focus(); });
         rfb.addEventListener('disconnect', e => report('disconnected', {clean: e.detail.clean}));
         rfb.addEventListener('securityfailure', e => report('error', {message: e.detail.reason || 'Screen authentication failed.'}));
         rfb.addEventListener('credentialsrequired', e => report('credentials', {types: e.detail.types}));
         rfb.addEventListener('desktopname', e => report('name', {name: e.detail.name}));
+        rfb.addEventListener('clipboard', e => {
+            if (vncClipboardEnabled && !viewOnly && e.detail.text.length <= 1_000_000) report('clipboard', {text: e.detail.text});
+        });
     },
     receive(base64, id) {
         if (sessionID !== id || channel?.readyState !== 1) return;
@@ -58,6 +115,17 @@ window.crowScreen = {
         channel.onmessage?.({data: bytes.buffer});
     },
     credentials(username, password, id) { if (sessionID === id) rfb?.sendCredentials({username, password}); },
+    clipboard(text, id) {
+        if (sessionID === id && vncClipboardEnabled && !viewOnly) rfb?.clipboardPasteFrom(text);
+    },
+    finishPaste(modifiers, id) {
+        if (sessionID === id && clipboardEnabled && !viewOnly) sendShortcut(118, 'KeyV', modifiers);
+    },
+    nativeShortcut(key, id) {
+        if (sessionID !== id || !clipboardEnabled || viewOnly) return;
+        if (key === 'v') post('paste', {modifiers: {meta:true}});
+        else if (key === 'c') { sendShortcut(99, 'KeyC', {meta:true}); post('copy'); }
+    },
     stop(id) { if (sessionID === id) { rfb?.disconnect(); channel?.close(); } },
 };
 
@@ -65,11 +133,9 @@ document.querySelectorAll('[data-key]').forEach(button => {
     button.addEventListener('click', () => { rfb?.sendKey(Number(button.dataset.key)); rfb?.focus(); });
 });
 document.getElementById('secure-attention').onclick = () => rfb?.sendCtrlAltDel();
-document.getElementById('view-only').onchange = e => { if (rfb) rfb.viewOnly = e.target.checked; };
+document.getElementById('view-only').onchange = e => { viewOnly = e.target.checked; applyOptions(); };
 document.getElementById('fit').onchange = e => {
-    if (!rfb) return;
-    rfb.scaleViewport = e.target.checked; rfb.clipViewport = !e.target.checked;
-    rfb.dragViewport = !e.target.checked;
+    fit = e.target.checked; applyOptions();
 };
 document.getElementById('type').onclick = () => {
     const input = document.getElementById('text');

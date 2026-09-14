@@ -13,7 +13,20 @@ enum ClipboardImage {
 
     @MainActor static func png() throws -> Data? {
         #if os(macOS)
-        let pasteboard = NSPasteboard.general
+        return try png(from: .general)
+        #else
+        guard let image = UIPasteboard.general.image else { return nil }
+        let pixels = image.size.width * image.scale * image.size.height * image.scale
+        guard pixels <= 40_000_000, let png = image.pngData() else {
+            throw CommandError("Could not read this clipboard image (maximum 40 megapixels).")
+        }
+        try validate(png)
+        return png
+        #endif
+    }
+
+    #if os(macOS)
+    @MainActor static func png(from pasteboard: NSPasteboard) throws -> Data? {
         guard let source = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return nil }
         guard source.count <= sizeLimit else { throw CommandError("Clipboard image exceeds 20 MB.") }
         guard let imageSource = CGImageSourceCreateWithData(source as CFData, nil),
@@ -31,16 +44,10 @@ enum ClipboardImage {
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw CommandError("Could not encode the clipboard image.") }
         let png = output as Data
-        #else
-        guard let image = UIPasteboard.general.image else { return nil }
-        let pixels = image.size.width * image.scale * image.size.height * image.scale
-        guard pixels <= 40_000_000, let png = image.pngData() else {
-            throw CommandError("Could not read this clipboard image (maximum 40 megapixels).")
-        }
-        #endif
         try validate(png)
         return png
     }
+    #endif
 
     static func validate(_ data: Data) throws {
         guard data.count <= sizeLimit else { throw CommandError("Clipboard image exceeds 20 MB.") }
