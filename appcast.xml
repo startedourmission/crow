@@ -6,6 +6,18 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Crow</title>
         <item>
+            <title>0.1.2</title>
+            <pubDate>Mon, 14 Sep 2026 14:29:26 +0900</pubDate>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[- Check for Updates가 응답하지 않던 Sparkle 보안 설정 오류 수정
+- 다음 버전부터 앱 안에서 업데이트 확인 및 설치 지원
+- 0.1.0 또는 0.1.1 사용자는 이번 한 번만 DMG 재설치 필요
+]]></description>
+            <enclosure url="https://github.com/startedourmission/crow/releases/download/v0.1.2/Crow-0.1.2-macOS.zip" length="12974964" type="application/octet-stream" sparkle:edSignature="uuvx475+iv5xEMQDRSxN3xmVgn7zmFTieAJw5Xy2k/TJcIOG9lJUHwJ23/xGAgBYJWVrUvjig2griVjp7SPHAQ=="/>
+        </item>
+        <item>
             <title>0.1.1</title>
             <pubDate>Mon, 14 Sep 2026 14:18:17 +0900</pubDate>
             <sparkle:version>2</sparkle:version>
@@ -35,6 +47,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: O/g6v+hbMtzZauTzELr3ediSukyfr7fqXKCAEvW4AbV3KAJOWpHFU4G0eWqWJ744zsq1FnNu5tSQt/mzt3muAw==
-length: 2366
+edSignature: 8ZWncYQfc8Yu35Mlbtke7nluy1tLSnganiM1rIigGcEvzYJALZ+D55e8I8vRFvuTTR9191RujdBTuoN/2DQcDg==
+length: 3279
 -->
