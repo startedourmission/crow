@@ -1,8 +1,25 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Crow</title>
+        <item>
+            <title>0.1.1</title>
+            <pubDate>Mon, 14 Sep 2026 14:18:17 +0900</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[- SSH 터널을 통한 원격 VNC 화면 보기와 입력 지원
+- 로컬·SSH 이미지 미리보기와 클립보드 이미지 업로드
+- SSH 키 생성·가져오기와 GitHub 계정 설정 추가
+- 파일 이동·다운로드, 외부 변경 감지, 숨김 파일 탐색 개선
+- 독립 작업 창과 작은 플로팅 작업 창 지원
+- iPhone·iPad 키보드 바와 스니펫 입력 개선
+]]></description>
+            <enclosure url="https://github.com/startedourmission/crow/releases/download/v0.1.1/Crow-0.1.1-macOS.zip" length="12974911" type="application/octet-stream" sparkle:edSignature="T1+USkRcTSlTJAfqW9oUrtqeb2yub11cqhqKG0QHns9vehfhy5ZqLZZdF/FmPfG7HqQrrqvPTS0lo6PuLZmRAg=="/>
+        </item>
         <item>
             <title>0.1.0</title>
             <pubDate>Fri, 11 Sep 2026 15:38:43 +0900</pubDate>
@@ -13,10 +30,11 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 - 로컬 폴더와 SSH 서버를 하나의 작업 공간에서 관리
 - 터미널, 텍스트 편집기, SFTP, Git 상태 확인 제공
 ]]></description>
-            <enclosure url="https://github.com/startedourmission/crow/releases/download/v0.1.0/Crow-0.1.0-macOS.zip" length="11824920" type="application/octet-stream" sparkle:edSignature="qe+i17zZhERVKkaSAS1l9UVlB0vY9TxC3FBjTJyMJhHX8doV/QOghFlFTGwIsBqngGiaYV5QBDzy/np9l0TWDw=="></enclosure>
+            <enclosure url="https://github.com/startedourmission/crow/releases/download/v0.1.0/Crow-0.1.0-macOS.zip" length="11824920" type="application/octet-stream" sparkle:edSignature="qe+i17zZhERVKkaSAS1l9UVlB0vY9TxC3FBjTJyMJhHX8doV/QOghFlFTGwIsBqngGiaYV5QBDzy/np9l0TWDw=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: nvug+bw1pV/mYEA6lkmMGDClGl2uudKS5DC+RRBSbgktMHfhG+7eJprcb0ZrKvPDwaMFQnI2FBxYoD14npSZCA==
-length: 1292
+</rss>
+<!-- sparkle-signatures:
+edSignature: O/g6v+hbMtzZauTzELr3ediSukyfr7fqXKCAEvW4AbV3KAJOWpHFU4G0eWqWJ744zsq1FnNu5tSQt/mzt3muAw==
+length: 2366
 -->
