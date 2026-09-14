@@ -198,7 +198,7 @@ Crow는 시스템 OpenSSH 설정과 에이전트, 키를 그대로 사용합니�
 <details>
 <summary><strong>SSH 키 생성·가져오기·관리</strong></summary>
 
-Mac, iPhone, iPad에서 **Workspaces → + → SSH Keys** 또는 **Settings → SSH Keys**를 엽니다.
+Mac, iPhone, iPad에서 **Workspaces 상단 열쇠 버튼** 또는 **Settings → SSH Keys**를 엽니다.
 
 Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.ssh**에
 자동으로 표시됩니다. 키를 선택하면 공개키를 볼 수 있고, **Add to SSH Keys** 또는

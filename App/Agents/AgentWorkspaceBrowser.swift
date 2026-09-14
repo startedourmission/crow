@@ -38,6 +38,11 @@ struct AgentWorkspaceBrowser: View {
             HStack {
                 Text("WORKSPACES").font(.system(size: 11, weight: .semibold)).tracking(0.6)
                 Spacer()
+                Button { model.sshKeysVisible = true } label: {
+                    Image(systemName: "key").frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                    .help("SSH Keys").accessibilityLabel("SSH Keys")
+                    .accessibilityIdentifier("crow.keys.open")
                 addWorkspaceMenu
             }.foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12).frame(height: 40)
             TextField("Search hosts and workspaces", text: $search).textFieldStyle(.plain).font(.system(size: 12))
@@ -97,9 +102,6 @@ struct AgentWorkspaceBrowser: View {
                 }
             }
             Button("Add SSH Host…", systemImage: "plus") { model.sshCommandVisible = true }
-            Divider()
-            Button("SSH Keys…", systemImage: "key") { model.sshKeysVisible = true }
-            Button("Settings…", systemImage: "gearshape") { model.settingsVisible = true }
         } label: { Image(systemName: "plus").frame(width: 24, height: 24).contentShape(Rectangle()) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel("Add workspace").accessibilityIdentifier("crow.workspaces.add").windowDragExcluded()
