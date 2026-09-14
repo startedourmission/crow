@@ -2,6 +2,14 @@ import XCTest
 @testable import CrowCore
 
 final class AgentTerminalTests: XCTestCase {
+    func testHostConnectionRecencyRoundTripsAndOlderHostsStillDecode() throws {
+        var host = SSHHost(name: "Server", hostname: "192.0.2.8", username: "fixture")
+        XCTAssertNil(try JSONDecoder().decode(SSHHost.self, from: JSONEncoder().encode(host)).lastConnectedAt)
+        host.lastConnectedAt = Date(timeIntervalSince1970: 12345)
+        let restored = try JSONDecoder().decode(SSHHost.self, from: JSONEncoder().encode(host))
+        XCTAssertEqual(restored.lastConnectedAt, host.lastConnectedAt)
+    }
+
     func testLegacySidebarRoutesRestoreIntoUnifiedWorkspaces() throws {
         for value in ["hosts", "agents", "tmux", "workspaces"] {
             let data = try JSONEncoder().encode(value)

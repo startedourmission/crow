@@ -26,6 +26,7 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
     public var authentication: SSHAuthenticationKind = .password
     public var commandArguments: [String]?
     public var commandDirectory: String?
+    public var lastConnectedAt: Date?
 
     public init(
         id: HostID = HostID(),
@@ -54,7 +55,7 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, hostname, port, username, remotePath, usesWSL
-        case authentication, commandArguments, commandDirectory
+        case authentication, commandArguments, commandDirectory, lastConnectedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -69,6 +70,7 @@ public struct SSHHost: Identifiable, Hashable, Codable, Sendable {
         authentication = try values.decodeIfPresent(SSHAuthenticationKind.self, forKey: .authentication) ?? .password
         commandArguments = try values.decodeIfPresent([String].self, forKey: .commandArguments)
         commandDirectory = try values.decodeIfPresent(String.self, forKey: .commandDirectory)
+        lastConnectedAt = try values.decodeIfPresent(Date.self, forKey: .lastConnectedAt)
     }
 }
 

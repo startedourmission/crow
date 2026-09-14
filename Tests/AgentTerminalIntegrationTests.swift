@@ -138,6 +138,33 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         await first.stopAndWait(); await second.stopAndWait()
     }
 
+    @MainActor func testWorkspaceListSortsHostsByConnectionAndProjectsByName() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-sort-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        var older = SSHHost(name: "Older", hostname: "192.0.2.1", username: "fixture")
+        var newer = SSHHost(name: "Newer", hostname: "192.0.2.2", username: "fixture")
+        older.lastConnectedAt = Date(timeIntervalSince1970: 100)
+        newer.lastConnectedAt = Date(timeIntervalSince1970: 200)
+        model.hosts = [older, newer]
+        let local = model.current
+        local.snapshot.workspace.name = "zebra"
+        for name in ["Zebra", "alpha", "Beta"] {
+            let workspace = Workspace(name: name, kind: .remote(hostID: older.id, path: "/" + name), connection: .disconnected)
+            let state = WorkspaceState(.init(workspace: workspace, rootPath: "/" + name))
+            state.snapshot.lastOpenedAt = Date(timeIntervalSince1970: 999)
+            model.states.append(state)
+        }
+        let otherLocal = WorkspaceState(.init(workspace: Workspace(name: "Alpha", kind: .local, connection: .local), rootPath: root.path))
+        model.states.append(otherLocal)
+        XCTAssertEqual(model.workspaceHostIDs, [newer.id, older.id])
+        XCTAssertEqual(model.alphabetizedWorkspaces(on: older.id).map { $0.snapshot.workspace.name }, ["alpha", "Beta", "Zebra"])
+        XCTAssertEqual(model.alphabetizedWorkspaces(on: nil).map { $0.snapshot.workspace.name }, ["Alpha", "zebra"])
+        model.recordHostConnection(older.id)
+        XCTAssertEqual(model.workspaceHostIDs, [older.id, newer.id])
+        XCTAssertEqual(model.alphabetizedWorkspaces(on: older.id).map { $0.snapshot.workspace.name }, ["alpha", "Beta", "Zebra"])
+    }
+
     @MainActor func testUnifiedTmuxRoutingNeverFallsBackToAnotherHost() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-host-routing-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

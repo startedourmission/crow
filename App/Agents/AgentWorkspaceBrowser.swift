@@ -20,20 +20,12 @@ struct AgentWorkspaceBrowser: View {
     @State private var pickingLocalFolder = false
     @State private var folderSource: WorkspaceID?
 
-    private var hostIDs: [HostID] {
-        var ids = model.hosts.map(\.id)
-        for state in model.states {
-            if let id = state.snapshot.workspace.hostID, !ids.contains(id) { ids.append(id) }
-        }
-        return ids
-    }
-
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
-        model.states.filter { state in
-            state.snapshot.workspace.hostID == hostID && (search.isEmpty ||
+        model.alphabetizedWorkspaces(on: hostID).filter { state in
+            search.isEmpty ||
                 ([state.snapshot.workspace.name, state.snapshot.rootPath, model.workspaceHostName(state)]
-                 + state.snapshot.agentTerminals.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search))
-        }.sorted { ($0.snapshot.lastOpenedAt ?? .distantPast) > ($1.snapshot.lastOpenedAt ?? .distantPast) }
+                 + state.snapshot.agentTerminals.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search)
+        }
     }
 
     private func matchesHost(_ host: SSHHost?, id: HostID?) -> Bool {
@@ -55,7 +47,7 @@ struct AgentWorkspaceBrowser: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if matchesHost(nil, id: nil) { hostGroup(nil, id: nil) }
-                    ForEach(hostIDs, id: \.self) { id in
+                    ForEach(model.workspaceHostIDs, id: \.self) { id in
                         let host = model.hosts.first { $0.id == id }
                         if matchesHost(host, id: id) { hostGroup(host, id: id) }
                     }
@@ -179,7 +171,7 @@ struct AgentWorkspaceBrowser: View {
                     ForEach(pinned) { workspaceRow($0) }
                 }
                 if !recent.isEmpty {
-                    if !pinned.isEmpty { sectionLabel("Recent", count: recent.count, symbol: "clock") }
+                    if !pinned.isEmpty { sectionLabel("Projects", count: recent.count, symbol: "clock") }
                     ForEach(recent) { workspaceRow($0) }
                 }
                 if rows.isEmpty {

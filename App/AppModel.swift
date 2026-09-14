@@ -1036,12 +1036,15 @@ final class AppModel {
     private func beginSystemSSH(_ proposed: SystemSSHSpec, imported: Bool, preserveReverseSSH: Bool = false, workspaceID: WorkspaceID? = nil, select: Bool = true) {
         if let workspaceID, !states.contains(where: { $0.id == workspaceID }) { return }
         var host = proposed.host
-        if let saved = hosts.first(where: { $0.hostname == host.hostname && $0.port == host.port && $0.username == host.username }) { host.id = saved.id }
+        if let saved = hosts.first(where: { $0.hostname == host.hostname && $0.port == host.port && $0.username == host.username }) {
+            host.id = saved.id; host.lastConnectedAt = saved.lastConnectedAt
+        }
         let spec = SystemSSHSpec(host: host, socket: proposed.socket, arguments: proposed.arguments, directory: proposed.directory)
         if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host } else { hosts.append(host) }
         let state: WorkspaceState
         if let existing = preferredRemoteWorkspace(hostID: host.id, id: workspaceID) {
             if existing.remote?.isConnected == true {
+                recordHostConnection(host.id)
                 if !imported && select { selectWorkspace(existing.id, showFiles: false); terminalVisible = true; compactSurface = .terminal }
                 return
             }
@@ -1087,6 +1090,7 @@ final class AppModel {
                 state.snapshot.workspace.kind = .remote(hostID: host.id, path: root)
                 if state.snapshot.workspace.name == host.name { state.snapshot.workspace.name = workspaceFolderName(root) }
                 state.snapshot.workspace.connection = .connected
+                recordHostConnection(host.id)
                 if selectedWorkspaceID == state.id { refreshFiles() }
                 statusMessage = "SSH workspace added: \(host.userAtHost)"; schedulePersist()
             } catch {
@@ -1100,6 +1104,8 @@ final class AppModel {
     }
     #endif
     func storeHost(_ host: SSHHost, credential: HostCredential) throws {
+        var host = host
+        host.lastConnectedAt = hosts.first(where: { $0.id == host.id })?.lastConnectedAt ?? host.lastConnectedAt
         guard !host.hostname.trimmingCharacters(in: .whitespaces).isEmpty, !host.username.isEmpty, (1...65535).contains(host.port) else {
             throw NSError(domain: "Crow", code: 1, userInfo: [NSLocalizedDescriptionKey: "Enter a host, username and port between 1 and 65535."])
         }
@@ -1140,6 +1146,7 @@ final class AppModel {
         if let target = preferredRemoteWorkspace(hostID: host.id, id: workspaceID),
            let connected = states.first(where: { $0.snapshot.workspace.hostID == host.id && $0.remote?.isConnected == true }) {
             shareConnection(from: connected, to: target)
+            recordHostConnection(host.id)
             if select { activateWorkspace(target.id, reconnect: false) }
             return
         }
@@ -1204,6 +1211,7 @@ final class AppModel {
                 state.snapshot.workspace.kind = .remote(hostID: host.id, path: root)
                 if state.snapshot.workspace.name == host.name { state.snapshot.workspace.name = workspaceFolderName(root) }
                 state.stopTerminals(); state.snapshot.workspace.connection = .connected
+                recordHostConnection(host.id)
                 statusMessage = "Connected to \(host.userAtHost)"
                 if selectedWorkspaceID == state.id { refreshFiles() }; schedulePersist()
             } catch let challenge as HostKeyChallenge {

@@ -2,6 +2,40 @@ import CrowCore
 import Foundation
 
 extension AppModel {
+    var workspaceHostIDs: [HostID] {
+        var ids = hosts.map(\.id)
+        for state in states {
+            if let id = state.snapshot.workspace.hostID, !ids.contains(id) { ids.append(id) }
+        }
+        let saved = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
+        let recency = Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, saved[id]?.lastConnectedAt ?? states.filter { $0.snapshot.workspace.hostID == id }
+                .compactMap { $0.snapshot.lastOpenedAt }.max() ?? .distantPast)
+        })
+        return ids.sorted {
+            if recency[$0] != recency[$1] { return recency[$0]! > recency[$1]! }
+            let first = saved[$0]?.userAtHost ?? $0.rawValue.uuidString
+            let second = saved[$1]?.userAtHost ?? $1.rawValue.uuidString
+            let order = first.localizedCaseInsensitiveCompare(second)
+            return order == .orderedSame ? $0.rawValue.uuidString < $1.rawValue.uuidString : order == .orderedAscending
+        }
+    }
+
+    func alphabetizedWorkspaces(on hostID: HostID?) -> [WorkspaceState] {
+        states.filter { $0.snapshot.workspace.hostID == hostID }.sorted {
+            let order = $0.snapshot.workspace.name.localizedCaseInsensitiveCompare($1.snapshot.workspace.name)
+            if order != .orderedSame { return order == .orderedAscending }
+            if $0.snapshot.rootPath != $1.snapshot.rootPath { return $0.snapshot.rootPath < $1.snapshot.rootPath }
+            return $0.id.rawValue.uuidString < $1.id.rawValue.uuidString
+        }
+    }
+
+    func recordHostConnection(_ id: HostID) {
+        guard let index = hosts.firstIndex(where: { $0.id == id }) else { return }
+        hosts[index].lastConnectedAt = Date()
+        schedulePersist()
+    }
+
     func workspaceFolderName(_ path: String) -> String {
         let name = (path as NSString).lastPathComponent
         return name.isEmpty ? path : name
