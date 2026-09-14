@@ -138,8 +138,6 @@ struct RegularWorkspaceView: View {
                         SidebarTopBar()
                         CrowDivider()
                         SidebarView()
-                        CrowDivider()
-                        WorkspaceSwitcher()
                     }
                         .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: sidebarAvailable))
                         .background(CrowTheme.bg1)

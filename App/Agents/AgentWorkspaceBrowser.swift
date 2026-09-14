@@ -219,6 +219,11 @@ struct AgentWorkspaceBrowser: View {
                 .contextMenu {
                     Button("Open Workspace") { model.activateWorkspace(state.id); onOpen?() }
                     Button("Copy Path") { copyPath(state.snapshot.rootPath) }
+                    #if os(macOS)
+                    if !state.snapshot.workspace.isRemote {
+                        Button("Open in Finder") { model.openWorkspaceInFinder(state.id) }
+                    }
+                    #endif
                     Button(state.snapshot.isPinned ? "Unpin" : "Pin") { model.pinWorkspace(state.id) }
                     if state.snapshot.workspace.isRemote, state.remote?.isConnected == true {
                         Button("Open Another Folder…") { folderSource = state.id }

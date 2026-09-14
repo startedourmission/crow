@@ -42,7 +42,6 @@
 		315E43CF31430E0E18AA565C /* CrowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDEC33B0A4B5FCB5FE135A0 /* CrowApp.swift */; };
 		31C17969C3E60F58894C240E /* noVNC-BSD-2-Clause.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9959DE8F729C51EF2EE34523 /* noVNC-BSD-2-Clause.txt */; };
 		360C0A7D789693230AC287A7 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
-		36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
 		39A77266349A693C436CBD2C /* noVNC-pako-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D8C5ED657682901320A3B6E /* noVNC-pako-LICENSE.txt */; };
 		39F5CBE7547B34B6416D0A08 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B3B2623FE25570F04A96B0 /* GitRepository.swift */; };
 		3B3F0CA67ACF511A2FC961B0 /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A02A695DAF9491F2C3677E5 /* EditorAreaView.swift */; };
@@ -95,7 +94,6 @@
 		9CB1043741E0F4CF0B113E73 /* InputToolsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */; };
 		9D1F73D97BC4699A52439627 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 8A57E5BB59B15020241DAD01 /* Sparkle */; };
 		A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */; };
-		A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */; };
 		A53E1FCC6B5BFFA376DF6273 /* SSHCommandView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A093E56E71878F7439A35214 /* SSHCommandView.swift */; };
 		A77F3CB51D3FE4976052D994 /* SSHKeysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B742B462C9437666459DC7 /* SSHKeysView.swift */; };
 		AA22AFCBC0D6D8062B823DD8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A9F91460E98231B14EB73C47 /* Assets.xcassets */; };
@@ -238,7 +236,6 @@
 		DC6FE655559409CAEE08CABB /* CrowTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowTheme.swift; sourceTree = "<group>"; };
 		DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditor.swift; sourceTree = "<group>"; };
 		E659A052178F6AD11B43C616 /* TerminalViewHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewHost.swift; sourceTree = "<group>"; };
-		E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSwitcher.swift; sourceTree = "<group>"; };
 		E862B7E6799992ED9C868801 /* ScreenTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTransport.swift; sourceTree = "<group>"; };
 		EABE90007D32A5AB08E781B6 /* noVNC-MPL-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "noVNC-MPL-2.0.txt"; sourceTree = "<group>"; };
 		F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowAppTests.swift; sourceTree = "<group>"; };
@@ -295,7 +292,6 @@
 				A093E56E71878F7439A35214 /* SSHCommandView.swift */,
 				C7B742B462C9437666459DC7 /* SSHKeysView.swift */,
 				F66F17CB3B944EC19BBDF244 /* TerminalPanelView.swift */,
-				E8174A4A7254B2EEB080F8DF /* WorkspaceSwitcher.swift */,
 			);
 			path = Shell;
 			sourceTree = "<group>";
@@ -654,7 +650,6 @@
 				02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */,
 				52F0C7DCC3DE13464614DBBC /* WindowDragRegion.swift in Sources */,
 				AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */,
-				36C85A07684C2E9A6611087C /* WorkspaceSwitcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -726,7 +721,6 @@
 				196C0A25F4BD2847C008BE97 /* TerminalViewHost.swift in Sources */,
 				DFACF071DF461B8E8B3D7DE6 /* WindowDragRegion.swift in Sources */,
 				6C4ED3E62627C2BD483550B7 /* WorkspaceState.swift in Sources */,
-				A52EB3B23B49FA08AF9B2AD7 /* WorkspaceSwitcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

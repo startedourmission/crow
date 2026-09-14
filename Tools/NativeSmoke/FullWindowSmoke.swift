@@ -147,13 +147,6 @@ import WebKit
             try require(surface.containsRegion(surface.convert(editorPoint, from: nil)) == model.buffers.isEmpty,
                         "Editor/empty workspace drag boundary is incorrect")
             if model.sidebarVisible {
-                let vaultMenu = NSPoint(x: 150, y: 44)
-                try require(!surface.containsRegion(surface.convert(vaultMenu, from: nil)), "Bottom vault selector intercepted by window drag")
-                let footerExclusions = views(hosting, WindowMoveAnchorView.self).filter { anchor in
-                    anchor.excludesMovement && anchor.activeRect.width > 50 &&
-                        anchor.convert(anchor.activeRect, to: nil).contains(vaultMenu)
-                }
-                try require(footerExclusions.count == 1, "Vault selector is missing from the sidebar footer")
                 let blankSidebar = NSPoint(x: 150, y: 90)
                 try require(surface.containsRegion(surface.convert(blankSidebar, from: nil)), "Blank sidebar cannot move window")
                 let requests = window.nativeDragRequests
