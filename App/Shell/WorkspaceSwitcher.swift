@@ -4,29 +4,24 @@ import SwiftUI
 struct WorkspaceSwitcher: View {
     @Environment(AppModel.self) private var model
 
-    private var title: String {
-        if case .remote(let hostID, _) = model.selectedWorkspace.kind {
-            return model.hosts.first { $0.id == hostID }?.hostname ?? model.selectedWorkspace.name
-        }
-        return model.hasWorkspace ? model.selectedWorkspace.name : "Open Vault"
-    }
+    private var title: String { model.hasWorkspace ? model.selectedWorkspace.name : "Workspaces" }
 
     var body: some View {
         Menu {
-            ForEach(model.localWorkspaces) { workspace in
-                Button { model.selectWorkspace(workspace.id) } label: {
-                    Label(workspace.name, systemImage: workspace.id == model.selectedWorkspaceID ? "checkmark" : "folder")
+            ForEach(model.workspaces) { workspace in
+                Button { model.activateWorkspace(workspace.id) } label: {
+                    Label(workspace.name, systemImage: workspace.id == model.selectedWorkspaceID ? "checkmark" : workspace.isRemote ? "network" : "folder")
                 }
             }
-            if !model.localWorkspaces.isEmpty { Divider() }
-            Button("Open Folder…", systemImage: "folder.badge.plus") { model.folderImporterVisible = true }
-            if model.hasWorkspace && !model.selectedWorkspace.isRemote {
+            if !model.workspaces.isEmpty { Divider() }
+            Button("Manage Workspaces…", systemImage: "square.grid.2x2") { model.showWorkspaces() }
+            if model.hasWorkspace {
                 Divider()
                 workspaceActions(model.selectedWorkspace)
             }
-            if !model.localWorkspaces.isEmpty {
-                Menu("Manage Vaults") {
-                    ForEach(model.localWorkspaces) { workspace in
+            if !model.workspaces.isEmpty {
+                Menu("Workspace Actions") {
+                    ForEach(model.workspaces) { workspace in
                         Menu(workspace.name) { workspaceActions(workspace) }
                     }
                 }
@@ -59,11 +54,11 @@ struct WorkspaceSwitcher: View {
         .padding(.horizontal, 6).frame(maxWidth: .infinity).frame(height: 40)
         .background(CrowTheme.bg1)
         .windowDragBackground()
-        .accessibilityLabel("Switch vault")
+        .accessibilityLabel("Switch workspace")
         .accessibilityValue(title)
         .accessibilityIdentifier("crow.vault-menu")
         .contextMenu {
-            if model.hasWorkspace && !model.selectedWorkspace.isRemote { workspaceActions(model.selectedWorkspace) }
+            if model.hasWorkspace { workspaceActions(model.selectedWorkspace) }
         }
     }
 

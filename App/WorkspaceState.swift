@@ -11,6 +11,7 @@ final class WorkspaceState: Identifiable {
     var maximizedPaneID: UUID?
     let id: WorkspaceID
     @ObservationIgnored var remote: RemoteConnection?
+    var terminalGeneration = 0
     @ObservationIgnored var terminals: [UUID: TerminalSession] = [:]
     @ObservationIgnored var accessURL: URL?
     @ObservationIgnored var refreshGeneration = UUID()
@@ -25,7 +26,7 @@ final class WorkspaceState: Identifiable {
     }
     func stopTerminals() {
         terminals.values.forEach { $0.stop() }
-        terminals.removeAll()
+        terminals.removeAll(); terminalGeneration += 1
     }
 }
 
@@ -273,7 +274,7 @@ final class FileExplorer {
         while index < queue.count {
             guard !Task.isCancelled, token == generation else { return }
             if index >= 2_000 || count >= 20_000 {
-                limitMessage = "Showing the first 20,000 entries / 2,000 folders. Narrow the vault to search a larger project."
+                limitMessage = "Showing the first 20,000 entries / 2,000 folders. Narrow the workspace to search a larger project."
                 return
             }
             let (path, depth) = queue[index]; index += 1

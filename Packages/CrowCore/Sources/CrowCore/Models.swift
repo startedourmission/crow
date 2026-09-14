@@ -104,6 +104,10 @@ public struct Workspace: Identifiable, Hashable, Codable, Sendable {
         self.connection = connection
     }
 
+    public var hostID: HostID? {
+        if case .remote(let hostID, _) = kind { return hostID }; return nil
+    }
+
     public var isRemote: Bool {
         if case .remote = kind { return true }
         return false
@@ -283,6 +287,8 @@ public struct IMEProbe: Equatable, Sendable {
 public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
     case files
     case hosts
+    case agents
+    case tmux
 }
 
 public enum CompactSurface: String, Hashable, Codable, Sendable, CaseIterable {

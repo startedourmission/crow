@@ -176,7 +176,11 @@ final class RemoteConnection {
         try GitRepository.parseProjects(await gitData(query: GitRepository.projectsQuery(path: path)))
     }
 
-    private func gitData(query: String) async throws -> Data {
+    func workspaceCommand(_ command: String) async throws -> String {
+        String(decoding: try await gitData(query: command, operation: "tmux"), as: UTF8.self)
+    }
+
+    private func gitData(query: String, operation: String = "Git") async throws -> Data {
         guard let client, client.isConnected else { throw FileFailure.disconnected }
         let command = "sh -c " + GitRepository.quote(query)
         let data = try await withThrowingTaskGroup(of: Data.self) { group in
@@ -192,7 +196,7 @@ final class RemoteConnection {
                             case .stderr(let bytes): diagnostic.append(contentsOf: bytes.readableBytesView)
                             }
                             guard output.count + diagnostic.count <= 8 * 1024 * 1024 else {
-                                throw CommandError("Git output is too large to display.")
+                                throw CommandError("\(operation) output is too large to display.")
                             }
                         }
                         try Task.checkCancellation()
@@ -212,7 +216,7 @@ final class RemoteConnection {
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(12))
-                throw CommandError("Git request timed out. Try a smaller project folder. The terminal connection was left open.")
+                throw CommandError("\(operation) request timed out. The terminal connection was left open.")
             }
             defer { group.cancelAll() }
             return try await group.next() ?? Data()

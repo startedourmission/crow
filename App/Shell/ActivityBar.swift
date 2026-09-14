@@ -8,6 +8,8 @@ struct ActivityBar: View {
         VStack(spacing: 4) {
             paneButton(.files, symbol: "doc.text")
             paneButton(.hosts, symbol: "network")
+            paneButton(.agents, symbol: "sparkles")
+            paneButton(.tmux, symbol: "rectangle.split.2x2")
             Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 18)).crowForeground(CrowTheme.textDim)
@@ -27,17 +29,6 @@ struct ActivityBar: View {
                 .frame(maxWidth: .infinity)
                 .overlay { WindowDragRegion() }
                 #endif
-            Button {
-                model.terminalVisible.toggle()
-            } label: {
-                Image(systemName: "terminal")
-                    .font(.system(size: 18, weight: .regular))
-                    .crowForeground(model.terminalVisible ? CrowTheme.accent : CrowTheme.textDim)
-                    .frame(width: CrowTheme.activityWidth, height: 40)
-            }
-            .buttonStyle(CrowButtonStyle())
-            .windowDragExcluded()
-            .help("Terminal")
             Button { model.settingsVisible = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))
@@ -77,6 +68,8 @@ struct ActivityBar: View {
         }
         .buttonStyle(CrowButtonStyle())
         .windowDragExcluded()
-        .help(pane == .files ? "Files" : "Hosts")
+        .help(pane == .files ? "Files" : pane == .hosts ? "Hosts" : pane == .agents ? "Agents" : "tmux")
+        .accessibilityLabel(pane == .files ? "Files" : pane == .hosts ? "Hosts" : pane == .agents ? "Agents" : "tmux")
+        .accessibilityIdentifier("crow.activity." + pane.rawValue)
     }
 }

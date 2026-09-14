@@ -145,7 +145,7 @@ enum ReverseSSHCommand {
         return try await run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments, input: Data(input.utf8))
     }
 
-    static func run(_ executable: String = "/usr/bin/ssh", _ arguments: [String], input: Data? = nil) async throws -> String {
+    static func run(_ executable: String = "/usr/bin/ssh", _ arguments: [String], input: Data? = nil, operation: String = "Reverse SSH") async throws -> String {
         let work = Task.detached {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-command-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -167,10 +167,10 @@ enum ReverseSSHCommand {
             let deadline = Date().addingTimeInterval(12)
             while process.isRunning {
                 try Task.checkCancellation()
-                guard Date() < deadline else { throw CommandError("Reverse SSH timed out.") }
+                guard Date() < deadline else { throw CommandError("\(operation) timed out.") }
                 for url in [outURL, errURL] {
                     guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) < 1024 * 1024 else {
-                        throw CommandError("Reverse SSH diagnostic output exceeded its limit.")
+                        throw CommandError("\(operation) diagnostic output exceeded its limit.")
                     }
                 }
                 try await Task.sleep(for: .milliseconds(25))
@@ -179,7 +179,7 @@ enum ReverseSSHCommand {
             // thread; waitUntilExit would wait on that thread's unrelated run loop.
             guard process.terminationStatus == 0 else {
                 let detail = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
-                throw CommandError(detail.isEmpty ? "Reverse SSH could not complete the connection." : String(detail.prefix(1500)))
+                throw CommandError(detail.isEmpty ? "\(operation) command failed." : String(detail.prefix(1500)))
             }
             return try String(contentsOf: outURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         }

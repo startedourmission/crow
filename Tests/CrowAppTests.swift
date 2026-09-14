@@ -507,7 +507,7 @@ final class CrowAppTests: XCTestCase {
         XCTAssertFalse(model.workspaces.isEmpty)
         XCTAssertEqual(model.selectedWorkspace.kind, .local)
         XCTAssertFalse(model.files.isEmpty)
-        XCTAssertFalse(model.canChooseRemoteProject)
+        XCTAssertNil(model.selectedWorkspace.hostID)
     }
 
     @MainActor func testProjectPickerBelongsOnlyToRemoteWorkspaces() {
@@ -516,9 +516,9 @@ final class CrowAppTests: XCTestCase {
         let state = WorkspaceState(.init(workspace: Workspace(name: "Remote", kind: .remote(hostID: host.id, path: "/project"), connection: .disconnected), rootPath: "/project"))
         model.states.append(state)
         model.selectWorkspace(state.id)
-        XCTAssertTrue(model.canChooseRemoteProject)
+        XCTAssertNotNil(model.selectedWorkspace.hostID)
         model.selectWorkspace(localID)
-        XCTAssertFalse(model.canChooseRemoteProject)
+        XCTAssertNil(model.selectedWorkspace.hostID)
         XCTAssertTrue(model.remoteTerminals(in: localID).isEmpty)
     }
 

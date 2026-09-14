@@ -57,23 +57,26 @@ struct SidebarView: View {
     @State private var removeHost: SSHHost?
     @State private var creationPath: String?
     @State private var dropFolder: String?
-    @State private var choosingProject = false
     @FocusState private var searchFocused: Bool
 
     private var explorer: FileExplorer { model.current.explorer }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sidebarHeader
+            if model.sidebarPane == .files || model.sidebarPane == .hosts { sidebarHeader }
             #if !os(macOS)
             CrowDivider()
             #endif
-            if model.sidebarPane == .hosts {
+            if model.sidebarPane == .agents {
+                AgentWorkspaceBrowser()
+            } else if model.sidebarPane == .tmux {
+                TmuxPanel().id(model.selectedWorkspaceID)
+            } else if model.sidebarPane == .hosts {
                 hostsList
             } else if model.hasWorkspace {
                 filesList
             } else {
-                Button("Open Folder…") { model.folderImporterVisible = true }.padding(12).windowDragExcluded()
+                Button("Open Workspaces") { model.showWorkspaces() }.padding(12).windowDragExcluded()
                 Spacer()
             }
         }
@@ -96,10 +99,6 @@ struct SidebarView: View {
                 do { try await Task.sleep(for: .seconds(model.selectedWorkspace.isRemote ? 5 : 2)) }
                 catch { return }
             }
-        }
-        .sheet(isPresented: $choosingProject) {
-            RemoteProjectFolderPicker(workspaceID: model.selectedWorkspaceID, initialPath: model.current.snapshot.rootPath)
-                .environment(model)
         }
         .alert(renameEntry == nil ? (createDirectory ? "New Folder" : "New File") : "Rename", isPresented: $naming) {
             TextField("Name", text: $entryName)
@@ -134,11 +133,6 @@ struct SidebarView: View {
             if model.sidebarPane == .files {
                 toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
                 toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
-                if model.canChooseRemoteProject {
-                    toolbarButton("Choose Remote Project Folder", symbol: "folder") { choosingProject = true }
-                        .accessibilityIdentifier("crow.files.choose-folder")
-                        .disabled(model.selectedWorkspace.connection == .connecting)
-                }
                 Spacer(minLength: 0)
                     #if os(macOS)
                     .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
@@ -327,7 +321,7 @@ struct SidebarView: View {
         .overlay { NativeExplorerFileDrop(model: model, folder: $dropFolder) }
         .overlay(alignment: .bottom) {
             if dropFolder == explorer.rootPath {
-                Text("Move to vault root").font(.system(size: 11)).padding(8)
+                Text("Move to workspace root").font(.system(size: 11)).padding(8)
                     .background(CrowTheme.bg1).allowsHitTesting(false)
             }
         }
@@ -344,13 +338,6 @@ struct SidebarView: View {
                         Text(explorer.rootPath).font(.system(size: 11, design: .monospaced))
                             .textSelection(.enabled).multilineTextAlignment(.center)
                             .windowDragExcluded()
-                        if model.selectedWorkspace.isRemote && !explorer.searching {
-                            Text("The file browser folder is independent of the terminal's current directory.")
-                                .font(.system(size: 11)).multilineTextAlignment(.center)
-                            Button("Choose Project Folder…") { choosingProject = true }
-                                .accessibilityIdentifier("crow.empty-choose-project")
-                                .windowDragExcluded()
-                        }
                     }.crowForeground(CrowTheme.textDim).padding(16)
                 }
             }
@@ -677,8 +664,8 @@ struct RemoteProjectFolderPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Choose Remote Project Folder").font(.headline)
-            Text("Browse the SSH server or enter an absolute path. Your open tabs and terminal stay open.")
+            Text("Open SSH Workspace").font(.headline)
+            Text("Open a folder as a separate workspace on this SSH host.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button { browse("~") } label: { Image(systemName: "house") }.help("Remote Home")
@@ -703,11 +690,11 @@ struct RemoteProjectFolderPicker: View {
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Use This Folder") {
+                Button("Open Workspace") {
                     guard let loadedPath else { return }
                     loading = true; error = nil
                     request = Task {
-                        do { try await model.selectRemoteProject(loadedPath, in: workspaceID); dismiss() }
+                        do { try await model.openRemoteWorkspace(loadedPath, from: workspaceID); dismiss() }
                         catch is CancellationError {} catch { self.error = error.localizedDescription }
                         loading = false
                     }
@@ -736,7 +723,7 @@ struct RemoteProjectFolderPicker: View {
                     }
                 }
                 .overlay {
-                    if model.remoteTerminals(in: workspaceID).isEmpty { Text("No open terminals for this SSH workspace").foregroundStyle(.secondary).padding() }
+                    if model.remoteTerminals(in: workspaceID).isEmpty { Text("No open terminals for this SSH host").foregroundStyle(.secondary).padding() }
                 }
                 .navigationTitle("Choose Terminal")
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { choosingTerminal = false } } }

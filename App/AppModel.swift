@@ -130,7 +130,7 @@ final class AppModel {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         self.sessionURL = sessionURL ?? (vaultURL == nil ? support.appendingPathComponent("Crow/session-v1.json")
             : self.vaultURL.appendingPathComponent(".crow-session.json"))
-        let local = Workspace(name: "Vault", kind: .local, connection: .local)
+        let local = Workspace(name: "Crow", kind: .local, connection: .local)
         selectedWorkspaceID = local.id
         var restoredSession = false
         do {
@@ -147,11 +147,18 @@ final class AppModel {
                 hosts = saved.hosts; settings = saved.settings
                 states = saved.workspaces.map { snapshot in
                     var restored = snapshot
-                    if restored.workspace.isRemote { restored.workspace.connection = .disconnected }
+                    if restored.workspace.isRemote {
+                        restored.workspace.connection = .disconnected
+                        if let host = saved.hosts.first(where: { $0.id == restored.workspace.hostID }),
+                           restored.workspace.name == host.name, restored.rootPath.hasPrefix("/") {
+                            restored.workspace.name = (restored.rootPath as NSString).lastPathComponent
+                        }
+                    }
                     else if restored.bookmark == nil {
                         // iOS can change the app container UUID after an update.
                         // Built-in vault paths must follow the current container.
                         restored.relocateRoot(to: self.vaultURL.path)
+                        if restored.workspace.name == "Vault" { restored.workspace.name = "Crow" }
                     }
                     return WorkspaceState(restored)
                 }
@@ -228,12 +235,12 @@ final class AppModel {
         get { settings.showHiddenFiles ?? false }
         set { settings.showHiddenFiles = newValue; refreshFiles() }
     }
-    var canChooseRemoteProject: Bool { hasWorkspace && selectedWorkspace.isRemote }
     var hasUnsavedChanges: Bool { states.contains { $0.snapshot.buffers.contains(where: \.isDirty) } }
 
     func selectWorkspace(_ id: WorkspaceID, showFiles: Bool = true) {
         guard states.contains(where: { $0.id == id }) else { return }
         selectedWorkspaceID = id
+        current.snapshot.lastOpenedAt = Date()
         if showFiles {
             sidebarPane = .files
             if compactSurface == .hosts { compactSurface = .files }
@@ -311,7 +318,7 @@ final class AppModel {
     }
     func newTerminal(inWorkspace id: WorkspaceID) {
         guard states.contains(where: { $0.id == id }) else { return }
-        selectWorkspace(id); newTerminal()
+        activateWorkspace(id); newTerminal(); compactSurface = .terminal
     }
     #if os(macOS)
     func openWorkspaceInFinder(_ id: WorkspaceID) {
@@ -520,27 +527,34 @@ final class AppModel {
 
     func remoteTerminals(in id: WorkspaceID) -> [TerminalSession] {
         guard let state = states.first(where: { $0.id == id }), state.snapshot.workspace.isRemote else { return [] }
-        return state.snapshot.terminalIDs.compactMap { state.terminals[$0] }.filter(\.running)
+        return states.filter { $0.snapshot.workspace.hostID == state.snapshot.workspace.hostID }
+            .flatMap { workspace in workspace.snapshot.terminalIDs.compactMap { workspace.terminals[$0] } }.filter(\.running)
     }
 
-    func selectRemoteProject(_ path: String, in id: WorkspaceID) async throws {
+    @discardableResult func openRemoteWorkspace(_ path: String, from id: WorkspaceID) async throws -> WorkspaceID {
         let directory = try await remoteDirectory(in: id, at: path)
-        guard let state = states.first(where: { $0.id == id }),
-              case .remote(let hostID, _) = state.snapshot.workspace.kind else { throw FileFailure.disconnected }
-        state.snapshot.rootPath = directory.path; state.snapshot.directoryPath = directory.path
-        state.snapshot.workspace.kind = .remote(hostID: hostID, path: directory.path)
-        state.snapshot.workspace.connection = .connected
-        if selectedWorkspaceID == id {
-            sidebarPane = .files; refreshFiles()
-            await state.explorer.refresh()
+        guard let source = states.first(where: { $0.id == id }),
+              let hostID = source.snapshot.workspace.hostID else { throw FileFailure.disconnected }
+        let state: WorkspaceState
+        if let existing = states.first(where: { $0.snapshot.workspace.hostID == hostID && $0.snapshot.rootPath == directory.path }) {
+            state = existing
+        } else {
+            state = WorkspaceState(.init(workspace: Workspace(name: workspaceFolderName(directory.path),
+                kind: .remote(hostID: hostID, path: directory.path), connection: .connected), rootPath: directory.path))
+            states.append(state)
         }
-        statusMessage = "Project folder: \(directory.path)"; schedulePersist()
+        shareConnection(from: source, to: state)
+        activateWorkspace(state.id)
+        refreshFiles()
+        await state.explorer.refresh()
+        schedulePersist()
+        return state.id
     }
 
     func retryRemoteFiles() {
         let state = current
         Task {
-            do { try await selectRemoteProject(state.snapshot.rootPath, in: state.id) }
+            do { _ = try await remoteDirectory(in: state.id, at: state.snapshot.rootPath); refreshFiles(); await state.explorer.refresh() }
             catch { report(error) }
         }
     }
@@ -833,7 +847,7 @@ final class AppModel {
         func within(_ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
         guard within(source), within(parent), source != root,
               !drag.isDirectory || (parent != source && !parent.hasPrefix(source + "/")) else {
-            throw CommandError("Files can only be moved within this vault, outside their own subfolders.")
+            throw CommandError("Files can only be moved within this workspace, outside their own subfolders.")
         }
         let destination = (parent as NSString).appendingPathComponent(drag.name)
         guard destination != source else { return }
@@ -1017,15 +1031,16 @@ final class AppModel {
         sshBridge = value; return value
     }
 
-    private func beginSystemSSH(_ proposed: SystemSSHSpec, imported: Bool, preserveReverseSSH: Bool = false) {
+    private func beginSystemSSH(_ proposed: SystemSSHSpec, imported: Bool, preserveReverseSSH: Bool = false, workspaceID: WorkspaceID? = nil, select: Bool = true) {
+        if let workspaceID, !states.contains(where: { $0.id == workspaceID }) { return }
         var host = proposed.host
         if let saved = hosts.first(where: { $0.hostname == host.hostname && $0.port == host.port && $0.username == host.username }) { host.id = saved.id }
         let spec = SystemSSHSpec(host: host, socket: proposed.socket, arguments: proposed.arguments, directory: proposed.directory)
         if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host } else { hosts.append(host) }
         let state: WorkspaceState
-        if let existing = states.first(where: { if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false }) {
+        if let existing = preferredRemoteWorkspace(hostID: host.id, id: workspaceID) {
             if existing.remote?.isConnected == true {
-                if !imported { selectWorkspace(existing.id, showFiles: false); terminalVisible = true; compactSurface = .terminal }
+                if !imported && select { selectWorkspace(existing.id, showFiles: false); terminalVisible = true; compactSurface = .terminal }
                 return
             }
             state = existing; disconnect(state, stopReverseSSH: !preserveReverseSSH)
@@ -1035,14 +1050,21 @@ final class AppModel {
             state = WorkspaceState(.init(workspace: Workspace(name: host.name, kind: .remote(hostID: host.id, path: "."), connection: .connecting), rootPath: "."))
             states.append(state)
         }
-        state.systemSSH = spec; state.snapshot.workspace.name = host.name
+        state.systemSSH = spec
         state.snapshot.workspace.connection = .connecting
         if !imported {
-            selectWorkspace(state.id, showFiles: false); terminalVisible = true; compactSurface = .terminal
+            if select { selectWorkspace(state.id, showFiles: false); terminalVisible = true; compactSurface = .terminal }
             if state.snapshot.selectedTerminalID == nil {
                 let id = UUID(); state.snapshot.terminalIDs.append(id); state.snapshot.selectedTerminalID = id
                 state.snapshot.layout?.open(.terminal(id))
             }
+            if state.snapshot.agentTerminals.contains(where: { $0.id == state.snapshot.selectedTerminalID }) {
+                let id = UUID(); state.snapshot.terminalIDs.append(id); state.snapshot.selectedTerminalID = id
+                state.snapshot.layout?.open(.terminal(id))
+            }
+            let authenticationTerminalID = state.snapshot.selectedTerminalID!
+            state.snapshot.layout?.open(.terminal(authenticationTerminalID))
+            if selectedWorkspaceID == state.id { terminalVisible = true; compactSurface = .terminal }
             terminal(state.snapshot.selectedTerminalID!, in: state).start()
         }
         state.connectionTask = Task { [weak self, weak state] in
@@ -1061,6 +1083,7 @@ final class AppModel {
                 guard state.remote === connection else { return }
                 state.snapshot.rootPath = root; state.snapshot.directoryPath = root
                 state.snapshot.workspace.kind = .remote(hostID: host.id, path: root)
+                if state.snapshot.workspace.name == host.name { state.snapshot.workspace.name = workspaceFolderName(root) }
                 state.snapshot.workspace.connection = .connected
                 if selectedWorkspaceID == state.id { refreshFiles() }
                 statusMessage = "SSH workspace added: \(host.userAtHost)"; schedulePersist()
@@ -1095,10 +1118,10 @@ final class AppModel {
         } catch { report(error) }
     }
     func connectionState(for host: SSHHost) -> ConnectionState {
-        states.first {
-            if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }
-            return false
-        }?.snapshot.workspace.connection ?? .disconnected
+        let workspaces = states.filter { $0.snapshot.workspace.hostID == host.id }
+        if workspaces.contains(where: { $0.remote?.isConnected == true }) { return .connected }
+        if workspaces.contains(where: { $0.snapshot.workspace.connection == .connecting }) { return .connecting }
+        return workspaces.first?.snapshot.workspace.connection ?? .disconnected
     }
 
     func disconnect(_ host: SSHHost) {
@@ -1111,20 +1134,39 @@ final class AppModel {
         schedulePersist()
     }
 
-    func connect(_ host: SSHHost, select: Bool = true) {
+    func connect(_ host: SSHHost, select: Bool = true, workspaceID: WorkspaceID? = nil) {
+        if let target = preferredRemoteWorkspace(hostID: host.id, id: workspaceID),
+           let connected = states.first(where: { $0.snapshot.workspace.hostID == host.id && $0.remote?.isConnected == true }) {
+            shareConnection(from: connected, to: target)
+            if select { activateWorkspace(target.id, reconnect: false) }
+            return
+        }
+        if let target = preferredRemoteWorkspace(hostID: host.id, id: workspaceID),
+           let pending = states.first(where: { $0 !== target && $0.snapshot.workspace.hostID == host.id && $0.snapshot.workspace.connection == .connecting }) {
+            if select { activateWorkspace(target.id, reconnect: false) }
+            target.snapshot.workspace.connection = .connecting
+            target.connectionTask = Task { [weak self, weak target, weak pending] in
+                await pending?.connectionTask?.value
+                guard let self, let target, let pending, !Task.isCancelled else { return }
+                if pending.remote?.isConnected == true {
+                    self.shareConnection(from: pending, to: target)
+                    if self.selectedWorkspaceID == target.id { self.refreshFiles() }
+                } else { target.snapshot.workspace.connection = pending.snapshot.workspace.connection }
+            }
+            return
+        }
         #if os(macOS)
         if let arguments = host.commandArguments {
+            if preferredRemoteWorkspace(hostID: host.id, id: workspaceID)?.snapshot.workspace.connection == .connecting { return }
             Task {
-                do { let spec = try await bridge().prepare(arguments, directory: host.commandDirectory ?? vaultURL.path); beginSystemSSH(spec, imported: false) }
+                do { let spec = try await bridge().prepare(arguments, directory: host.commandDirectory ?? vaultURL.path); beginSystemSSH(spec, imported: false, workspaceID: workspaceID, select: select) }
                 catch { report(error) }
             }
             return
         }
         #endif
         let state: WorkspaceState
-        if let existing = states.first(where: {
-            if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false
-        }) { state = existing }
+        if let existing = preferredRemoteWorkspace(hostID: host.id, id: workspaceID) { state = existing }
         else {
             state = WorkspaceState(.init(workspace: Workspace(name: host.name,
                 kind: .remote(hostID: host.id, path: host.remotePath), connection: .disconnected), rootPath: host.remotePath))
@@ -1135,25 +1177,30 @@ final class AppModel {
         if select { compactSurface = .terminal; terminalVisible = true }
         #endif
         if state.snapshot.workspace.connection == .connected || state.snapshot.workspace.connection == .connecting { return }
-        state.snapshot.workspace.name = host.name; state.snapshot.workspace.connection = .connecting
+        state.snapshot.workspace.connection = .connecting
         let connection = RemoteConnection(); state.remote = connection
         state.connectionTask = Task {
             do {
                 try await connection.connect(host, credential: SecureStore.credential(host)); try Task.checkCancellation()
-                connection.client?.onDisconnect { [weak self, weak state] in
+                connection.client?.onDisconnect { [weak self] in
                     Task { @MainActor in
-                        guard let state, state.remote === connection else { return }
-                        state.snapshot.workspace.connection = .disconnected; state.stopTerminals()
-                        self?.statusMessage = "Connection closed — reconnect to start a new shell."
-                        #if os(iOS)
-                        if self?.fileRefreshPaused == false { self?.recoverBackgroundSSH(state) }
-                        #endif
+                        guard let self else { return }
+                        let affected = self.states.filter { $0.remote === connection }
+                        for workspace in affected {
+                            workspace.snapshot.workspace.connection = .disconnected; workspace.stopTerminals()
+                            #if os(iOS)
+                            if !self.fileRefreshPaused { self.recoverBackgroundSSH(workspace) }
+                            #endif
+                        }
+                        self.statusMessage = "Connection closed — reconnect to start a new shell."
                     }
                 }
                 let root = try await connection.realPath(state.snapshot.rootPath)
                 try Task.checkCancellation()
                 guard state.remote === connection else { await connection.disconnect(); return }
                 state.snapshot.rootPath = root; state.snapshot.directoryPath = root
+                state.snapshot.workspace.kind = .remote(hostID: host.id, path: root)
+                if state.snapshot.workspace.name == host.name { state.snapshot.workspace.name = workspaceFolderName(root) }
                 state.stopTerminals(); state.snapshot.workspace.connection = .connected
                 statusMessage = "Connected to \(host.userAtHost)"
                 if selectedWorkspaceID == state.id { refreshFiles() }; schedulePersist()
@@ -1173,7 +1220,7 @@ final class AppModel {
     }
     func reconnectCurrent() {
         guard case .remote(let id, _) = selectedWorkspace.kind, let host = hosts.first(where: { $0.id == id }) else { return }
-        disconnect(current); connect(host)
+        disconnect(current); connect(host, workspaceID: current.id)
     }
     func disconnectCurrent() { disconnect(current) }
     #if os(macOS)
@@ -1209,14 +1256,15 @@ final class AppModel {
         foregroundChecks.removeValue(forKey: state.id)?.cancel()
         #endif
         #if os(macOS)
-        if stopReverseSSH, case .remote(let id, _) = state.snapshot.workspace.kind { reverseSSHConnections[id]?.stop() }
+        if stopReverseSSH, let id = state.snapshot.workspace.hostID,
+           !states.contains(where: { $0 !== state && $0.snapshot.workspace.hostID == id && $0.remote?.isConnected == true }) { reverseSSHConnections[id]?.stop() }
         state.systemSSH = nil
         #endif
         state.explorer.stop()
         state.connectionTask?.cancel(); state.connectionTask = nil
         let connection = state.remote; state.remote = nil; state.stopTerminals()
         state.snapshot.workspace.connection = .disconnected
-        Task { await connection?.disconnect() }
+        if let connection, !states.contains(where: { $0.remote === connection }) { Task { await connection.disconnect() } }
     }
     func terminal(_ id: UUID, in state: WorkspaceState) -> TerminalSession {
         if let existing = state.terminals[id] { return existing }
@@ -1224,15 +1272,13 @@ final class AppModel {
         #if os(macOS)
         useSystemSSH = state.systemSSH != nil
         #endif
-        var directory = state.snapshot.rootPath
-        #if os(iOS)
-        if case .remote(let hostID, _) = state.snapshot.workspace.kind {
-            // The explorer restores its project independently of the shell's start folder.
-            directory = hosts.first(where: { $0.id == hostID })?.terminalStartPath(projectPath: state.snapshot.rootPath) ?? "~"
-        }
-        #endif
+        let directory = state.snapshot.rootPath
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: directory,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
+        if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {
+            session.launchCommand = agent.provider.command(directory: agent.directory)
+            session.agentProvider = agent.provider
+        }
         session.imagePasteContext = { [weak self, weak state] in
             guard let self, let state else { return nil }
             return self.imagePasteContext(for: id, in: state)
@@ -1261,6 +1307,7 @@ final class AppModel {
         }
         #endif
         state.terminals[id] = session
+        state.terminalGeneration += 1
         return session
     }
     private func imagePasteContext(for terminalID: UUID, in state: WorkspaceState) -> String? {
@@ -1296,6 +1343,8 @@ final class AppModel {
         guard let state = states.first(where: { $0.snapshot.terminalIDs.contains(id) }) else { return }
         state.terminals[id]?.stop(); state.terminals[id] = nil; state.snapshot.terminalIDs.removeAll { $0 == id }
         state.snapshot.layout?.remove(.terminal(id))
+        state.snapshot.agentTerminals.removeAll { $0.id == id }
+        state.terminalGeneration += 1
         if state.snapshot.selectedTerminalID == id { state.snapshot.selectedTerminalID = state.snapshot.terminalIDs.last }
         schedulePersist()
     }
@@ -1388,7 +1437,7 @@ final class AppModel {
               case .remote(let hostID, _) = state.snapshot.workspace.kind,
               let host = hosts.first(where: { $0.id == hostID }) else { return }
         disconnect(state)
-        connect(host, select: false)
+        connect(host, select: false, workspaceID: state.id)
     }
     #endif
     func shutdown() {

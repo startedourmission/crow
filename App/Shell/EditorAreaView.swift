@@ -243,7 +243,7 @@ struct CrowEditorView: View {
 }
 
 
-private struct NewTabPage: View {
+struct NewTabPage: View {
     @Environment(AppModel.self) private var model
     let paneID: UUID
 
@@ -254,6 +254,21 @@ private struct NewTabPage: View {
                     Text("New Tab").font(.system(size: 22, weight: .semibold))
                     Text(model.workspaceTitle).font(.system(size: 12)).crowForeground(CrowTheme.textDim)
                         .lineLimit(1).truncationMode(.middle).padding(.bottom, 8)
+                    Text("Agents").font(.system(size: 11, weight: .semibold)).crowForeground(CrowTheme.textDim)
+                    ForEach(AgentProvider.allCases) { provider in
+                        Button { model.newAgentTerminal(provider, in: paneID) } label: {
+                            HStack(spacing: 10) {
+                                AgentProviderIcon(provider: provider, size: 20)
+                                Text(provider.title).font(.system(size: 13))
+                                Spacer()
+                                Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                            }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).padding(8)
+                                .background(CrowTheme.bg1, in: RoundedRectangle(cornerRadius: 5))
+                                .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(CrowTheme.border) }
+                        }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                            .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
+                    }
+                    CrowDivider().padding(.vertical, 8)
                     action("New Terminal", symbol: "terminal") {
                         model.activatePane(paneID); model.newTerminal()
                     }
@@ -622,7 +637,7 @@ private struct WorkspacePaneView: View {
         switch tab {
         case .start: return "New Tab"
         case .file(let id): return model.buffers.first { $0.id == id }?.title ?? "File"
-        case .terminal(let id): return "Terminal \((model.current.snapshot.terminalIDs.firstIndex(of: id) ?? 0) + 1)"
+        case .terminal(let id): return model.current.snapshot.agentTerminals.first { $0.id == id }?.title ?? "Terminal \((model.current.snapshot.terminalIDs.firstIndex(of: id) ?? 0) + 1)"
         }
     }
     private func tabView(_ tab: WorkspaceTab) -> some View {
@@ -631,14 +646,18 @@ private struct WorkspacePaneView: View {
         return HStack(spacing: 6) {
             Button { model.selectTab(tab, in: pane.id) } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: {
-                        switch tab {
-                        case .terminal: return "terminal"
-                        case .file(let id): return model.buffers.first { $0.id == id }?.isImage == true ? "photo" : "doc.text"
-                        case .start: return "square.grid.2x2"
-                        }
-                    }())
-                        .font(.system(size: 10))
+                    if case .terminal(let id) = tab, let agent = model.current.snapshot.agentTerminals.first(where: { $0.id == id }) {
+                        AgentProviderIcon(provider: agent.provider, size: 13)
+                    } else {
+                        Image(systemName: {
+                            switch tab {
+                            case .terminal: return "terminal"
+                            case .file(let id): return model.buffers.first { $0.id == id }?.isImage == true ? "photo" : "doc.text"
+                            case .start: return "square.grid.2x2"
+                            }
+                        }())
+                            .font(.system(size: 10))
+                    }
                     Text(title(tab)).font(.system(size: 12)).lineLimit(1)
                     if dirty { Circle().fill(CrowTheme.accent).frame(width: 5, height: 5) }
                 }

@@ -7,6 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C63C0CE83F2A8B8569164BE1 /* AgentTerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2693F6A67D580A0ABEF815E4 /* AgentTerminalIntegrationTests.swift */; };
+		A94709D04834ABD64EFBD49B /* AgentProviderIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25CE8C3E3802723EEDE9639C /* AgentProviderIcon.swift */; };
+		067A5811478F583F34CF92A6 /* AgentTerminalModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83544B80F88016FA349C604B /* AgentTerminalModel.swift */; };
+		EC95A1359A1C99CC87BD7B5B /* AgentWorkspaceBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E96BC28F84DDB402A78D73B9 /* AgentWorkspaceBrowser.swift */; };
+		299FBC8BF7B03C70E63DA863 /* TmuxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2612E983B79CB4122B97FE5F /* TmuxModel.swift */; };
+		CBA1524288930F804747BCC3 /* TmuxPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB6458511DB09FD5C48000E /* TmuxPanel.swift */; };
+		D424E7AEB76CC51F9C0AAC90 /* AgentTerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2693F6A67D580A0ABEF815E4 /* AgentTerminalIntegrationTests.swift */; };
+		FC918E4F8D812ED75D4AD8DE /* AgentProviderIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25CE8C3E3802723EEDE9639C /* AgentProviderIcon.swift */; };
+		EC9E882D3F229ECC548CE4B0 /* AgentTerminalModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83544B80F88016FA349C604B /* AgentTerminalModel.swift */; };
+		52501C51E63A0AF954373A6E /* AgentWorkspaceBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E96BC28F84DDB402A78D73B9 /* AgentWorkspaceBrowser.swift */; };
+		A84E8FC972A79290620BE741 /* TmuxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2612E983B79CB4122B97FE5F /* TmuxModel.swift */; };
+		AA8ED1A7FB72C6DA0BFFB0F0 /* TmuxPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB6458511DB09FD5C48000E /* TmuxPanel.swift */; };
 		01A2E0CF88FF0A51767FD9AA /* ScreenIntegrationChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D62E4109A64D19EB1B58385 /* ScreenIntegrationChecks.swift */; };
 		02780E154847F75071A7AB79 /* TerminalViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659A052178F6AD11B43C616 /* TerminalViewHost.swift */; };
 		038B03A1B09C8A40612ACC0C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 797792777CAD6CD2D456EBF8 /* SwiftTerm */; };
@@ -162,6 +174,12 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		25CE8C3E3802723EEDE9639C /* AgentProviderIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Agents/AgentProviderIcon.swift"; sourceTree = SOURCE_ROOT; };
+		83544B80F88016FA349C604B /* AgentTerminalModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Agents/AgentTerminalModel.swift"; sourceTree = SOURCE_ROOT; };
+		E96BC28F84DDB402A78D73B9 /* AgentWorkspaceBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Agents/AgentWorkspaceBrowser.swift"; sourceTree = SOURCE_ROOT; };
+		2612E983B79CB4122B97FE5F /* TmuxModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Tmux/TmuxModel.swift"; sourceTree = SOURCE_ROOT; };
+		9AB6458511DB09FD5C48000E /* TmuxPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/Tmux/TmuxPanel.swift"; sourceTree = SOURCE_ROOT; };
+		2693F6A67D580A0ABEF815E4 /* AgentTerminalIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Tests/AgentTerminalIntegrationTests.swift"; sourceTree = SOURCE_ROOT; };
 		04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHIntegrationTests.swift; sourceTree = "<group>"; };
 		0904799224C58418EA1D5CE8 /* CrowMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CrowMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1060A874F96F1D04933A95A4 /* InputToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputToolsTests.swift; sourceTree = "<group>"; };
@@ -308,6 +326,7 @@
 		1A1C9CA78960D194555619D3 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				2693F6A67D580A0ABEF815E4 /* AgentTerminalIntegrationTests.swift */,
 				F5729D08E8A70FF658CDDB5D /* CrowAppTests.swift */,
 				624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */,
 				2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */,
@@ -336,6 +355,11 @@
 		731BB62EF6BA3ABD2B5E0A7B /* App */ = {
 			isa = PBXGroup;
 			children = (
+				25CE8C3E3802723EEDE9639C /* AgentProviderIcon.swift */,
+				83544B80F88016FA349C604B /* AgentTerminalModel.swift */,
+				E96BC28F84DDB402A78D73B9 /* AgentWorkspaceBrowser.swift */,
+				2612E983B79CB4122B97FE5F /* TmuxModel.swift */,
+				9AB6458511DB09FD5C48000E /* TmuxPanel.swift */,
 				0FEEE4A3561B20E2D72EF908 /* Editor */,
 				90210A2CA3296A95A64B5937 /* Screen */,
 				91C366062BEB5F0931B98A25 /* Services */,
@@ -587,6 +611,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC918E4F8D812ED75D4AD8DE /* AgentProviderIcon.swift in Sources */,
+				EC9E882D3F229ECC548CE4B0 /* AgentTerminalModel.swift in Sources */,
+				52501C51E63A0AF954373A6E /* AgentWorkspaceBrowser.swift in Sources */,
+				A84E8FC972A79290620BE741 /* TmuxModel.swift in Sources */,
+				AA8ED1A7FB72C6DA0BFFB0F0 /* TmuxPanel.swift in Sources */,
 				73792AA19BC833FF088AE79D /* ActivityBar.swift in Sources */,
 				8F1D16A4EAA6989247ABE75A /* AppModel.swift in Sources */,
 				91CF967F77B61D395D04BE86 /* ClipboardImage.swift in Sources */,
@@ -633,6 +662,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D424E7AEB76CC51F9C0AAC90 /* AgentTerminalIntegrationTests.swift in Sources */,
 				8AC360405C5CEAF39BD15D74 /* CrowAppTests.swift in Sources */,
 				2C65D5FA8F68B3A1C10435D2 /* EchoTerminalFixture.swift in Sources */,
 				EB9B4F83AB3569A27A3B6589 /* EchoTerminalTests.swift in Sources */,
@@ -653,6 +683,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A94709D04834ABD64EFBD49B /* AgentProviderIcon.swift in Sources */,
+				067A5811478F583F34CF92A6 /* AgentTerminalModel.swift in Sources */,
+				EC95A1359A1C99CC87BD7B5B /* AgentWorkspaceBrowser.swift in Sources */,
+				299FBC8BF7B03C70E63DA863 /* TmuxModel.swift in Sources */,
+				CBA1524288930F804747BCC3 /* TmuxPanel.swift in Sources */,
 				D5E54E5A030459741AFF3011 /* ActivityBar.swift in Sources */,
 				B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */,
 				7CB37409839299CC9E07C7BC /* ClipboardImage.swift in Sources */,
@@ -699,6 +734,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C63C0CE83F2A8B8569164BE1 /* AgentTerminalIntegrationTests.swift in Sources */,
 				E4C9ACC26C843EC9B757A065 /* CrowAppTests.swift in Sources */,
 				67E2475B239B9403EBB7E291 /* EchoTerminalFixture.swift in Sources */,
 				0CE31258B7CFFC343C872124 /* EchoTerminalTests.swift in Sources */,

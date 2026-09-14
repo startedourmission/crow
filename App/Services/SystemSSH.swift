@@ -68,9 +68,8 @@ struct SystemSSHSpec: Sendable {
     }
 
     var environment: [String] {
-        var env = ProcessInfo.processInfo.environment
+        var env = TerminalCommand.utf8Environment(ProcessInfo.processInfo.environment)
         env["ZDOTDIR"] = root.path; env["TERM"] = "xterm-256color"
-        env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
         return env.map { "\($0.key)=\($0.value)" }
     }
 
@@ -103,10 +102,11 @@ struct SystemSSHSpec: Sendable {
         return spec
     }
 
-    private func poll() async {
+    func poll() async {
         guard let requests = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey]) else { return }
         for request in requests where request.lastPathComponent.hasPrefix("r.") && !seen.contains(request.path) {
             guard (try? request.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == false,
+                  FileManager.default.fileExists(atPath: request.appendingPathComponent("active").path),
                   FileManager.default.fileExists(atPath: request.appendingPathComponent("s").path) else { continue }
             seen.insert(request.path)
             guard let data = try? Data(contentsOf: request.appendingPathComponent("args")), data.count < 131_072,
@@ -115,6 +115,9 @@ struct SystemSSHSpec: Sendable {
             guard SSHCommand.isInteractive(arguments) else { continue }
             do {
                 var host = try await Self.resolve(arguments, directory: directory)
+                // ControlPersist can leave a socket after the terminal command exits.
+                // It must not resurrect a workspace while host resolution is in flight.
+                guard FileManager.default.fileExists(atPath: request.appendingPathComponent("active").path) else { continue }
                 host.commandArguments = arguments; host.commandDirectory = directory
                 let spec = SystemSSHSpec(host: host, socket: request.appendingPathComponent("s").path, arguments: arguments, directory: directory)
                 owned.append(spec); onConnection?(spec)

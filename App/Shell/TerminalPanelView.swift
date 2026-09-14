@@ -26,6 +26,7 @@ struct TerminalPanelView: View {
         .background(CrowTheme.bg0)
         .alert("Close this terminal?", isPresented: Binding(get: { closeTerminalID != nil }, set: { if !$0 { closeTerminalID = nil } }), presenting: closeTerminalID) { id in
             Button("Close Terminal", role: .destructive) { model.closeTerminal(id) }
+                .keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
         } message: { _ in Text("The shell and its running commands will be terminated.") }
     }
@@ -52,7 +53,11 @@ struct TerminalPanelView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
-                        Button("\(index + 1)") { model.current.snapshot.selectedTerminalID = id; model.schedulePersist() }
+                        Button { model.current.snapshot.selectedTerminalID = id; model.schedulePersist() } label: {
+                            if let agent = model.current.snapshot.agentTerminals.first(where: { $0.id == id }) {
+                                HStack(spacing: 4) { AgentProviderIcon(provider: agent.provider, size: 12); Text(agent.title) }
+                            } else { Text("\(index + 1)") }
+                        }
                             .crowForeground(id == model.current.snapshot.selectedTerminalID ? CrowTheme.accent : CrowTheme.textDim)
                             .contextMenu { Button("Close Terminal…", role: .destructive) { closeTerminalID = id } }
                     }

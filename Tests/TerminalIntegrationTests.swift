@@ -13,6 +13,8 @@ final class TerminalIntegrationTests: XCTestCase {
         let workspaceID = model.selectedWorkspaceID
         let terminalID = model.current.snapshot.selectedTerminalID!
         let session = model.terminal(terminalID, in: model.current)
+        // Reproduce a GUI launch with a non-UTF-8 inherited locale.
+        session.shellEnvironment = ["PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LANG=C", "LC_ALL=C", "ZDOTDIR=\(directory.path)"]
         session.start()
         defer { session.stop() }
         XCTAssertTrue(session.running)
@@ -49,6 +51,16 @@ final class TerminalIntegrationTests: XCTestCase {
         model.newTerminal()
         let second = model.terminal(model.current.snapshot.selectedTerminalID!, in: model.current)
         XCTAssertFalse(second === session)
+        // A new tab in the same workspace must also work with no locale at all,
+        // as when the app is opened from Finder rather than a UTF-8 shell.
+        second.shellEnvironment = ["PATH=/usr/bin:/bin:/usr/sbin:/sbin", "ZDOTDIR=\(directory.path)"]
+        second.start()
+        second.view.insertText("printf '__READY_%s__\\n' SECOND\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await waitUntil { self.screen(second.view).contains("__READY_SECOND__") }
+        second.view.insertText("printf '__NEW_TAB_%s__\\n' 한글", replacementRange: NSRange(location: NSNotFound, length: 0))
+        second.view.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+        second.view.insertText("국\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await waitUntil { self.screen(second.view).contains("__NEW_TAB_한국__") }
     }
 
     @MainActor func testIMECommitOnlySendsCommittedBytes() {
@@ -72,12 +84,12 @@ final class TerminalIntegrationTests: XCTestCase {
         }.joined(separator: "\n")
     }
 
-    @MainActor private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
+    @MainActor private func waitUntil(file: StaticString = #filePath, line: UInt = #line, _ condition: @escaping @MainActor () -> Bool) async throws {
         for _ in 0..<150 {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
-        XCTFail("Terminal output did not arrive within 7.5 seconds")
+        XCTFail("Terminal output did not arrive within 7.5 seconds", file: file, line: line)
     }
 }
 #endif
@@ -258,7 +270,7 @@ final class IOSTerminalIntegrationTests: XCTestCase {
         model.selectWorkspace(backgroundState.id)
         model.compactSurface = .terminal
 
-        // A restored explorer project must not override the host's new shell start folder.
+        // Every new shell starts in its workspace folder, independently of the host default.
         host.remotePath = "~"
         try model.storeHost(host, credential: HostCredential(privateKey: fixture.privateKey))
         model.reconnectCurrent()
@@ -267,11 +279,11 @@ final class IOSTerminalIntegrationTests: XCTestCase {
             model.current.terminals[id]?.running == true && model.current.terminals[id] !== session
         }
         let reconnected = try XCTUnwrap(model.current.terminals[id])
-        reconnected.view.insertText("test \"$PWD\" -ef \"$HOME\" && printf '__HOME_%s__\\n' OK\n")
-        try await wait("Restored project overrode the configured home folder") { screen(reconnected).contains("__HOME_OK__") }
+        reconnected.view.insertText("test \"$PWD\" -ef " + quotedFolder + " && printf '__PROJECT_%s__\\n' OK\n")
+        try await wait("Restored workspace did not set the terminal folder") { screen(reconnected).contains("__PROJECT_OK__") }
         XCTAssertEqual(model.current.snapshot.rootPath, fixture.directory, "The explorer should retain its selected project")
 
-        // The WSL checkbox deliberately preserves the previous project-folder behavior.
+        // WSL workspaces follow the same folder rule.
         host.usesWSL = true
         try model.storeHost(host, credential: HostCredential(privateKey: fixture.privateKey))
         model.reconnectCurrent()

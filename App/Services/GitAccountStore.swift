@@ -139,3 +139,111 @@ final class GitAccountStore {
         account = nil; storageError = nil
     }
 }
+
+/// Public-client OAuth: no client secret or callback server is embedded in Crow.
+struct GitHubOAuth: Sendable {
+    struct Authorization: Decodable, Sendable {
+        let device_code: String
+        let user_code: String
+        let verification_uri: URL
+        let expires_in: Int
+        let interval: Int
+    }
+    enum PollResult: Equatable { case pending, slowDown, token(String) }
+    private struct Response: Decodable {
+        let access_token: String?
+        let token_type: String?
+        let error: String?
+    }
+
+    static var clientID: String? {
+        let value = Bundle.main.object(forInfoDictionaryKey: "CrowGitHubClientID") as? String ?? ""
+        return validClientID(value) ? value : nil
+    }
+    private static func validClientID(_ value: String) -> Bool {
+        !value.isEmpty && value.count <= 128 && value.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 95 || $0 == 46
+        }
+    }
+    static func request(clientID: String, deviceCode: String? = nil) throws -> URLRequest {
+        guard validClientID(clientID) else { throw CommandError("GitHub sign-in is not configured in this build.") }
+        var fields = ["client_id": clientID]
+        let path: String
+        if let deviceCode {
+            path = "/login/oauth/access_token"
+            fields["device_code"] = deviceCode
+            fields["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code"
+        } else {
+            path = "/login/device/code"
+            fields["scope"] = "read:user"
+        }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        var request = URLRequest(url: URL(string: "https://github.com" + path)!)
+        request.httpMethod = "POST"; request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("Crow", forHTTPHeaderField: "User-Agent")
+        request.httpBody = Data(fields.sorted { $0.key < $1.key }.map {
+            $0.key + "=" + $0.value.addingPercentEncoding(withAllowedCharacters: allowed)!
+        }.joined(separator: "&").utf8)
+        return request
+    }
+    static func authorization(_ data: Data) throws -> Authorization {
+        guard let value = try? JSONDecoder().decode(Authorization.self, from: data),
+              !value.device_code.isEmpty, value.device_code.count <= 1024,
+              !value.user_code.isEmpty, value.user_code.count <= 32,
+              value.verification_uri.absoluteString == "https://github.com/login/device",
+              (1...3600).contains(value.expires_in), (1...300).contains(value.interval) else {
+            throw CommandError("Could not start GitHub sign-in. Check the OAuth app’s Device Flow setting and try again.")
+        }
+        return value
+    }
+    static func pollResult(_ data: Data) throws -> PollResult {
+        guard let value = try? JSONDecoder().decode(Response.self, from: data) else {
+            throw CommandError("GitHub returned an invalid sign-in response.")
+        }
+        switch value.error {
+        case "authorization_pending": return .pending
+        case "slow_down": return .slowDown
+        case "access_denied": throw CommandError("GitHub sign-in was declined. You can try again.")
+        case "expired_token": throw CommandError("The GitHub sign-in code expired. Start sign-in again.")
+        case .some: throw CommandError("GitHub could not complete sign-in. Check the OAuth app configuration and try again.")
+        case nil:
+            guard let token = value.access_token, value.token_type?.lowercased() == "bearer" else {
+                throw CommandError("GitHub returned an invalid sign-in response.")
+            }
+            _ = try GitAccountAPI.request(token: token)
+            return .token(token)
+        }
+    }
+    private func fetch(_ request: URLRequest) async throws -> Data {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
+        let session = URLSession(configuration: config, delegate: GitAccountAPI(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
+        try Task.checkCancellation()
+        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+              data.count < 1_048_576 else { throw CommandError("Could not contact GitHub for sign-in. Please try again.") }
+        return data
+    }
+    func begin(clientID: String) async throws -> Authorization {
+        try Self.authorization(await fetch(Self.request(clientID: clientID)))
+    }
+    func token(clientID: String, authorization: Authorization) async throws -> String {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(authorization.expires_in))
+        var interval = authorization.interval
+        while clock.now < deadline {
+            try await Task.sleep(for: .seconds(interval))
+            guard clock.now < deadline else { break }
+            let result = try Self.pollResult(await fetch(Self.request(clientID: clientID, deviceCode: authorization.device_code)))
+            switch result {
+            case .pending: break
+            case .slowDown: interval += 5
+            case .token(let token): return token
+            }
+        }
+        throw CommandError("The GitHub sign-in code expired. Start sign-in again.")
+    }
+}

@@ -5,6 +5,21 @@ import SwiftTerm
 @testable import Crow
 
 final class SSHIntegrationTests: XCTestCase {
+    @MainActor private func verifyLaunchCommand(workspace: Workspace, directory: String, remote: RemoteConnection?, systemSSH: SystemSSHSpec? = nil) async throws {
+        let session = TerminalSession(id: UUID(), workspace: workspace, directory: directory, remote: remote,
+            fontSize: 16, useSystemSSH: systemSSH != nil)
+        session.systemSSH = systemSSH
+        session.launchCommand = "test -t 0 && printf '__LAUNCH_%s__' REMOTE; exec /bin/cat"
+        session.start(); defer { session.stop() }
+        for _ in 0..<100 {
+            let terminal = session.view.getTerminal()
+            let text = (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined()
+            if text.contains("__LAUNCH_REMOTE__") { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Remote launch command did not receive a PTY: \(session.status)")
+    }
+
     func testClosedSFTPPipeThrowsInsteadOfTerminatingApplication() throws {
         let pipe = Pipe()
         try SystemSFTP.protectWrites(to: pipe.fileHandleForWriting)
@@ -84,6 +99,14 @@ final class SSHIntegrationTests: XCTestCase {
         let connection = RemoteConnection()
         try await connection.connect(host, credential: credential)
         defer { Task { await connection.disconnect() } }
+        let commandOutput = try await connection.workspaceCommand("printf '__COMMAND_OK__'")
+        XCTAssertEqual(commandOutput, "__COMMAND_OK__")
+        do {
+            _ = try await connection.workspaceCommand("printf 'command error' >&2; exit 9")
+            XCTFail("Remote management commands must propagate failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("command error")) }
+        try await verifyLaunchCommand(workspace: Workspace(name: "SSH", kind: .remote(hostID: host.id, path: root.path), connection: .connected),
+            directory: root.path, remote: connection)
         let resolved = try await connection.realPath(root.path)
         XCTAssertEqual(URL(fileURLWithPath: resolved).resolvingSymlinksInPath(), root.resolvingSymlinksInPath())
         let screenServer = Process()
@@ -249,6 +272,11 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertEqual(model.hosts.first?.port, port)
         XCTAssertFalse(model.hostEditorVisible)
         let native = try XCTUnwrap(imported.remote)
+        let multiplexOutput = try await model.runTmux("printf '__MULTIPLEX_OK__'", in: imported)
+        XCTAssertEqual(multiplexOutput, "__MULTIPLEX_OK__")
+        try await verifyLaunchCommand(workspace: imported.snapshot.workspace, directory: root.path,
+            remote: imported.remote, systemSSH: imported.systemSSH)
+
         try await ScreenIntegrationChecks.verify(in: imported, port: screenPort, events: screenEvents)
         try verifyImage(await native.uploadClipboardImage(InputToolsTests.png))
         try await ImagePreviewChecks.verifyRemote(native, root: root)
@@ -305,12 +333,12 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertNil(quickModel.credentialRequest, "Mac authentication stays inside OpenSSH, not an app password form")
         XCTAssertEqual(quickModel.sidebarPane, .hosts, "Connecting must preserve the selected sidebar pane")
         XCTAssertEqual(quickModel.compactSurface, .terminal, "An explicit SSH connection opens the terminal")
-        let tree = quickModel.current.explorer
-        for _ in 0..<100 where tree.children[quickModel.current.snapshot.rootPath] == nil {
+        let initialTree = quickModel.current.explorer
+        for _ in 0..<100 where initialTree.children[quickModel.current.snapshot.rootPath] == nil {
             try await Task.sleep(for: .milliseconds(20))
         }
-        XCTAssertEqual(tree.rootPath, quickModel.current.snapshot.rootPath)
-        XCTAssertNotNil(tree.children[tree.rootPath], tree.errorMessage ?? "Remote root was not loaded")
+        XCTAssertEqual(initialTree.rootPath, quickModel.current.snapshot.rootPath)
+        XCTAssertNotNil(initialTree.children[initialTree.rootPath], initialTree.errorMessage ?? "Remote root was not loaded")
 
         let project = root.appendingPathComponent("Project with spaces")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -322,7 +350,15 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(listing.folders.contains { $0.path == projectPath })
         // Browsing alone must not change the active project.
         XCTAssertNotEqual(quickModel.current.snapshot.rootPath, root.path)
-        try await quickModel.selectRemoteProject(project.path, in: remoteID)
+        let original = quickModel.current
+        let projectID = try await quickModel.openRemoteWorkspace(project.path, from: remoteID)
+        XCTAssertNotEqual(projectID, remoteID)
+        XCTAssertFalse(quickModel.current === original)
+        XCTAssertNotEqual(original.snapshot.rootPath, projectPath)
+        XCTAssertTrue(quickModel.current.remote === original.remote)
+        let reopened = try await quickModel.openRemoteWorkspace(project.path + "/.", from: remoteID)
+        XCTAssertEqual(reopened, projectID, "The same host and canonical folder must reuse its workspace")
+        let tree = quickModel.current.explorer
         for _ in 0..<100 where !tree.rows.contains(where: { $0.entry.name == "note.md" }) {
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -342,12 +378,31 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(quickModel.externallyChangedBuffers.contains(noteID))
         await quickModel.refreshBufferFromSource(noteID, discardChanges: true)
         XCTAssertEqual(quickModel.selectedBuffer?.text, "# Second remote change")
-        for (id, session) in sessions { XCTAssertTrue(quickModel.current.terminals[id] === session); XCTAssertTrue(session.running) }
+        for (id, session) in sessions { XCTAssertTrue(original.terminals[id] === session); XCTAssertTrue(session.running) }
+        quickModel.activateWorkspace(remoteID)
+        XCTAssertTrue(quickModel.current === original)
+        quickModel.activateWorkspace(projectID)
+        XCTAssertEqual(quickModel.selectedBufferID, noteID)
+        quickModel.pinWorkspace(projectID)
+        let projectTerminalID = try XCTUnwrap(quickModel.current.snapshot.selectedTerminalID)
+        let projectTerminal = quickModel.terminal(projectTerminalID, in: quickModel.current)
+        projectTerminal.start()
+        defer { projectTerminal.stop() }
+        type("test \"$PWD\" -ef " + TerminalCommand.quote(project.path) + " && printf '__PROJECT_%s__\\n' CWD\n", in: projectTerminal.view)
+        try await wait {
+            let terminal = projectTerminal.view.getTerminal()
+            return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }.joined().contains("__PROJECT_CWD__")
+        }
+        XCTAssertTrue(quickModel.removeWorkspace(remoteID))
+        XCTAssertTrue(quickModel.current.remote?.isConnected == true, "Removing one workspace must preserve the shared host connection")
+        XCTAssertTrue(projectTerminal.running)
+        let afterRemoval = try await quickModel.remoteDirectory(in: projectID, at: project.path)
+        XCTAssertEqual(afterRemoval.path, projectPath)
 
         // SFTP can fail independently of the authenticated terminal; file browsing repairs that channel.
         let oldConnection = try XCTUnwrap(quickModel.current.remote)
         await oldConnection.disconnect()
-        let repaired = try await quickModel.remoteDirectory(in: remoteID, at: project.path)
+        let repaired = try await quickModel.remoteDirectory(in: projectID, at: project.path)
         XCTAssertEqual(repaired.path, projectPath)
         XCTAssertFalse(quickModel.current.remote === oldConnection)
         XCTAssertTrue(quickModel.current.terminals.values.allSatisfy(\.running))
@@ -355,6 +410,8 @@ final class SSHIntegrationTests: XCTestCase {
         let restored = AppModel(vaultURL: quickModel.vaultURL)
         defer { restored.shutdown() }
         XCTAssertEqual(restored.current.snapshot.rootPath, projectPath)
+        XCTAssertTrue(restored.current.snapshot.isPinned)
+        XCTAssertEqual(restored.current.snapshot.selectedBufferID, noteID)
     }
 }
 #endif

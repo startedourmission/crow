@@ -63,9 +63,10 @@ struct CrowRootView: View {
             get: { model.terminalCloseRequest != nil }, set: { if !$0 { model.terminalCloseRequest = nil } }),
             presenting: model.terminalCloseRequest) { id in
                 Button("Close Terminal", role: .destructive) { model.closeTerminal(id) }
+                    .keyboardShortcut(.defaultAction)
                 Button("Cancel", role: .cancel) {}
             } message: { _ in Text("The shell and its running commands will be terminated.") }
-        .alert("Remove vault from list?", isPresented: Binding(
+        .alert("Remove workspace from list?", isPresented: Binding(
             get: { model.workspaceRemovalRequest != nil },
             set: { if !$0 { model.workspaceRemovalRequest = nil } }), presenting: model.workspaceRemovalRequest) { id in
                 let dirty = model.states.first { $0.id == id }?.snapshot.buffers.contains(where: \.isDirty) == true
@@ -77,7 +78,7 @@ struct CrowRootView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { id in
-                let name = model.states.first { $0.id == id }?.snapshot.workspace.name ?? "This vault"
+                let name = model.states.first { $0.id == id }?.snapshot.workspace.name ?? "This workspace"
                 Text("\(name) will be removed from the list and its terminal sessions will end. Folders and saved files will not be deleted.")
             }
         .alert("File changed externally", isPresented: Binding(get: { model.conflictRequest != nil }, set: { if !$0 { model.conflictRequest = nil } }), presenting: model.conflictRequest) { id in
@@ -293,6 +294,8 @@ private struct PhoneWorkspaceBar: View {
     @State private var snippetSurface: CompactSurface = .editor
     @State private var restoreSnippetKeyboard = false
     @State private var showingTabs = false
+    @State private var showingAgentTabs = false
+    @State private var showingTmux = false
     @State private var restoreTabsKeyboard = false
     @State private var copyToast: (id: UUID, message: String)?
 
@@ -468,6 +471,8 @@ private struct PhoneWorkspaceBar: View {
             keyboardVisible = false
         }
         .accessibilityIdentifier("crow.phone.navigation")
+        .sheet(isPresented: $showingAgentTabs) { AgentWorkspaceSheet().environment(model) }
+        .sheet(isPresented: $showingTmux) { TmuxSheet().environment(model) }
         .sheet(isPresented: $showingTabs, onDismiss: {
             if restoreTabsKeyboard { keyboard?.show(for: model.compactSurface) }
         }) {
@@ -496,6 +501,10 @@ private struct PhoneWorkspaceBar: View {
     }
 
     @ViewBuilder private var generalMenu: some View {
+        Button("Agents", systemImage: "sparkles") { showingAgentTabs = true }
+            .accessibilityIdentifier("crow.phone.agent-tabs")
+        Button("tmux", systemImage: "rectangle.split.2x2") { showingTmux = true }
+            .accessibilityIdentifier("crow.phone.tmux")
         if model.selectedWorkspace.isRemote {
             Button("Server Screen", systemImage: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }
                 .disabled(model.selectedWorkspace.connection != .connected)
@@ -520,7 +529,11 @@ private struct PhoneWorkspaceBar: View {
                 Button {
                     model.current.snapshot.selectedTerminalID = id; model.schedulePersist()
                 } label: {
-                    Label("Terminal \(index + 1)", systemImage: id == model.current.snapshot.selectedTerminalID ? "checkmark" : "terminal")
+                    if let agent = model.current.snapshot.agentTerminals.first(where: { $0.id == id }) {
+                        Label { Text(agent.title) } icon: { AgentProviderIcon(provider: agent.provider, size: 16) }
+                    } else {
+                        Label("Terminal \(index + 1)", systemImage: id == model.current.snapshot.selectedTerminalID ? "checkmark" : "terminal")
+                    }
                 }
             }
             if model.selectedWorkspace.isRemote {

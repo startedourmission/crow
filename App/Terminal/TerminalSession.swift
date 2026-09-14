@@ -25,6 +25,15 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var title = "Terminal"
     var status = "Ready"
     var running = false
+    var launchCommand: String?
+    var tmuxLocation: TmuxLocation?
+    var agentProvider: AgentProvider?
+    private(set) var agentActivity: AgentActivity = .unknown
+    @ObservationIgnored private var activityTask: Task<Void, Never>?
+    @ObservationIgnored private var lastAgentOutput = Date.distantPast
+    @ObservationIgnored private var agentOutputChanged = false
+    @ObservationIgnored private var activityNeedsSettledFrame = false
+    @ObservationIgnored private var activityScreenHash: Int?
     private(set) var currentDirectory: String?
     var imagePasteMessage: String?
     var imagePasteInProgress = false
@@ -67,6 +76,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         if let local = view as? CrowLocalTerminalView {
             local.processDelegate = self
             local.onInput = { [weak self] in self?.onBytes?($0) }
+            local.onOutput = { [weak self] in self?.agentDidReceiveOutput() }
             return
         }
         #else
@@ -91,6 +101,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
 
     func start() {
         guard !started else { return }; started = true
+        startActivityTracking()
         #if os(macOS)
         imageKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.view.window?.firstResponder === self.view,
@@ -99,13 +110,19 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             return self.pasteClipboardImage() ? nil : event
         }
         if let systemSSH, let local = view as? CrowLocalTerminalView {
-            let args = FileManager.default.fileExists(atPath: systemSSH.socket)
-                ? systemSSH.multiplexArguments : systemSSH.initialArguments
+            let args: [String]
+            if let launchCommand {
+                args = ["-tt"] + systemSSH.multiplexArguments + ["sh -lc " + TerminalCommand.quote(TerminalCommand.utf8Environment + launchCommand)]
+            } else if FileManager.default.fileExists(atPath: systemSSH.socket) {
+                let command = TerminalCommand.utf8Environment + SSHCommand.remoteDirectoryCommand(directory) + " && exec \"${SHELL:-/bin/sh}\" -l"
+                args = ["-tt"] + systemSSH.multiplexArguments + ["sh -c " + TerminalCommand.quote(command)]
+            } else {
+                // The authentication terminal stays interactive until the master is established.
+                args = systemSSH.initialArguments
+            }
             // SwiftTerm's default environment drops SSH_AUTH_SOCK and PATH.
             // Preserve the app's inherited agent/proxy environment for OpenSSH.
-            var environment = ProcessInfo.processInfo.environment
-            environment["TERM"] = "xterm-256color"
-            environment["LANG"] = environment["LANG"] ?? "en_US.UTF-8"
+            let environment = TerminalCommand.utf8Environment(ProcessInfo.processInfo.environment)
             local.startProcess(executable: "/usr/bin/ssh", args: args,
                 environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: systemSSH.directory)
             running = local.process.running; title = systemSSH.host.name; status = "SSH · authenticate in terminal"
@@ -117,10 +134,18 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         case .local:
             #if os(macOS)
             guard let local = view as? CrowLocalTerminalView else { return }
-            var environment = shellEnvironment ?? ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+            var inherited = ProcessInfo.processInfo.environment
+            if let shellEnvironment {
+                inherited = [:]
+                for entry in shellEnvironment {
+                    let pair = entry.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                    if pair.count == 2 { inherited[String(pair[0])] = String(pair[1]) }
+                }
+            }
+            var environment = TerminalCommand.utf8Environment(inherited).map { "\($0.key)=\($0.value)" }
             environment.removeAll { $0.hasPrefix("CROW_TERMINAL_ID=") }
             environment.append("CROW_TERMINAL_ID=\(id.uuidString)")
-            local.startProcess(executable: "/bin/zsh", args: ["-l"], environment: environment, currentDirectory: directory)
+            local.startProcess(executable: "/bin/zsh", args: launchCommand.map { ["-lic", $0] } ?? ["-l"], environment: environment, currentDirectory: directory)
             running = local.process.running; title = "zsh"; status = running ? "Running" : "Could not start shell"
             #else
             status = "Open Hosts to connect to an SSH server."
@@ -132,7 +157,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                 view.feed(text: status + "\r\n"); return
             }
             status = "Starting SSH shell…"
-            let initialDirectoryCommand = SSHCommand.remoteDirectoryCommand(directory)
+            let initialCommand = TerminalCommand.utf8Environment + "\n" + (launchCommand.map { "exec sh -lc " + TerminalCommand.quote($0) + "\n" }
+                ?? (SSHCommand.remoteDirectoryCommand(directory) + "\n" + SSHCommand.directoryTrackingCommand + "\n"))
             shellTask = Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -140,7 +166,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                     try await client.withPTY(.init(wantReply: true, term: "xterm-256color",
                         terminalCharacterWidth: dims.cols, terminalRowHeight: dims.rows,
                         terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { @Sendable [weak self] inbound, outbound in
-                        try await outbound.write(ByteBuffer(string: initialDirectoryCommand + "\n" + SSHCommand.directoryTrackingCommand + "\n"))
+                        try await outbound.write(ByteBuffer(string: initialCommand))
                         await self?.connected(RemoteWriter(value: outbound))
                         for try await output in inbound {
                             try Task.checkCancellation()
@@ -157,6 +183,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     }
 
     func stop() {
+        activityTask?.cancel(); activityTask = nil; agentActivity = .unknown
         imagePasteTask?.cancel(); imagePasteTask = nil; imagePasteInProgress = false
         #if os(macOS)
         if let imageKeyMonitor { NSEvent.removeMonitor(imageKeyMonitor); self.imageKeyMonitor = nil }
@@ -171,7 +198,59 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     private func connected(_ writer: RemoteWriter) {
         self.writer = writer; running = true; status = "Connected"
     }
-    private func receive(_ bytes: [UInt8]) { view.feed(byteArray: bytes[...]) }
+    private func receive(_ bytes: [UInt8]) { view.feed(byteArray: bytes[...]); agentDidReceiveOutput() }
+
+    private func agentDidReceiveOutput() {
+        guard agentProvider != nil else { return }
+        agentOutputChanged = true
+    }
+
+    private func startActivityTracking() {
+        guard agentProvider != nil else { return }
+        activityTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                guard let self else { return }
+                // Read at most twice per second while output changes, plus one
+                // settled frame. No extra process, SSH command or history storage.
+                if self.agentOutputChanged || self.activityNeedsSettledFrame { self.updateAgentActivity() }
+                if !self.running && self.status != "Starting SSH shell…" { return }
+            }
+        }
+    }
+
+    func updateAgentActivity(outputIsRecent: Bool? = nil) {
+        guard let provider = agentProvider, running else { agentActivity = .unknown; return }
+        let terminal = view.getTerminal()
+        // SwiftTerm exposes indexed buffer access but no active-screen origin.
+        // Find the live tail without reading scrollback or moving the viewport.
+        var lower = 0, upper = max(1, terminal.rows)
+        while terminal.bufferLine(atRow: upper) != nil { lower = upper; upper *= 2 }
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if terminal.bufferLine(atRow: middle) == nil { upper = middle } else { lower = middle + 1 }
+        }
+        let screenStart = max(0, lower - terminal.rows)
+        let lines = (0..<terminal.rows).map { row in
+            terminal.bufferLine(atRow: screenStart + row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true,
+                characterProvider: terminal.getCharacter(for:)) ?? ""
+        }
+        let cursorRow = terminal.getCursorLocation().y
+        var hasher = Hasher()
+        for (row, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // Typing a draft changes the composer, not the agent's activity.
+            if row == cursorRow && ["❯", "›", ">"].contains(where: { trimmed == $0 || trimmed.hasPrefix($0 + " ") }) {
+                hasher.combine("agent-composer")
+            } else { hasher.combine(line) }
+        }
+        let fingerprint = hasher.finalize()
+        if activityScreenHash != fingerprint { activityScreenHash = fingerprint; lastAgentOutput = Date() }
+        let recent = outputIsRecent ?? (Date().timeIntervalSince(lastAgentOutput) < 1.5)
+        agentOutputChanged = false; activityNeedsSettledFrame = recent
+        agentActivity = AgentActivityDetector.detect(provider: provider, lines: lines,
+            cursorRow: cursorRow, outputIsRecent: recent)
+    }
 
     func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
         onBytes?(Array(data))
@@ -323,6 +402,11 @@ private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTermi
 private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteTerminal {
     var onImagePaste: (() -> Bool)?
     var onInput: (@MainActor ([UInt8]) -> Void)?
+    var onOutput: (@MainActor () -> Void)?
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        super.dataReceived(slice: slice)
+        MainActor.assumeIsolated { onOutput?() }
+    }
     override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
         MainActor.assumeIsolated { onInput?(Array(data)) }
         super.send(source: source, data: data)
