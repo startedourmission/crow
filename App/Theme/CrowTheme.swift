@@ -18,7 +18,7 @@ enum CrowTheme {
     }
 
     static let activityWidth: CGFloat = 48
-    static let sidebarWidth: CGFloat = 260
+    static let sidebarWidth: CGFloat = 300
     static let terminalMinHeight: CGFloat = 160
 
     static func editorFont(size: CGFloat, monospace: Bool) -> Font {

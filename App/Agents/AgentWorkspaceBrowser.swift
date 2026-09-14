@@ -127,7 +127,7 @@ struct AgentWorkspaceBrowser: View {
                         Image(systemName: id == nil ? "laptopcomputer" : "server.rack")
                         Text(host?.userAtHost ?? (id == nil ? "Local" : "SSH (not saved)"))
                             .font(.system(size: host == nil ? 12 : 11, weight: .semibold))
-                            .lineLimit(1).minimumScaleFactor(0.85).truncationMode(.middle)
+                            .lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 0)
                     }.contentShape(Rectangle())
                 }.accessibilityLabel(host.map { "Connect to " + $0.userAtHost } ?? "Open Local workspaces")
