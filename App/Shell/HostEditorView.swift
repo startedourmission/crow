@@ -222,30 +222,58 @@ struct CrowSettingsView: View {
     @ViewBuilder private var settingsContent: some View {
         @Bindable var model = model
         CrowSettingsSection("Editor") {
-            Stepper("Font: \(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32)
-            Stepper("Indent: \(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8)
-            Toggle("Line numbers", isOn: $model.settings.lineNumbers)
-            Picker("Default Markdown view", selection: $model.markdownPreviewEnabled) {
-                Text("Rendered").tag(true)
-                Text("Source").tag(false)
-            }.accessibilityIdentifier("crow.settings.markdown-view")
+            CrowSettingsCard {
+                CrowSettingsRow("Font") {
+                    Stepper("\(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32).fixedSize()
+                }
+                Divider()
+                CrowSettingsRow("Indent") {
+                    Stepper("\(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8).fixedSize()
+                }
+                Divider()
+                CrowSettingsRow("Line numbers") {
+                    Toggle("Line numbers", isOn: $model.settings.lineNumbers).labelsHidden()
+                }
+                Divider()
+                CrowSettingsRow("Default Markdown view") {
+                    Picker("Default Markdown view", selection: $model.markdownPreviewEnabled) {
+                        Text("Rendered").tag(true)
+                        Text("Source").tag(false)
+                    }.labelsHidden().fixedSize().accessibilityIdentifier("crow.settings.markdown-view")
+                }
+            }
         }
         CrowSettingsSection("Terminal & Layout") {
-            Stepper("Terminal font: \(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32)
-            Toggle("Sidebar", isOn: $model.settings.sidebarVisible)
-            Toggle("Terminal", isOn: $model.settings.terminalVisible)
+            CrowSettingsCard {
+                CrowSettingsRow("Terminal font") {
+                    Stepper("\(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32).fixedSize()
+                }
+                Divider()
+                CrowSettingsRow("Sidebar") { Toggle("Sidebar", isOn: $model.settings.sidebarVisible).labelsHidden() }
+                Divider()
+                CrowSettingsRow("Terminal") { Toggle("Terminal", isOn: $model.settings.terminalVisible).labelsHidden() }
+            }
         }
         CrowSettingsSection("Files") {
-            Toggle("Show hidden files", isOn: $model.showHiddenFiles)
-            Picker("Delete moves files to", selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 })) {
-                Text("Recovery Folder").tag(FileDeletionDestination.recovery)
-                Text("Trash").tag(FileDeletionDestination.trash)
-            }.accessibilityIdentifier("crow.settings.delete-destination")
+            CrowSettingsCard {
+                CrowSettingsRow("Show hidden files") { Toggle("Show hidden files", isOn: $model.showHiddenFiles).labelsHidden() }
+                Divider()
+                CrowSettingsRow("Delete moves files to") {
+                    Picker("Delete moves files to", selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 })) {
+                        Text("Recovery Folder").tag(FileDeletionDestination.recovery)
+                        Text("Trash").tag(FileDeletionDestination.trash)
+                    }.labelsHidden().fixedSize().accessibilityIdentifier("crow.settings.delete-destination")
+                }
+            }
             Text("Recovery Folder keeps deleted items in .crow/recovery inside the workspace. Trash uses the file’s computer or storage provider. If trash is unavailable, the file stays in place.")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)
         }
         CrowSettingsSection("SSH") {
-            Button { showingKeys = true } label: { Label("Manage SSH Keys…", systemImage: "key") }
+            CrowSettingsCard {
+                CrowSettingsRow("SSH keys") {
+                    Button { showingKeys = true } label: { Label("Manage Keys…", systemImage: "key") }
+                }
+            }
         }
         #if os(macOS)
         ReverseSSHPasswordSettings()
@@ -271,6 +299,33 @@ struct CrowSettingsSection<Content: View>: View {
     }
 }
 
+struct CrowSettingsCard<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(CrowTheme.bg1, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+struct CrowSettingsRow<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title; self.content = content
+    }
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(title)
+            Spacer(minLength: 12)
+            content()
+        }
+        .frame(minHeight: 32).padding(.vertical, 6)
+        .toggleStyle(.switch).controlSize(.small)
+    }
+}
+
 extension View {
     func crowSettingsInput() -> some View {
         self.textFieldStyle(.plain)
@@ -292,21 +347,25 @@ private struct ReverseSSHPasswordSettings: View {
         CrowSettingsSection("Reverse SSH") {
             Text(access.hasPassword ? "Access password is set" : "Set a password before enabling Reverse SSH")
                 .font(.callout)
-            SecureField("New access password", text: $password)
-                .accessibilityIdentifier("crow.reverse-ssh.password")
-                .crowSettingsInput()
-            SecureField("Confirm password", text: $confirmation)
-                .accessibilityIdentifier("crow.reverse-ssh.password-confirmation")
-                .crowSettingsInput()
-            Button(access.hasPassword ? "Change Password" : "Set Password") {
-                do {
-                    guard password == confirmation else { throw CommandError("The passwords do not match.") }
-                    try access.save(password)
-                    password = ""; confirmation = ""; failed = false
-                    message = "Saved. Turn Reverse SSH on for the hosts you want to access."
-                } catch { failed = true; message = error.localizedDescription }
-            }.disabled(password.isEmpty || confirmation.isEmpty)
-                .accessibilityIdentifier("crow.reverse-ssh.password-save")
+            CrowSettingsCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    SecureField("New access password", text: $password)
+                        .accessibilityIdentifier("crow.reverse-ssh.password")
+                        .crowSettingsInput()
+                    SecureField("Confirm password", text: $confirmation)
+                        .accessibilityIdentifier("crow.reverse-ssh.password-confirmation")
+                        .crowSettingsInput()
+                    Button(access.hasPassword ? "Change Password" : "Set Password") {
+                        do {
+                            guard password == confirmation else { throw CommandError("The passwords do not match.") }
+                            try access.save(password)
+                            password = ""; confirmation = ""; failed = false
+                            message = "Saved. Turn Reverse SSH on for the hosts you want to access."
+                        } catch { failed = true; message = error.localizedDescription }
+                    }.disabled(password.isEmpty || confirmation.isEmpty)
+                        .accessibilityIdentifier("crow.reverse-ssh.password-save")
+                }.padding(.vertical, 8)
+            }
             if let message { Text(message).font(.caption).foregroundStyle(failed ? Color.red : CrowTheme.textDim) }
             Text("Enter this password when connecting from a server. It is stored in this Mac’s Keychain. Changing it disconnects all current reverse SSH sessions.")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)

@@ -1,159 +1,71 @@
 import SwiftUI
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
 
 struct GitAccountSettings: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openURL) private var openURL
-    @AppStorage(GitHubOAuth.clientIDPreference) private var customClientID = ""
-    @State private var setupExpanded = GitHubOAuth.clientID == nil
-    @FocusState private var clientIDFocused: Bool
+    @State private var accountID = ""
     @State private var token = ""
-    @State private var saving = false
     @State private var message: String?
     @State private var error: String?
-    @State private var authorization: GitHubOAuth.Authorization?
-    @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
-        CrowSettingsSection("GitHub Account") {
-            if let account = model.gitAccounts.account {
-                LabeledContent("Account", value: "@" + account.login)
-                if let name = account.name, !name.isEmpty { LabeledContent("Name", value: name) }
-                Label("Connected on this device", systemImage: "checkmark.shield")
-                    .foregroundStyle(CrowTheme.textDim)
-            } else {
-                Text("Sign in through your browser and approve Crow on GitHub.")
-                    .foregroundStyle(CrowTheme.textDim)
-            }
-            DisclosureGroup("OAuth App Setup", isExpanded: $setupExpanded) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Client ID").font(.caption).foregroundStyle(CrowTheme.textDim)
-                    TextField("Client ID", text: $customClientID,
-                              prompt: Text(GitHubOAuth.bundledClientID.isEmpty ? "Paste your OAuth app’s Client ID" : "Leave empty to use the app default"))
-                        .labelsHidden().multilineTextAlignment(.leading)
-                        .crowSettingsInput().autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                        .focused($clientIDFocused)
-                        .accessibilityIdentifier("crow.git-client-id")
-                    Text("Enable Device Flow in your GitHub OAuth app and paste its Client ID above. No client secret is needed.")
-                        .font(.caption).foregroundStyle(CrowTheme.textDim)
-                    Link("Open GitHub OAuth Apps", destination: URL(string: "https://github.com/settings/developers")!)
-                    if !customClientID.isEmpty {
-                        Button("Clear Custom Client ID") { customClientID = ""; error = nil }
+        CrowSettingsSection("GitHub Credentials") {
+            Text("Save an account ID and token for future use.")
+                .foregroundStyle(CrowTheme.textDim)
+            CrowSettingsCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Account ID").font(.caption).foregroundStyle(CrowTheme.textDim)
+                        TextField("GitHub username", text: $accountID)
+                            .labelsHidden().crowSettingsInput()
+                            .accessibilityIdentifier("crow.git-account-id")
                     }
-                }.padding(.top, 10)
-            }.disabled(saving)
-                .accessibilityIdentifier("crow.git-oauth-setup")
-            Button(model.gitAccounts.account == nil ? "Sign in with GitHub" : "Switch GitHub Account", action: signIn)
-                .buttonStyle(.borderedProminent)
-                .disabled(saving)
-                .accessibilityIdentifier("crow.git-oauth")
-            if let authorization {
-                Text("Enter this code on GitHub:")
-                HStack {
-                    Text(authorization.user_code).font(.system(.title2, design: .monospaced)).textSelection(.enabled)
-                    Button("Copy Code") { copyCode(authorization.user_code) }
-                }
-                Link("Open GitHub", destination: authorization.verification_uri)
-                Text("Waiting for approval…").foregroundStyle(CrowTheme.textDim)
-            }
-            if saving {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Button("Cancel") { cancel() }
-                }
-            }
-            if model.gitAccounts.account != nil {
-                Button("Sign Out", role: .destructive) {
-                    do {
-                        try model.gitAccounts.remove()
-                        token = ""; error = nil; message = "Signed out on this device"
-                    } catch { self.error = error.localizedDescription }
-                }.disabled(saving)
-            }
-            if let message { Text(message).foregroundStyle(CrowTheme.accent) }
-            if let error = error ?? model.gitAccounts.storageError {
-                Text(error).foregroundStyle(CrowTheme.danger).textSelection(.enabled)
-            }
-            DisclosureGroup("Use a Personal Access Token") {
-                VStack(alignment: .leading, spacing: 10) {
-                    SecureField("Personal access token", text: $token)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                        .disabled(saving)
-                        .accessibilityIdentifier("crow.git-token")
-                        .labelsHidden().crowSettingsInput()
-                    Button("Verify and Save", action: saveToken)
-                        .disabled(saving || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Token").font(.caption).foregroundStyle(CrowTheme.textDim)
+                        SecureField("Personal access token", text: $token)
+                            .labelsHidden().crowSettingsInput()
+                            .accessibilityIdentifier("crow.git-token")
+                    }
+                    HStack {
+                        if model.gitAccounts.account != nil {
+                            Button("Delete Saved Credentials", role: .destructive) {
+                                do {
+                                    try model.gitAccounts.remove()
+                                    accountID = ""; token = ""; error = nil; message = "Saved credentials deleted."
+                                } catch { self.error = error.localizedDescription }
+                            }
+                        }
+                        Spacer()
+                        Button("Save") {
+                            do {
+                                try model.gitAccounts.save(accountID: accountID, token: token)
+                                accountID = model.gitAccounts.account?.login ?? accountID
+                                error = nil; message = "Saved on this device."
+                            } catch { self.error = error.localizedDescription }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("crow.git-token-save")
-                    Link("Create a GitHub Token", destination: URL(string: "https://github.com/settings/personal-access-tokens")!)
-                    Text("Choose only the repositories and permissions you need. Verifying your account does not verify access to each repository.")
-                        .font(.caption).foregroundStyle(CrowTheme.textDim)
-                }.padding(.top, 10)
+                    }
+                }.padding(.vertical, 8)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
             }
-            Text("Credentials stay in this device’s Keychain. Terminal Git commands use the credentials configured on the computer running Git.")
+            Text("Stored in this device’s Keychain. Saving does not sign in, check the token, or change terminal Git authentication.")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)
+            if let message { Text(message).font(.caption).foregroundStyle(CrowTheme.accent) }
+            if let error { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled) }
         }
-        .onAppear { model.gitAccounts.reload() }
-        .onDisappear { cancel(); token = "" }
-    }
-
-    private func signIn() {
-        guard let clientID = GitHubOAuth.configuredClientID(override: customClientID, bundled: GitHubOAuth.bundledClientID) else {
-            setupExpanded = true; clientIDFocused = true
-            error = "Enter the Client ID from your GitHub OAuth app settings to start sign-in."
-            return
-        }
-        clientIDFocused = false
-        saving = true; message = nil; error = nil
-        saveTask = Task { @MainActor in
-            defer { if !Task.isCancelled { saving = false; authorization = nil } }
+        .onAppear {
+            model.gitAccounts.reload()
             do {
-                let oauth = GitHubOAuth()
-                let code = try await oauth.begin(clientID: clientID)
-                try Task.checkCancellation()
-                authorization = code
-                openURL(code.verification_uri)
-                let credential = try await oauth.token(clientID: clientID, authorization: code)
-                try await model.gitAccounts.save(token: credential)
-                token = ""; message = "Connected · @" + (model.gitAccounts.account?.login ?? "")
-            } catch {
-                guard !Task.isCancelled else { return }
-                self.error = error.localizedDescription
-            }
+                let saved = try model.gitAccounts.credential()
+                accountID = saved?.account.login ?? ""; token = saved?.token ?? ""
+                error = nil
+            } catch { self.error = error.localizedDescription }
         }
-    }
-    private func saveToken() {
-        saving = true; message = nil; error = nil
-        let submitted = token
-        saveTask = Task { @MainActor in
-            defer { if !Task.isCancelled { saving = false } }
-            do {
-                try await model.gitAccounts.save(token: submitted)
-                token = ""; message = "Connected · @" + (model.gitAccounts.account?.login ?? "")
-            } catch {
-                guard !Task.isCancelled else { return }
-                self.error = error.localizedDescription
-            }
-        }
-    }
-    private func cancel() {
-        saveTask?.cancel(); saveTask = nil; saving = false; authorization = nil
-    }
-    private func copyCode(_ code: String) {
-        #if os(macOS)
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(code, forType: .string)
-        #else
-        UIPasteboard.general.string = code
-        #endif
+        .onDisappear { token = "" }
     }
 }
 

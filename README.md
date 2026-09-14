@@ -253,13 +253,9 @@ Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.s
   Git 탭은 볼트와 하위 폴더의 Git 프로젝트 목록을 먼저 보여줍니다. 볼트 자체가
   저장소여도 프로젝트를 한 번 선택해야 브랜치와 변경 파일이 표시됩니다.
   **Projects**로 목록에 돌아가 다른 저장소를 선택할 수 있습니다.
-  하단에는 원격 저장소 주소와 커밋 작성자를 표시합니다. **Settings의 GitHub Account 영역**에서
-  **Sign in with GitHub**로 OAuth 로그인하며, 토큰 로그인은 **Use a Personal Access Token**에 남겨둡니다.
-  빌드에 OAuth 앱 ID가 없으면 **OAuth App Setup**에서 Client ID를 입력합니다. GitHub OAuth 앱 설정의
-  **Enable Device Flow**를 켜야 하며, Client Secret은 필요 없습니다. ID는 기기에 저장되어 재빌드 없이 적용됩니다.
-  확인된 GitHub 계정은 패널에 표시하며 **Sign Out**으로 이 기기의 인증 정보를 삭제합니다.
-  토큰은 기기 Keychain에만 저장됩니다. 현재 Git 패널은 상태 조회용이며, 터미널에서
-  실행하는 Git 명령은 해당 Mac 또는 SSH 서버에 설정된 인증을 사용합니다.
+  하단에는 원격 저장소 주소와 커밋 작성자를 표시합니다. **Settings → GitHub Credentials**에서
+  계정 ID와 토큰을 기기 Keychain에 저장·수정·삭제할 수 있습니다. 저장할 때 네트워크 인증은 하지 않습니다.
+  저장한 자격 증명은 이후 기능에서 필요할 때 읽을 수 있으며, 현재 터미널 Git 인증에는 자동 적용하지 않습니다.
   읽을 수 없는 하위 폴더가 있으면 안내와 함께 접근 가능한 저장소를 표시합니다.
   상단은 Mac과 같은 36pt 탭·패널 제목줄을 사용합니다.
 - 문서 검색 버튼 오른쪽의 **…** 메뉴에서 **Move File…**로 워크스페이스 안의 다른 폴더로
@@ -361,18 +357,3 @@ Apple 개발자 서명 팀이 필요합니다.
 [Citadel](https://github.com/orlandos-nl/Citadel) ·
 [Tiptap](https://github.com/ueberdosis/tiptap) ·
 [Sparkle](https://github.com/sparkle-project/Sparkle)
-
-### GitHub OAuth 빌드 설정
-
-Crow는 [GitHub OAuth Device Flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow)를 사용합니다.
-Crow 전용 OAuth App을 등록하고 **Enable Device Flow**를 켠 뒤, 빌드 설정
-`CROW_GITHUB_CLIENT_ID`에 해당 앱의 공개 Client ID를 지정하세요. 두 플랫폼의 Info.plist가
-이 값을 `CrowGitHubClientID`로 읽습니다. Client Secret이나 별도 콜백 서버는 사용하지 않습니다.
-예: `xcodebuild … CROW_GITHUB_CLIENT_ID=등록한_Client_ID`.
-재빌드 없이 설정하려면 **Settings → GitHub Account → OAuth App Setup**에 Client ID를 입력합니다.
-기기에 입력한 ID가 빌드 기본값보다 우선하며, 지우면 빌드 기본값을 다시 사용합니다.
-
-현재 요청 범위는 계정 확인용 `read:user`입니다. 브라우저에 표시된 코드를 입력하고 승인하면
-계정을 확인한 뒤 기기 Keychain에 저장합니다. 토큰 자동 갱신은 아직 없으므로 OAuth App의
-필수 토큰 만료 옵션은 끈 상태로 등록하세요. Client ID가 없는 빌드에서는 OAuth 버튼에
-설정 안내를 표시하며 기존 토큰 로그인은 계속 사용할 수 있습니다.
