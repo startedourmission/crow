@@ -2,8 +2,8 @@
 # frozen_string_literal: true
 
 cask "crow" do
-  version "0.1.1"
-  sha256 "a6ba031b60befbcd659b32cb0f074f005375ca5ed6fa2f7e118f310a674feee4"
+  version "0.1.2"
+  sha256 "68837e2e8c28cee19647dbbbd2df2680e58b401959bc4234e568adf1075825dc"
 
   url "https://github.com/startedourmission/crow/releases/download/v#{version}/Crow-macOS.dmg"
   name "Crow"
