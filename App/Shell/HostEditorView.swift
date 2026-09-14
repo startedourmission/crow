@@ -197,47 +197,77 @@ struct CrowSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingKeys = false
     var body: some View {
-        @Bindable var model = model
         NavigationStack {
-            Form {
-                Section("Editor") {
-                    Stepper("Font: \(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32)
-                    Stepper("Indent: \(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8)
-                    Toggle("Line numbers", isOn: $model.settings.lineNumbers)
-                }
-                Section("Terminal & Layout") {
-                    Stepper("Terminal font: \(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32)
-                    Toggle("Sidebar", isOn: $model.settings.sidebarVisible)
-                    Toggle("Terminal", isOn: $model.settings.terminalVisible)
-                }
-                Section {
-                    Toggle("Show hidden files", isOn: $model.showHiddenFiles)
-                    Picker("Delete moves files to", selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 })) {
-                        Text("Recovery Folder").tag(FileDeletionDestination.recovery)
-                        Text("Trash").tag(FileDeletionDestination.trash)
-                    }.accessibilityIdentifier("crow.settings.delete-destination")
-                } header: { Text("Files") } footer: {
-                    Text("Recovery Folder keeps deleted items in .crow/recovery inside the workspace. Trash uses the file’s computer or storage provider. If trash is unavailable, the file stays in place.")
-                }
-                Section("SSH") {
-                    Button { showingKeys = true } label: { Label("Manage SSH Keys…", systemImage: "key") }
-                }
-                #if os(macOS)
-                ReverseSSHPasswordSettings()
-                #endif
-                GitAccountSettings()
-                #if os(iOS)
-                KeyboardBarSettingsContent()
-                #endif
+            #if os(macOS)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) { settingsContent }
+                    .padding(28).frame(maxWidth: .infinity, alignment: .leading)
             }
-            .formStyle(.grouped)
+            .background(CrowTheme.bg0)
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            #else
+            Form { settingsContent; KeyboardBarSettingsContent() }
+                .formStyle(.grouped)
+                .navigationTitle("Settings")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            #endif
         }
         .sheet(isPresented: $showingKeys) { SSHKeysView().environment(model) }
         #if os(macOS)
         .frame(minWidth: 700, idealWidth: 880, minHeight: 600, idealHeight: 740)
         #endif
+    }
+
+    @ViewBuilder private var settingsContent: some View {
+        @Bindable var model = model
+        CrowSettingsSection("Editor") {
+            Stepper("Font: \(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32)
+            Stepper("Indent: \(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8)
+            Toggle("Line numbers", isOn: $model.settings.lineNumbers)
+            Picker("Default Markdown view", selection: $model.markdownPreviewEnabled) {
+                Text("Rendered").tag(true)
+                Text("Source").tag(false)
+            }.accessibilityIdentifier("crow.settings.markdown-view")
+        }
+        CrowSettingsSection("Terminal & Layout") {
+            Stepper("Terminal font: \(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32)
+            Toggle("Sidebar", isOn: $model.settings.sidebarVisible)
+            Toggle("Terminal", isOn: $model.settings.terminalVisible)
+        }
+        CrowSettingsSection("Files") {
+            Toggle("Show hidden files", isOn: $model.showHiddenFiles)
+            Picker("Delete moves files to", selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 })) {
+                Text("Recovery Folder").tag(FileDeletionDestination.recovery)
+                Text("Trash").tag(FileDeletionDestination.trash)
+            }.accessibilityIdentifier("crow.settings.delete-destination")
+            Text("Recovery Folder keeps deleted items in .crow/recovery inside the workspace. Trash uses the file’s computer or storage provider. If trash is unavailable, the file stays in place.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+        }
+        CrowSettingsSection("SSH") {
+            Button { showingKeys = true } label: { Label("Manage SSH Keys…", systemImage: "key") }
+        }
+        #if os(macOS)
+        ReverseSSHPasswordSettings()
+        #endif
+        GitAccountSettings()
+    }
+}
+
+struct CrowSettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title; self.content = content
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(.headline)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 }
 
@@ -259,7 +289,7 @@ private struct ReverseSSHPasswordSettings: View {
     @State private var failed = false
 
     var body: some View {
-        Section("Reverse SSH") {
+        CrowSettingsSection("Reverse SSH") {
             Text(access.hasPassword ? "Access password is set" : "Set a password before enabling Reverse SSH")
                 .font(.callout)
             SecureField("New access password", text: $password)

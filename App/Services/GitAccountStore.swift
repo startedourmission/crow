@@ -229,6 +229,31 @@ struct GitHubOAuth: Sendable {
             return .token(token)
         }
     }
+    static func checkedResponse(_ data: Data, status: Int) throws -> Data {
+        guard data.count < 1_048_576 else { throw CommandError("GitHub returned an oversized sign-in response.") }
+        if status == 200 { return data }
+        let code = (try? JSONDecoder().decode(Response.self, from: data))?.error
+        switch code {
+        case "incorrect_client_credentials", "invalid_client", "Not Found":
+            throw CommandError("GitHub could not find this OAuth app (HTTP \(status)). Copy the Client ID from GitHub → Settings → Developer settings → OAuth Apps.")
+        case "device_flow_disabled":
+            throw CommandError("Enable Device Flow in this OAuth app’s GitHub settings, then try again.")
+        default: break
+        }
+        switch status {
+        case 404:
+            throw CommandError("GitHub could not find this OAuth app (HTTP 404). Check the Client ID in OAuth App Setup.")
+        case 401:
+            throw CommandError("GitHub rejected the OAuth app credentials (HTTP 401). Check the Client ID in OAuth App Setup.")
+        case 403, 429:
+            throw CommandError("GitHub blocked or rate-limited sign-in (HTTP \(status)). Wait before trying again and check your network access.")
+        case 500...599:
+            throw CommandError("GitHub sign-in is temporarily unavailable (HTTP \(status)). Try again later.")
+        default:
+            throw CommandError("GitHub could not start sign-in (HTTP \(status)). Check the OAuth app’s Client ID and Device Flow setting.")
+        }
+    }
+
     private func fetch(_ request: URLRequest) async throws -> Data {
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
@@ -236,9 +261,8 @@ struct GitHubOAuth: Sendable {
         defer { session.invalidateAndCancel() }
         let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              data.count < 1_048_576 else { throw CommandError("Could not contact GitHub for sign-in. Please try again.") }
-        return data
+        guard let response = response as? HTTPURLResponse else { throw CommandError("No HTTP response from GitHub.") }
+        return try Self.checkedResponse(data, status: response.statusCode)
     }
     func begin(clientID: String) async throws -> Authorization {
         try Self.authorization(await fetch(Self.request(clientID: clientID)))

@@ -34,7 +34,10 @@ final class AppModel {
     var editorLocationRequest: EditorLocationRequest?
     var documentFindRequest = 0
     // An editing preference, not ephemeral state owned by the selected file view.
-    var markdownPreviewEnabled = false
+    var markdownPreviewEnabled: Bool {
+        get { settings.effectiveMarkdownPreviewEnabled }
+        set { settings.markdownPreviewEnabled = newValue }
+    }
     var fileSearchFocusRequest = 0
 
     func focusFileSearch() {

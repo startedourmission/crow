@@ -54,6 +54,18 @@ import CrowCore
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "keep")
     }
 
+    func testMarkdownDefaultsToRenderedAndSourcePreferencePersists() throws {
+        XCTAssertTrue(model.markdownPreviewEnabled)
+        let old = try JSONEncoder().encode(EditorSettings())
+        XCTAssertTrue(try JSONDecoder().decode(EditorSettings.self, from: old).effectiveMarkdownPreviewEnabled)
+        model.markdownPreviewEnabled = false
+        let saved = try JSONEncoder().encode(model.settings)
+        let restored = try JSONDecoder().decode(EditorSettings.self, from: saved)
+        XCTAssertFalse(restored.effectiveMarkdownPreviewEnabled)
+        model.settings = restored
+        XCTAssertFalse(model.markdownPreviewEnabled)
+    }
+
     func testDeletionPreferenceRoundTripsAndOldSettingsUseRecovery() throws {
         var settings = EditorSettings()
         let old = try JSONEncoder().encode(settings)

@@ -47,6 +47,19 @@ final class GitAccountTests: XCTestCase {
         XCTAssertThrowsError(try GitAccountAPI.account(data: Data("{}".utf8), status: 200))
     }
 
+    func testOAuthHTTPFailuresExplainConfigurationAndNeverExposeResponseSecrets() throws {
+        let valid = Data("{}".utf8)
+        XCTAssertEqual(try GitHubOAuth.checkedResponse(valid, status: 200), valid)
+        for (status, code, expected) in [(404, "Not Found", "Client ID"), (400, "device_flow_disabled", "Device Flow"),
+                                          (429, "unknown", "429"), (503, "unknown", "503")] {
+            let data = Data(("{\"error\":\"" + code + "\",\"error_description\":\"private-code\"}").utf8)
+            XCTAssertThrowsError(try GitHubOAuth.checkedResponse(data, status: status)) {
+                XCTAssertTrue($0.localizedDescription.contains(expected))
+                XCTAssertFalse($0.localizedDescription.contains("private-code"))
+            }
+        }
+    }
+
     func testOAuthClientIDCanBeConfiguredWithoutRebuilding() throws {
         XCTAssertNil(GitHubOAuth.configuredClientID(override: "", bundled: "$(CROW_GITHUB_CLIENT_ID)"))
         XCTAssertEqual(GitHubOAuth.configuredClientID(override: "  custom123  ", bundled: "build123"), "custom123")
