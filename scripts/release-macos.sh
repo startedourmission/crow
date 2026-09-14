@@ -131,6 +131,12 @@ if [[ "$embedded_public_key" != "$SPARKLE_PUBLIC_ED_KEY" ]]; then
   echo "The archived app does not contain the configured Sparkle public key." >&2
   exit 65
 fi
+for required_security_key in SURequireSignedFeed SUVerifyUpdateBeforeExtraction; do
+  if [[ "$(/usr/libexec/PlistBuddy -c "Print :$required_security_key" "$archived_app/Contents/Info.plist")" != true ]]; then
+    echo "The archived app must enable $required_security_key for signed Sparkle feeds." >&2
+    exit 65
+  fi
+done
 if [[ ! -d "$archived_app/Contents/Frameworks/Sparkle.framework" ]]; then
   echo "The archived app does not contain Sparkle.framework." >&2
   exit 66
