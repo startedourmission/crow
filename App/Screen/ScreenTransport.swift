@@ -18,7 +18,7 @@ import Darwin
     private var diagnostics: FileHandle?
     #endif
 
-    func open(in state: WorkspaceState, port: Int) async throws -> AsyncThrowingStream<Data, Error> {
+    func open(in state: WorkspaceState, port: Int, host: String = "127.0.0.1") async throws -> AsyncThrowingStream<Data, Error> {
         guard (1...65535).contains(port), state.snapshot.workspace.isRemote else {
             throw CommandError("Choose a connected SSH server and a screen sharing port between 1 and 65535.")
         }
@@ -29,7 +29,7 @@ import Darwin
             guard FileManager.default.fileExists(atPath: spec.socket) else { throw FileFailure.disconnected }
             let task = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
             task.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            task.arguments = ["-T", "-W", "127.0.0.1:\(port)"] + spec.multiplexArguments
+            task.arguments = ["-T", "-W", "\(host.contains(":") ? "[\(host)]" : host):\(port)"] + spec.multiplexArguments
             task.standardInput = stdin; task.standardOutput = stdout; task.standardError = stderr
             try SystemSFTP.protectWrites(to: stdin.fileHandleForWriting)
             let sink = pair.continuation
@@ -56,7 +56,7 @@ import Darwin
         }
         #endif
         guard let client = state.remote?.client, client.isConnected else { throw FileFailure.disconnected }
-        let opened = try await Self.openChannel(ScreenSSHClient(value: client), port: port, sink: pair.continuation)
+        let opened = try await Self.openChannel(ScreenSSHClient(value: client), host: host, port: port, sink: pair.continuation)
         guard !Task.isCancelled else { try? await opened.close(); throw CancellationError() }
         channel = opened
         return pair.stream
@@ -73,9 +73,9 @@ import Darwin
     }
     #endif
 
-    nonisolated private static func openChannel(_ client: ScreenSSHClient, port: Int,
+    nonisolated private static func openChannel(_ client: ScreenSSHClient, host: String, port: Int,
         sink: AsyncThrowingStream<Data, Error>.Continuation) async throws -> Channel {
-        try await client.value.createDirectTCPIPChannel(using: .init(targetHost: "127.0.0.1", targetPort: port,
+        try await client.value.createDirectTCPIPChannel(using: .init(targetHost: host, targetPort: port,
             originatorAddress: SocketAddress(ipAddress: "127.0.0.1", port: 0))) { channel in
                 channel.pipeline.addHandler(ScreenChannelHandler(sink))
             }

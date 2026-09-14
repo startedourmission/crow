@@ -13,6 +13,7 @@ final class WorkspaceState: Identifiable {
     @ObservationIgnored var remote: RemoteConnection?
     var terminalGeneration = 0
     @ObservationIgnored var terminals: [UUID: TerminalSession] = [:]
+    @ObservationIgnored var browsers: [UUID: BrowserSession] = [:]
     @ObservationIgnored var accessURL: URL?
     @ObservationIgnored var refreshGeneration = UUID()
     @ObservationIgnored var connectionTask: Task<Void, Never>?

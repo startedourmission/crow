@@ -4,11 +4,13 @@ public enum WorkspaceTab: Hashable, Codable, Sendable {
     case file(BufferID)
     case terminal(UUID)
     case start(UUID)
+    case browser(UUID)
     public var key: String {
         switch self {
         case .file(let id): return "file-\(id.rawValue)"
         case .terminal(let id): return "terminal-\(id)"
         case .start(let id): return "start-\(id)"
+        case .browser(let id): return "browser-\(id)"
         }
     }
 }

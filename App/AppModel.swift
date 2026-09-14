@@ -272,7 +272,7 @@ final class AppModel {
         switch tab {
         case .file(let id): current.snapshot.selectedBufferID = id
         case .terminal(let id): current.snapshot.selectedTerminalID = id
-        case .start: break
+        case .start, .browser: break
         }
         schedulePersist()
     }
@@ -284,6 +284,13 @@ final class AppModel {
                 current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
             } else { closeBuffer(id) }
         case .terminal(let id): terminalCloseRequest = id
+        case .browser(let id):
+            current.snapshot.layout?.remove(tab, from: paneID)
+            if current.snapshot.layout?.allTabs.contains(tab) != true {
+                current.browsers.removeValue(forKey: id)?.close()
+                current.snapshot.browserAddresses.removeValue(forKey: id)
+            }
+            schedulePersist()
         case .start:
             current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
         }
@@ -307,6 +314,11 @@ final class AppModel {
             current.snapshot.terminalIDs.append(id); current.snapshot.selectedTerminalID = id
             current.snapshot.layout?.open(.terminal(id), in: paneID)
             _ = current.snapshot.layout?.move(.terminal(id), from: paneID, to: paneID, placement: placement)
+        } else if case .browser(let id) = tab {
+            let copy = UUID()
+            current.snapshot.browserAddresses[copy] = current.snapshot.browserAddresses[id] ?? ""
+            current.snapshot.layout?.open(.browser(copy), in: paneID)
+            _ = current.snapshot.layout?.move(.browser(copy), from: paneID, to: paneID, placement: placement)
         } else if case .start = tab {
             let newTab = WorkspaceTab.start(UUID())
             current.snapshot.layout?.open(newTab, in: paneID)
@@ -345,6 +357,7 @@ final class AppModel {
             workspaceRemovalRequest = id
             return false
         }
+        state.browsers.values.forEach { $0.close() }; state.browsers.removeAll()
         disconnect(state)
         state.refreshGeneration = UUID()
         state.accessURL?.stopAccessingSecurityScopedResource(); state.accessURL = nil
@@ -1360,6 +1373,7 @@ final class AppModel {
     }
     #endif
     private func disconnect(_ state: WorkspaceState, stopReverseSSH: Bool = true) {
+        if state.snapshot.workspace.isRemote { state.browsers.values.forEach { $0.disconnect() } }
         #if os(iOS)
         backgroundSSH.remove(state.id)
         foregroundChecks.removeValue(forKey: state.id)?.cancel()
@@ -1564,6 +1578,7 @@ final class AppModel {
         persist()
         for state in states {
             state.explorer.stop()
+            state.browsers.values.forEach { $0.close() }; state.browsers.removeAll()
             state.stopTerminals(); state.connectionTask?.cancel()
             let remote = state.remote; Task { await remote?.disconnect() }
             state.accessURL?.stopAccessingSecurityScopedResource()

@@ -389,6 +389,20 @@ struct WorkspaceTabsView: View {
                             }.accessibilityIdentifier("crow.tabs.document." + buffer.id.rawValue.uuidString)
                         }
                     }
+                    sectionTitle("Browsers", count: model.current.snapshot.browserAddresses.count).padding(.top, 12)
+                    Button("New Browser", systemImage: "globe") { model.newBrowser(); dismiss() }
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(model.current.snapshot.browserAddresses.keys.sorted(by: { $0.uuidString < $1.uuidString }), id: \.self) { id in
+                            Button {
+                                model.current.snapshot.layout?.select(.browser(id)); model.compactSurface = .editor
+                                model.schedulePersist(); dismiss()
+                            } label: {
+                                card(title: model.current.browsers[id]?.title ?? "Browser",
+                                    subtitle: model.current.snapshot.browserAddresses[id] ?? "",
+                                    symbol: "globe", selected: model.current.snapshot.layout?.activePane?.selected == .browser(id))
+                            }
+                        }
+                    }
                     sectionTitle("Terminals", count: model.current.snapshot.terminalIDs.count).padding(.top, 12)
                     if model.current.snapshot.terminalIDs.isEmpty { Text("No Open Terminals").font(.callout).foregroundStyle(CrowTheme.textDim) }
                     LazyVGrid(columns: columns, spacing: 12) {

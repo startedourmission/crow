@@ -147,13 +147,19 @@
 		A8821DCDC4ED46F5B73FC954 /* EditorFileMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */; };
 		BDBFB28B536246E59CC3651A /* EditorFileMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */; };
 		F028D31C8B724250B171C720 /* EditorFileActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE7C542793644FDB079010F /* EditorFileActionTests.swift */; };
+		51C4CF18E6D82521519E581C /* BrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25821D444AD00FD85F01259A /* BrowserTests.swift */; };
 		03FF56B223F344A2BCE45D4E /* EditorFileActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE7C542793644FDB079010F /* EditorFileActionTests.swift */; };
+		CDC8BAFCE7D902ADDAA36163 /* BrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25821D444AD00FD85F01259A /* BrowserTests.swift */; };
 		4175A8E7D5B743F4A6F837D1 /* WorkspaceWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */; };
 		4DBF075E27064714BCADDCD5 /* WorkspaceWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */; };
 		38DA1903B03F4B229E81C806 /* WorkspaceWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */; };
 		A2E61456EF244A7A8E2FB399 /* WorkspaceWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */; };
 		859AC43947C34AF9AB830DF3 /* ObsidianPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */; };
+		07A1711DAEDBB9CDCFFC8A4A /* BrowserTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D32B3E8319AF49397F9CC1B2 /* BrowserTunnel.swift */; };
+		286CBF60A4BDDE13E7B113D5 /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB8BB3ED6A0CC48CB26CD4A /* BrowserView.swift */; };
 		195409B31134410FACDD6120 /* ObsidianPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */; };
+		A94D92109610E0E715635B7E /* BrowserTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D32B3E8319AF49397F9CC1B2 /* BrowserTunnel.swift */; };
+		CE7D59A66E3606A20941848A /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB8BB3ED6A0CC48CB26CD4A /* BrowserView.swift */; };
 		A559D921738743AF8CB82522 /* obsidian-preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */; };
 		EB8ED59C2C5147E89E4D4385 /* obsidian-preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */; };
 		9CC934004CD1401189A8D402 /* obsidian-preview.css in Resources */ = {isa = PBXBuildFile; fileRef = C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */; };
@@ -251,9 +257,12 @@
 		97E246750E6544CFB26E2782 /* GitAccountTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitAccountTests.swift; sourceTree = "<group>"; };
 		75DDC8F0D8FD4C70934C27C6 /* EditorFileMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFileMenu.swift; sourceTree = "<group>"; };
 		0BE7C542793644FDB079010F /* EditorFileActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFileActionTests.swift; sourceTree = "<group>"; };
+		25821D444AD00FD85F01259A /* BrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTests.swift; sourceTree = "<group>"; };
 		9B0CABF2FB2446A693954D47 /* WorkspaceWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindowStore.swift; sourceTree = "<group>"; };
 		C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindowTests.swift; sourceTree = "<group>"; };
 		4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ObsidianPreview.swift"; sourceTree = "<group>"; };
+		D32B3E8319AF49397F9CC1B2 /* BrowserTunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Browser/BrowserTunnel.swift"; sourceTree = "<group>"; };
+		0FB8BB3ED6A0CC48CB26CD4A /* BrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Browser/BrowserView.swift"; sourceTree = "<group>"; };
 		4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "obsidian-preview.js"; sourceTree = "<group>"; };
 		C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = "obsidian-preview.css"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -312,6 +321,8 @@
 				7FACD1BCE145D0783FF32A74 /* markdown-editor.js */,
 				172101D319062647B9B2DCA5 /* MarkdownEditor-LICENSES.txt */,
 				4E5E4CAEACB24F118EE6392B /* ObsidianPreview.swift */,
+				D32B3E8319AF49397F9CC1B2 /* BrowserTunnel.swift */,
+				0FB8BB3ED6A0CC48CB26CD4A /* BrowserView.swift */,
 				4FA80BDADCBD4EC38EA66DC0 /* obsidian-preview.js */,
 				C21E057B10CA4CCF887F08E0 /* obsidian-preview.css */,
 				DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */,
@@ -342,6 +353,7 @@
 				C71E7E2B48DB4D00A5960F57 /* WorkspaceWindowTests.swift */,
 				6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */,
 				0BE7C542793644FDB079010F /* EditorFileActionTests.swift */,
+				25821D444AD00FD85F01259A /* BrowserTests.swift */,
 				1060A874F96F1D04933A95A4 /* InputToolsTests.swift */,
 				5D62E4109A64D19EB1B58385 /* ScreenIntegrationChecks.swift */,
 				04D920867B0F3E4BCBEE1487 /* SSHIntegrationTests.swift */,
@@ -649,6 +661,8 @@
 				4DBF075E27064714BCADDCD5 /* WorkspaceWindowStore.swift in Sources */,
 				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
 				859AC43947C34AF9AB830DF3 /* ObsidianPreview.swift in Sources */,
+				07A1711DAEDBB9CDCFFC8A4A /* BrowserTunnel.swift in Sources */,
+				286CBF60A4BDDE13E7B113D5 /* BrowserView.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
 				978311A499FE46CAA5F8E8B4 /* ImagePreview.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
@@ -682,6 +696,7 @@
 				38DA1903B03F4B229E81C806 /* WorkspaceWindowTests.swift in Sources */,
 				281688703B0CD69F2388B850 /* ExternalFileRefreshTests.swift in Sources */,
 				F028D31C8B724250B171C720 /* EditorFileActionTests.swift in Sources */,
+				51C4CF18E6D82521519E581C /* BrowserTests.swift in Sources */,
 				7FC5DFA40E531A3B34244973 /* InputToolsTests.swift in Sources */,
 				A03ABD408F30651820EB1A45 /* SSHIntegrationTests.swift in Sources */,
 				431A6D4C0D162573EEA7D7C8 /* SSHKeyStoreTests.swift in Sources */,
@@ -721,6 +736,8 @@
 				4175A8E7D5B743F4A6F837D1 /* WorkspaceWindowStore.swift in Sources */,
 				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
 				195409B31134410FACDD6120 /* ObsidianPreview.swift in Sources */,
+				A94D92109610E0E715635B7E /* BrowserTunnel.swift in Sources */,
+				CE7D59A66E3606A20941848A /* BrowserView.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
 				9FC987AB24A64B98AC27F31C /* ImagePreview.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
@@ -754,6 +771,7 @@
 				A2E61456EF244A7A8E2FB399 /* WorkspaceWindowTests.swift in Sources */,
 				8D99C0C0E2E1C51ABFC932D9 /* ExternalFileRefreshTests.swift in Sources */,
 				03FF56B223F344A2BCE45D4E /* EditorFileActionTests.swift in Sources */,
+				CDC8BAFCE7D902ADDAA36163 /* BrowserTests.swift in Sources */,
 				DD79F454BF6855023C332AF5 /* InputToolsTests.swift in Sources */,
 				6501092CFE725248971932C3 /* SSHIntegrationTests.swift in Sources */,
 				5BDCD19C97620FB6671759C7 /* SSHKeyStoreTests.swift in Sources */,

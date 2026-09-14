@@ -76,7 +76,7 @@ extension AppModel {
         #if os(iOS)
         switch state.snapshot.layout?.activePane?.selected {
         case .terminal where state.snapshot.workspace.isRemote: compactSurface = .terminal
-        case .file: compactSurface = .editor
+        case .file, .browser: compactSurface = .editor
         default: compactSurface = .files
         }
         #endif

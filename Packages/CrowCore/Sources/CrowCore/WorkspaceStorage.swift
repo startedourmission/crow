@@ -19,6 +19,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     public var isPinned = false
     public var lastOpenedAt: Date?
     public var agentTerminals: [AgentTerminal] = []
+    public var browserAddresses: [UUID: String] = [:]
 
     public init(workspace: Workspace, rootPath: String, bookmark: Data? = nil) {
         self.workspace = workspace
@@ -47,7 +48,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case workspace, rootPath, directoryPath, bookmark, buffers, selectedBufferID, splitBufferID
         case terminalIDs, selectedTerminalID, terminalSplit
-        case layout, agentTerminals, isPinned, lastOpenedAt
+        case layout, agentTerminals, isPinned, lastOpenedAt, browserAddresses
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -65,6 +66,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
         isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         lastOpenedAt = try values.decodeIfPresent(Date.self, forKey: .lastOpenedAt)
         agentTerminals = try values.decodeIfPresent([AgentTerminal].self, forKey: .agentTerminals) ?? []
+        browserAddresses = try values.decodeIfPresent([UUID: String].self, forKey: .browserAddresses) ?? [:]
     }
 }
 

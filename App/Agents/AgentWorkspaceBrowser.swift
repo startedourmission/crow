@@ -265,6 +265,9 @@ struct AgentWorkspaceBrowser: View {
 
     private func newSessionMenu(_ state: WorkspaceState) -> some View {
         Menu {
+            Button("Web Browser") {
+                model.activateWorkspace(state.id); model.newBrowser(); onOpen?()
+            }
             Button("New Terminal") {
                 model.activateWorkspace(state.id); model.newTerminal(); model.compactSurface = .terminal; onOpen?()
             }

@@ -301,11 +301,17 @@ private struct PhoneWorkspaceBar: View {
     @State private var showingTabs = false
     @State private var restoreTabsKeyboard = false
     @State private var copyToast: (id: UUID, message: String)?
+    private var browserID: UUID? {
+        if model.compactSurface == .editor, case .browser(let id) = model.current.snapshot.layout?.activePane?.selected { return id }
+        return nil
+    }
 
     private var title: String {
         switch model.compactSurface {
         case .hosts: return "Workspaces"
-        case .editor: return model.selectedBuffer.map { $0.title + ($0.isDirty ? " •" : "") } ?? "Editor"
+        case .editor:
+            if let id = browserID { return model.current.browsers[id]?.title ?? "Browser" }
+            return model.selectedBuffer.map { $0.title + ($0.isDirty ? " •" : "") } ?? "Editor"
         case .files, .terminal:
             if case .remote(let id, _) = model.selectedWorkspace.kind,
                let host = model.hosts.first(where: { $0.id == id }) { return host.hostname }
@@ -316,18 +322,19 @@ private struct PhoneWorkspaceBar: View {
         switch model.compactSurface {
         case .hosts: "square.stack.3d.up"
         case .files: "folder"
-        case .editor: "doc.text"
+        case .editor: browserID == nil ? "doc.text" : "globe"
         case .terminal: "terminal"
         }
     }
     private var canClose: Bool {
-        model.compactSurface == .editor ? model.selectedBufferID != nil
+        model.compactSurface == .editor ? (browserID != nil || model.selectedBufferID != nil)
             : model.compactSurface == .terminal && model.current.snapshot.selectedTerminalID != nil
     }
 
     private var titleCopyValue: (text: String, label: String)? {
         switch model.compactSurface {
         case .editor:
+            if let id = browserID { return (model.current.snapshot.browserAddresses[id] ?? "", "Copy URL") }
             guard let buffer = model.selectedBuffer else { return nil }
             return (buffer.path, "Copy Absolute Path")
         case .terminal:
@@ -342,7 +349,7 @@ private struct PhoneWorkspaceBar: View {
     private func copyTitleValue() {
         guard let value = titleCopyValue, !value.text.isEmpty else { return }
         UIPasteboard.general.string = value.text
-        let message = model.compactSurface == .editor ? "Path copied" : "Address copied"
+        let message = model.compactSurface == .editor && browserID == nil ? "Path copied" : "Address copied"
         copyToast = (UUID(), message)
         UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.35)
         UIAccessibility.post(notification: .announcement, argument: message)
@@ -354,7 +361,7 @@ private struct PhoneWorkspaceBar: View {
     private var canShowKeyboard: Bool {
         switch model.compactSurface {
         case .terminal: return model.hasWorkspace && model.current.snapshot.selectedTerminalID != nil
-        case .editor: return model.selectedBuffer != nil
+        case .editor: return browserID == nil && model.selectedBuffer != nil
         case .hosts, .files: return false
         }
     }
@@ -393,19 +400,20 @@ private struct PhoneWorkspaceBar: View {
                 if canClose {
                     Button {
                         if model.compactSurface == .editor {
-                            if let buffer = model.selectedBuffer, buffer.isImage { model.closeBuffer(buffer.id) }
+                            if let id = browserID, let pane = model.current.snapshot.layout?.activePane { model.closeTab(.browser(id), in: pane.id) }
+                            else if let buffer = model.selectedBuffer, buffer.isImage { model.closeBuffer(buffer.id) }
                             else { model.saveSelectedBuffer() }
                         }
                         else { model.terminalCloseRequest = model.current.snapshot.selectedTerminalID }
                     } label: {
                         Group {
-                            if model.compactSurface == .editor && model.selectedBuffer?.isImage != true {
+                            if model.compactSurface == .editor && browserID == nil && model.selectedBuffer?.isImage != true {
                                 SaveDiskIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                                     .frame(width: 17, height: 17)
                             } else { Image(systemName: "xmark.circle").font(.system(size: 16)) }
                         }.frame(width: 36, height: 44).contentShape(Rectangle())
                     }
-                    .accessibilityLabel(model.compactSurface == .editor ? (model.selectedBuffer?.isImage == true ? "Close Image" : "Save File") : "Close Terminal")
+                    .accessibilityLabel(browserID != nil ? "Close Browser" : model.compactSurface == .editor ? (model.selectedBuffer?.isImage == true ? "Close Image" : "Save File") : "Close Terminal")
                     .accessibilityIdentifier(model.compactSurface == .editor ? (model.selectedBuffer?.isImage == true ? "crow.phone.close-image" : "crow.phone.save") : "crow.phone.close-terminal")
                 }
             }
@@ -502,6 +510,7 @@ private struct PhoneWorkspaceBar: View {
     }
 
     @ViewBuilder private var generalMenu: some View {
+        Button("Web Browser", systemImage: "globe") { model.newBrowser() }.disabled(!model.hasWorkspace)
         Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             .accessibilityIdentifier("crow.phone.workspaces")
         if model.selectedWorkspace.isRemote {
@@ -547,10 +556,10 @@ private struct PhoneWorkspaceBar: View {
                 }
             }
             Button("Save File", systemImage: "square.and.arrow.down") { model.saveSelectedBuffer() }
-                .disabled(model.selectedBuffer == nil || model.selectedBuffer?.isImage == true)
+                .disabled(browserID != nil || model.selectedBuffer == nil || model.selectedBuffer?.isImage == true)
             Button("Close File", systemImage: "xmark") {
                 if let id = model.selectedBufferID { model.closeBuffer(id) }
-            }.disabled(model.selectedBuffer == nil)
+            }.disabled(browserID != nil || model.selectedBuffer == nil)
             Divider()
         }
     }

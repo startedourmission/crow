@@ -10,7 +10,12 @@ struct EditorAreaView: View {
     var body: some View {
         VStack(spacing: 0) {
             if !phoneLayout { tabStrip; CrowDivider() }
-            if let buffer = model.selectedBuffer {
+            if case .browser(let id) = model.current.snapshot.layout?.activePane?.selected {
+                BrowserView(session: model.browser(id, in: model.current), workspace: model.current).id(id)
+            } else if case .start = model.current.snapshot.layout?.activePane?.selected,
+                      let pane = model.current.snapshot.layout?.activePane {
+                NewTabPage(paneID: pane.id)
+            } else if let buffer = model.selectedBuffer {
                 HStack(spacing: 1) {
                     CrowEditorView(buffer: buffer).id(buffer.id)
                     if !phoneLayout, sizeClass != .compact, let splitID = model.current.snapshot.splitBufferID,
@@ -278,6 +283,7 @@ struct NewTabPage: View {
                         model.activatePane(paneID)
                         model.sidebarPane = .files; model.sidebarVisible = true
                     }
+                    action("Web Browser", symbol: "globe") { model.newBrowser(in: paneID) }
                     action("SSH Hosts", symbol: "network") {
                         model.activatePane(paneID); model.showHosts()
                     }
@@ -542,6 +548,8 @@ private struct WorkspacePaneView: View {
                             terminal(id)
                         case .start:
                             NewTabPage(paneID: pane.id)
+                        case .browser(let id):
+                            BrowserView(session: model.browser(id, in: model.current), workspace: model.current).id(id)
                         }
                     }
                 }
@@ -638,6 +646,7 @@ private struct WorkspacePaneView: View {
     private func title(_ tab: WorkspaceTab) -> String {
         switch tab {
         case .start: return "New Tab"
+        case .browser(let id): return model.browser(id, in: model.current).title
         case .file(let id): return model.buffers.first { $0.id == id }?.title ?? "File"
         case .terminal(let id): return model.current.snapshot.agentTerminals.first { $0.id == id }?.title ?? "Terminal \((model.current.snapshot.terminalIDs.firstIndex(of: id) ?? 0) + 1)"
         }
@@ -656,6 +665,7 @@ private struct WorkspacePaneView: View {
                             case .terminal: return "terminal"
                             case .file(let id): return model.buffers.first { $0.id == id }?.isImage == true ? "photo" : "doc.text"
                             case .start: return "square.grid.2x2"
+                            case .browser: return "globe"
                             }
                         }())
                             .font(.system(size: 10))
