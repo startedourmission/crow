@@ -139,6 +139,26 @@ fi
 mkdir -p "$staging_directory"
 ditto "$archived_app" "$app_path"
 
+echo "Collecting third-party license notices..."
+notices_path="$app_path/Contents/Resources/ThirdPartyNotices.txt"
+printf 'Crow — Swift package third-party notices\n' > "$notices_path"
+notice_count=0
+for checkout in "$project_root/build/SourcePackages/checkouts"/*; do
+  [[ -d "$checkout" ]] || continue
+  while IFS= read -r -d '' license_file; do
+    printf '\n\n----- %s / %s -----\n\n' \
+      "$(basename "$checkout")" \
+      "${license_file#"$checkout"/}" >> "$notices_path"
+    cat "$license_file" >> "$notices_path"
+    notice_count=$((notice_count + 1))
+  done < <(find "$checkout" -type d -name .git -prune -o -type f \
+    \( -iname 'license*' -o -iname 'licence*' -o -iname 'copying*' -o -iname 'notice*' \) -print0)
+done
+if [[ "$notice_count" -eq 0 ]]; then
+  echo "No dependency license notices were found." >&2
+  exit 66
+fi
+
 echo "Re-signing Sparkle components from the inside out..."
 sign_identity="${SIGN_IDENTITY:-Developer ID Application}"
 sign=(codesign --force --options runtime --timestamp --sign "$sign_identity")

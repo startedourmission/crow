@@ -450,7 +450,9 @@ final class EditorIntegrationTests: XCTestCase {
         hosting.layoutSubtreeIfNeeded()
         XCTAssertEqual(model.current.snapshot.layout?.panes.count, 1)
         XCTAssertGreaterThan(session.view.bounds.height, initialHeight * 1.5)
-        XCTAssertGreaterThan(session.view.bounds.width, 700)
+        // The terminal fills the editor area; the visible explorer and inspector
+        // continue to reserve their own width in the 1280-point test window.
+        XCTAssertGreaterThan(session.view.bounds.width, 600)
         XCTAssertTrue(session.running)
     }
     @MainActor func testResizeHandlesUseStableCoordinatesAndDirectionalCursors() throws {
@@ -511,7 +513,8 @@ final class EditorIntegrationTests: XCTestCase {
             (view as? ResizeHandleView).map { [$0] } ?? view.subviews.flatMap { handles($0) }
         }
         let handle = try XCTUnwrap(handles(hosting).first { $0.axis == .vertical })
-        XCTAssertEqual(handles(hosting).count, 2)
+        // Terminal, explorer, and the default-visible inspector each own a handle.
+        XCTAssertEqual(handles(hosting).count, 3)
         let id = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
         let session = model.terminal(id, in: model.current)
         let startingHeight = session.view.bounds.height
