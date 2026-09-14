@@ -76,6 +76,7 @@ final class AppModel {
     var externalFileErrors: [BufferID: String] = [:]
     var imagePreviews: [BufferID: ImagePreview] = [:]
     var deleteRequest: FileEntry?
+    var deleteWorkspaceID: WorkspaceID?
     var hostKeyChallenge: HostKeyChallenge?
     var folderImporterVisible = false
     var hostEditorVisible = false
@@ -822,6 +823,13 @@ final class AppModel {
         try await performFileMove(drag, to: folder, in: state)
     }
 
+    func moveExplorerFile(_ drag: ExplorerFileDrag, to folder: String) async throws {
+        guard let state = states.first(where: { $0.id == drag.workspaceID }) else {
+            throw CommandError("This workspace was removed.")
+        }
+        try await performFileMove(drag, to: folder, in: state)
+    }
+
     private func performFileMove(_ drag: ExplorerFileDrag, to folder: String, in state: WorkspaceState) async throws {
         let connection = state.remote
         let affected = state.snapshot.buffers.filter { $0.path == drag.path || $0.path.hasPrefix(drag.path + "/") }
@@ -883,6 +891,11 @@ final class AppModel {
 
     func fileMoveFolders(_ id: BufferID, at path: String) async throws -> (path: String, root: String, folders: [FileEntry]) {
         guard let (state, _) = locate(id) else { throw CommandError("This file is no longer open.") }
+        return try await fileMoveFolders(workspaceID: state.id, at: path)
+    }
+
+    func fileMoveFolders(workspaceID: WorkspaceID, at path: String) async throws -> (path: String, root: String, folders: [FileEntry]) {
+        guard let state = states.first(where: { $0.id == workspaceID }) else { throw CommandError("This workspace was removed.") }
         let root = state.snapshot.rootPath
         let resolved: String, canonicalRoot: String
         let folders: [FileEntry]
@@ -908,7 +921,7 @@ final class AppModel {
             }.value
         }
         try Task.checkCancellation()
-        guard locate(id)?.0 === state else { throw CommandError("This file is no longer open.") }
+        guard states.contains(where: { $0 === state }) else { throw CommandError("This workspace was removed.") }
         return (resolved, canonicalRoot, folders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
     }
 
@@ -931,16 +944,54 @@ final class AppModel {
               !state.movingPaths.contains(buffer.path) else { throw CommandError("The file changed location. Try downloading it again.") }
         return data
     }
-    @discardableResult func trash(_ entry: FileEntry) -> Task<Void, Never> {
-        let state = current
+    func requestDelete(_ entry: FileEntry) {
+        deleteWorkspaceID = selectedWorkspaceID
+        deleteRequest = entry
+    }
+
+    @discardableResult func trash(_ entry: FileEntry, workspaceID: WorkspaceID? = nil) -> Task<Void, Never> {
+        guard let state = states.first(where: { $0.id == (workspaceID ?? selectedWorkspaceID) }) else {
+            report(CommandError("This workspace was removed.")); return Task {}
+        }
+        let destination = settings.effectiveFileDeletionDestination
         return Task {
             do {
+                let root: String, path: String
+                if state.snapshot.workspace.isRemote {
+                    guard let remote = state.remote else { throw FileFailure.disconnected }
+                    root = try await remote.realPath(state.snapshot.rootPath)
+                    path = (try await remote.realPath((entry.path as NSString).deletingLastPathComponent) as NSString).appendingPathComponent(entry.name)
+                    guard state.remote === remote else { throw FileFailure.disconnected }
+                } else {
+                    root = URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
+                    path = URL(fileURLWithPath: entry.path).deletingLastPathComponent().resolvingSymlinksInPath()
+                        .appendingPathComponent(entry.name).path
+                }
+                guard path != root, path.hasPrefix(root == "/" ? "/" : root + "/") else {
+                    throw CommandError("Only items inside this workspace can be deleted.")
+                }
+                try Task.checkCancellation()
+                guard states.contains(where: { $0 === state }) else { throw CommandError("This workspace was removed.") }
                 let affected = state.snapshot.buffers.filter { $0.path == entry.path || $0.path.hasPrefix(entry.path + "/") }
                 guard !affected.contains(where: \.isDirty) else {
                     errorMessage = "Save or close the modified files inside this item before deleting it."; return
                 }
+                guard !affected.contains(where: { saving.contains($0.id) }),
+                      !state.movingPaths.contains(where: { entry.path == $0 || entry.path.hasPrefix($0 + "/") || $0.hasPrefix(entry.path + "/") }) else {
+                    throw CommandError("Wait for the current save or move to finish.")
+                }
+                state.movingPaths.insert(entry.path)
+                defer { state.movingPaths.remove(entry.path) }
                 let recovery: String
-                if state.snapshot.workspace.isRemote {
+                if destination == .trash {
+                    if state.snapshot.workspace.isRemote {
+                        recovery = try await moveToHostTrash(entry, in: state)
+                    } else {
+                        var result: NSURL?
+                        try FileManager.default.trashItem(at: URL(fileURLWithPath: entry.path), resultingItemURL: &result)
+                        recovery = result?.path ?? "Trash"
+                    }
+                } else if state.snapshot.workspace.isRemote {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
                     recovery = try await remote.trash(entry, rootPath: state.snapshot.rootPath)
                 } else {
@@ -964,6 +1015,29 @@ final class AppModel {
                 if state.id == selectedWorkspaceID { refreshFiles() }; schedulePersist()
             } catch { report(error) }
         }
+    }
+
+    private func moveToHostTrash(_ entry: FileEntry, in state: WorkspaceState) async throws -> String {
+        guard let remote = state.remote, remote.isConnected else { throw FileFailure.disconnected }
+        let marker = "CROW_TRASH_OK_" + UUID().uuidString
+        let command = "( " + RemoteConnection.trashCommand(path: entry.path) + " ) 2>&1 && printf '\n" + marker + "\n'"
+        let output: String
+        #if os(macOS)
+        if let ssh = state.systemSSH {
+            output = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + ssh.multiplexArguments
+                + ["sh -lc " + TerminalCommand.quote(command)], operation: "Trash")
+        } else {
+            output = try await remote.workspaceCommand(command, operation: "Trash")
+        }
+        #else
+        output = try await remote.workspaceCommand(command, operation: "Trash")
+        #endif
+        guard output.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(marker) else {
+            throw CommandError(output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Could not move this item to the server’s trash. Choose Recovery Folder in Settings if trash is unavailable."
+                : String(output.prefix(2000)))
+        }
+        return "Trash on " + workspaceHostName(state)
     }
 
     func showHosts() {
@@ -1013,10 +1087,13 @@ final class AppModel {
         #else
         let (parsed, identity) = try command.portableHost(defaultUsername: "")
         var host = hosts.first { $0.hostname == parsed.hostname && $0.port == parsed.port && $0.username == parsed.username } ?? parsed
-        if identity != nil { throw CommandError("Use Add SSH Host → Authentication → Import Private Key from Files on iPhone/iPad. Then connect from Hosts.") }
         host.commandArguments = command.arguments
         let saved = try SecureStore.credential(host)
-        if host.authentication == .password && saved.password.isEmpty && password.isEmpty {
+        let missingCredential = host.authentication == .password
+            ? saved.password.isEmpty && password.isEmpty
+            : saved.keyID == nil && saved.privateKey.isEmpty
+        if identity != nil || missingCredential {
+            if identity != nil { host.authentication = .ed25519 }
             if sshCommandVisible { pendingCredentialRequest = host } else { credentialRequest = host }
             return
         }

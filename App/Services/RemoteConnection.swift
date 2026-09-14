@@ -176,8 +176,8 @@ final class RemoteConnection {
         try GitRepository.parseProjects(await gitData(query: GitRepository.projectsQuery(path: path)))
     }
 
-    func workspaceCommand(_ command: String) async throws -> String {
-        String(decoding: try await gitData(query: command, operation: "tmux"), as: UTF8.self)
+    func workspaceCommand(_ command: String, operation: String = "tmux") async throws -> String {
+        String(decoding: try await gitData(query: command, operation: operation), as: UTF8.self)
     }
 
     private func gitData(query: String, operation: String = "Git") async throws -> Data {
@@ -404,6 +404,16 @@ final class RemoteConnection {
               let mode = try await sftp.getAttributes(at: path).permissions, mode & 0o777 == 0o700 else {
             throw CommandError("Crow storage must be a private directory (permissions 700): \(path)")
         }
+    }
+
+    static func trashCommand(path: String) -> String {
+        let item = GitRepository.quote(path)
+        // Foundation works without asking Finder to automate a remote desktop.
+        let script = "ObjC.import('Foundation'); function run(args) { var error = Ref(); if (!$.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError($.NSURL.fileURLWithPath(args[0]), null, error)) { throw Error(ObjC.unwrap(error[0].localizedDescription)); } }"
+        return "if [ \"$(uname -s)\" = Darwin ]; then /usr/bin/osascript -l JavaScript -e " + GitRepository.quote(script) + " -- " + item
+            + "; elif command -v gio >/dev/null 2>&1; then gio trash -- " + item
+            + "; elif command -v trash-put >/dev/null 2>&1; then trash-put -- " + item
+            + "; else printf '%s\\n' 'Trash is unavailable on this server. Install gio or trash-cli, or choose Recovery Folder in Settings.'; exit 1; fi"
     }
 
     func trash(_ entry: FileEntry, rootPath: String? = nil) async throws -> String {

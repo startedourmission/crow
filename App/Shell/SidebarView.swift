@@ -53,6 +53,7 @@ struct SidebarView: View {
     @State private var naming = false
     @State private var entryName = ""
     @State private var renameEntry: FileEntry?
+    @State private var moveEntry: ExplorerFileDrag?
     @State private var createDirectory = false
     @State private var creationPath: String?
     @State private var dropFolder: String?
@@ -94,6 +95,9 @@ struct SidebarView: View {
                 do { try await Task.sleep(for: .seconds(model.selectedWorkspace.isRemote ? 5 : 2)) }
                 catch { return }
             }
+        }
+        .sheet(isPresented: Binding(get: { moveEntry != nil }, set: { if !$0 { moveEntry = nil } })) {
+            if let entry = moveEntry { FileMovePicker(entry: entry).environment(model) }
         }
         .alert(renameEntry == nil ? (createDirectory ? "New Folder" : "New File") : "Rename", isPresented: $naming) {
             TextField("Name", text: $entryName)
@@ -246,7 +250,18 @@ struct SidebarView: View {
                     Divider()
                 }
                 Button("Rename…") { renameEntry = entry; entryName = entry.name; naming = true }
-                Button("Move to Recovery Folder…", role: .destructive) { model.deleteRequest = entry }
+                Button("Move…", systemImage: "folder") {
+                    moveEntry = ExplorerFileDrag(workspaceID: model.selectedWorkspaceID, path: entry.path, isDirectory: entry.isDirectory)
+                }
+                Button("Copy Path", systemImage: "doc.on.doc") {
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(entry.path, forType: .string)
+                    #else
+                    UIPasteboard.general.string = entry.path
+                    #endif
+                }
+                Button("Delete…", systemImage: "trash", role: .destructive) { model.requestDelete(entry) }
                 Divider()
                 hiddenFilesToggle
             }

@@ -156,8 +156,14 @@ struct GitHubOAuth: Sendable {
         let error: String?
     }
 
+    static let clientIDPreference = "crow.githubOAuthClientID"
+    static var bundledClientID: String { Bundle.main.object(forInfoDictionaryKey: "CrowGitHubClientID") as? String ?? "" }
     static var clientID: String? {
-        let value = Bundle.main.object(forInfoDictionaryKey: "CrowGitHubClientID") as? String ?? ""
+        configuredClientID(override: UserDefaults.standard.string(forKey: clientIDPreference) ?? "", bundled: bundledClientID)
+    }
+    static func configuredClientID(override: String, bundled: String) -> String? {
+        let custom = override.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = custom.isEmpty ? bundled.trimmingCharacters(in: .whitespacesAndNewlines) : custom
         return validClientID(value) ? value : nil
     }
     private static func validClientID(_ value: String) -> Bool {
@@ -166,7 +172,7 @@ struct GitHubOAuth: Sendable {
         }
     }
     static func request(clientID: String, deviceCode: String? = nil) throws -> URLRequest {
-        guard validClientID(clientID) else { throw CommandError("GitHub sign-in is not configured in this build.") }
+        guard validClientID(clientID) else { throw CommandError("Enter a valid GitHub OAuth Client ID in Settings → GitHub Account → OAuth App Setup.") }
         var fields = ["client_id": clientID]
         let path: String
         if let deviceCode {
@@ -189,6 +195,13 @@ struct GitHubOAuth: Sendable {
         return request
     }
     static func authorization(_ data: Data) throws -> Authorization {
+        if let response = try? JSONDecoder().decode(Response.self, from: data) {
+            switch response.error {
+            case "incorrect_client_credentials": throw CommandError("GitHub did not recognize this Client ID. Check OAuth App Setup and try again.")
+            case "device_flow_disabled": throw CommandError("Enable Device Flow in this OAuth app’s GitHub settings, then try again.")
+            default: break
+            }
+        }
         guard let value = try? JSONDecoder().decode(Authorization.self, from: data),
               !value.device_code.isEmpty, value.device_code.count <= 1024,
               !value.user_code.isEmpty, value.user_code.count <= 32,

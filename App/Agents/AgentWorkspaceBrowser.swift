@@ -36,7 +36,17 @@ struct AgentWorkspaceBrowser: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("WORKSPACES").font(.system(size: 11, weight: .semibold)).tracking(0.6)
+                Button {
+                    let expand = allHostsCollapsed
+                    collapsedHosts = expand ? [] : Set(["local"] + model.workspaceHostIDs.map { $0.rawValue.uuidString })
+                    collapsed = expand ? [] : Set(model.states.map(\.id))
+                } label: {
+                    Image(systemName: allHostsCollapsed ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
+                        .frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                    .help(allHostsCollapsed ? "Expand All" : "Collapse All")
+                    .accessibilityLabel(allHostsCollapsed ? "Expand All" : "Collapse All")
+                    .accessibilityIdentifier("crow.workspaces.toggle-all")
                 Spacer()
                 Button { model.sshKeysVisible = true } label: {
                     Image(systemName: "key").frame(width: 24, height: 24).contentShape(Rectangle())
@@ -89,6 +99,10 @@ struct AgentWorkspaceBrowser: View {
                 }
                 Button("Cancel", role: .cancel) { renaming = nil }
             }
+    }
+
+    private var allHostsCollapsed: Bool {
+        Set(["local"] + model.workspaceHostIDs.map { $0.rawValue.uuidString }).isSubset(of: collapsedHosts)
     }
 
     private var addWorkspaceMenu: some View {

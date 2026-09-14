@@ -47,6 +47,21 @@ final class GitAccountTests: XCTestCase {
         XCTAssertThrowsError(try GitAccountAPI.account(data: Data("{}".utf8), status: 200))
     }
 
+    func testOAuthClientIDCanBeConfiguredWithoutRebuilding() throws {
+        XCTAssertNil(GitHubOAuth.configuredClientID(override: "", bundled: "$(CROW_GITHUB_CLIENT_ID)"))
+        XCTAssertEqual(GitHubOAuth.configuredClientID(override: "  custom123  ", bundled: "build123"), "custom123")
+        XCTAssertEqual(GitHubOAuth.configuredClientID(override: "  ", bundled: "build123"), "build123")
+        XCTAssertNil(GitHubOAuth.configuredClientID(override: "invalid id", bundled: "build123"))
+        let id = try XCTUnwrap(GitHubOAuth.configuredClientID(override: "custom123", bundled: ""))
+        let request = try GitHubOAuth.request(clientID: id)
+        XCTAssertTrue(String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self).contains("client_id=custom123"))
+        for (code, expected) in [("incorrect_client_credentials", "Client ID"), ("device_flow_disabled", "Device Flow")] {
+            XCTAssertThrowsError(try GitHubOAuth.authorization(Data(("{\"error\":\"" + code + "\"}").utf8))) {
+                XCTAssertTrue($0.localizedDescription.contains(expected))
+            }
+        }
+    }
+
     func testOAuthUsesFixedEndpointsAndEncodesDeviceCredentialsInPOSTBody() throws {
         let start = try GitHubOAuth.request(clientID: "Iv1.crowfixture")
         XCTAssertEqual(start.url?.absoluteString, "https://github.com/login/device/code")

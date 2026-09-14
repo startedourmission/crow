@@ -94,10 +94,11 @@ struct EditorFileMenu: View {
     }
 }
 
-private struct FileMovePicker: View {
+struct FileMovePicker: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    let bufferID: BufferID
+    var bufferID: BufferID? = nil
+    var entry: ExplorerFileDrag? = nil
     @State private var path = ""
     @State private var workspaceRoot = ""
     @State private var folders: [FileEntry] = []
@@ -105,9 +106,15 @@ private struct FileMovePicker: View {
     @State private var moving = false
     @State private var error: String?
     @State private var request: Task<Void, Never>?
-    private var root: String { model.locate(bufferID)?.0.snapshot.rootPath ?? "" }
+    private var workspaceID: WorkspaceID? {
+        if let entry { return entry.workspaceID }
+        if let bufferID { return model.locate(bufferID)?.0.id }
+        return nil
+    }
+    private var root: String { model.states.first { $0.id == workspaceID }?.snapshot.rootPath ?? "" }
     private var source: String? {
-        guard let (state, index) = model.locate(bufferID) else { return nil }
+        if let entry { return entry.path }
+        guard let bufferID, let (state, index) = model.locate(bufferID) else { return nil }
         return state.snapshot.buffers[index].path
     }
     private var atRoot: Bool {
@@ -147,7 +154,12 @@ private struct FileMovePicker: View {
                     Button("Move Here") {
                         moving = true; error = nil
                         request = Task { @MainActor in
-                            do { try await model.moveOpenFile(bufferID, to: path); dismiss() }
+                            do {
+                                if let entry { try await model.moveExplorerFile(entry, to: path) }
+                                else if let bufferID { try await model.moveOpenFile(bufferID, to: path) }
+                                else { throw CommandError("This item is no longer available.") }
+                                dismiss()
+                            }
                             catch { self.error = error.localizedDescription }
                             moving = false
                         }
@@ -157,7 +169,7 @@ private struct FileMovePicker: View {
                     .accessibilityIdentifier("crow.file-move-confirm")
                 }
             }.padding(16)
-            .navigationTitle("Move File")
+            .navigationTitle(entry?.isDirectory == true ? "Move Folder" : "Move File")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(moving) } }
         }
         .interactiveDismissDisabled(moving)
@@ -173,9 +185,13 @@ private struct FileMovePicker: View {
         request = Task { @MainActor in
             defer { if !Task.isCancelled { loading = false } }
             do {
-                let result = try await model.fileMoveFolders(bufferID, at: destination)
+                guard let workspaceID else { throw CommandError("This workspace was removed.") }
+                let result = try await model.fileMoveFolders(workspaceID: workspaceID, at: destination)
                 try Task.checkCancellation()
-                path = result.path; workspaceRoot = result.root; folders = result.folders
+                path = result.path; workspaceRoot = result.root; folders = result.folders.filter { folder in
+                    guard let entry, entry.isDirectory else { return true }
+                    return folder.path != entry.path && !folder.path.hasPrefix(entry.path + "/")
+                }
             } catch is CancellationError {} catch { self.error = error.localizedDescription }
         }
     }

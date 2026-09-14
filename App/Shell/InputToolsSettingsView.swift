@@ -198,12 +198,12 @@ struct KeyboardBarDraft {
     }
 }
 
-struct KeyboardBarSettingsView: View {
+struct KeyboardBarSettingsContent: View {
     @Environment(AppModel.self) private var model
     @State private var draft = KeyboardBarDraft()
     private let columns = [GridItem(.adaptive(minimum: 64), spacing: 8)]
     var body: some View {
-        List {
+        Group {
             Section("Current Keys") {
                 if model.settings.effectiveKeyboardBarItems.isEmpty {
                     Text("No keys added").foregroundStyle(.secondary)
@@ -232,7 +232,7 @@ struct KeyboardBarSettingsView: View {
                     ForEach(KeyboardBarKey.specialKeys.filter { $0 != "Control" && $0 != "Shift" } + ["Character"], id: \.self) { keyButton($0) }
                 }
                 if draft.key == "Character" {
-                    TextField("Character", text: $draft.character).autocorrectionDisabled()
+                    TextField("Character", text: $draft.character).autocorrectionDisabled().crowSettingsInput()
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         #endif
@@ -252,10 +252,6 @@ struct KeyboardBarSettingsView: View {
               footer: { Text("Tap Shift, then Tab, then Add for Shift+Tab. Add Ctrl or Shift alone to use it with the next key. The same bar appears in Terminal and Editor.") }
             Button("Restore Default Keys") { model.settings.keyboardBarItems = nil }
         }
-        .navigationTitle("Keyboard Bar")
-        #if os(iOS)
-        .toolbar { EditButton() }
-        #endif
     }
     private func keyButton(_ name: String) -> some View {
         let selected = draft.selected(name)
@@ -269,6 +265,16 @@ struct KeyboardBarSettingsView: View {
         }.buttonStyle(.plain).accessibilityLabel(name)
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityIdentifier("crow.keyboard.choose." + name)
+    }
+}
+
+struct KeyboardBarSettingsView: View {
+    var body: some View {
+        List { KeyboardBarSettingsContent() }
+            .navigationTitle("Keyboard Bar")
+            #if os(iOS)
+            .toolbar { EditButton() }
+            #endif
     }
 }
 

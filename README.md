@@ -79,11 +79,14 @@ Local은 항상 맨 위에, 원격 호스트는 최근 접속 순으로 표시�
 각 호스트의 프로젝트는 이름 사전순이며, 고정한 프로젝트도 Pinned 안에서 이름순으로 표시합니다.
 호스트 접속 시각은 저장되어 앱을 다시 열어도 순서가 유지됩니다.
 호스트 헤더는 `사용자@주소`로 표시하고, 이름을 누르면 바로 연결합니다. 왼쪽 화살표로 목록을 접고 펼칩니다.
+상단 왼쪽 아이콘으로 호스트와 작업 공간 목록을 모두 접거나 펼칩니다. tmux 하위 목록은 포함하지 않습니다.
 작업 공간과 세션은 단계별로 들여씁니다.
 폴더 전체 경로는 작업 공간의 우클릭 메뉴 **Copy Path**에서 복사합니다.
 
 Workspaces의 **+**에서 로컬 폴더 또는 연결된 SSH 호스트의 폴더를 엽니다.
 같은 호스트의 같은 폴더는 기존 작업 공간으로 돌아가고, 다른 폴더는 별도로 추가합니다.
+파일 탐색기 우클릭 메뉴에서 **Move… / Copy Path / Delete…**를 사용할 수 있습니다.
+이동은 로컬·SSH 모두 작업 공간 안의 폴더를 선택하며, 열린 파일의 미저장 초안도 유지합니다.
 파일 탐색기는 현재 작업 공간의 폴더만 표시합니다. SSH 연결이 끊겨도 폴더와 탭 목록은 남습니다.
 작업 공간 하나를 목록에서 제거해도 같은 호스트의 다른 작업 공간 연결은 유지됩니다.
 새 터미널과 에이전트는 해당 작업 공간 폴더에서 시작합니다.
@@ -198,6 +201,9 @@ Crow는 시스템 OpenSSH 설정과 에이전트, 키를 그대로 사용합니�
 <details>
 <summary><strong>SSH 키 생성·가져오기·관리</strong></summary>
 
+iPhone·iPad에서 새 SSH 명령으로 연결하면 인증 화면에서 비밀번호 또는 SSH 키를 선택합니다.
+저장한 키 선택, 키 생성·가져오기도 같은 흐름에서 진행할 수 있습니다.
+
 Mac, iPhone, iPad에서 **Workspaces 상단 열쇠 버튼** 또는 **Settings → SSH Keys**를 엽니다.
 
 Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.ssh**에
@@ -244,8 +250,10 @@ Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.s
   Git 탭은 볼트와 하위 폴더의 Git 프로젝트 목록을 먼저 보여줍니다. 볼트 자체가
   저장소여도 프로젝트를 한 번 선택해야 브랜치와 변경 파일이 표시됩니다.
   **Projects**로 목록에 돌아가 다른 저장소를 선택할 수 있습니다.
-  하단에는 원격 저장소 주소와 커밋 작성자를 표시합니다. **Settings → Git Accounts**에서
+  하단에는 원격 저장소 주소와 커밋 작성자를 표시합니다. **Settings의 GitHub Account 영역**에서
   **Sign in with GitHub**로 OAuth 로그인하며, 토큰 로그인은 **Use a Personal Access Token**에 남겨둡니다.
+  빌드에 OAuth 앱 ID가 없으면 **OAuth App Setup**에서 Client ID를 입력합니다. GitHub OAuth 앱 설정의
+  **Enable Device Flow**를 켜야 하며, Client Secret은 필요 없습니다. ID는 기기에 저장되어 재빌드 없이 적용됩니다.
   확인된 GitHub 계정은 패널에 표시하며 **Sign Out**으로 이 기기의 인증 정보를 삭제합니다.
   토큰은 기기 Keychain에만 저장됩니다. 현재 Git 패널은 상태 조회용이며, 터미널에서
   실행하는 Git 명령은 해당 Mac 또는 SSH 서버에 설정된 인증을 사용합니다.
@@ -275,7 +283,9 @@ Mac에서는 `~/.ssh`의 Ed25519·RSA OpenSSH 개인키가 **On This Mac · ~/.s
 macOS 버전은 로컬 셸과 일반 개발 명령을 실행해야 하므로 App Sandbox를 사용하지
 않습니다. 신뢰할 수 있는 명령과 서버에만 연결하세요.
 
-- 로컬·원격 삭제 파일은 해당 작업 공간 루트의 `.crow/recovery/`로 이동합니다.
+- **Settings → Files → Delete moves files to**에서 복구 폴더(기본값) 또는 휴지통을 선택합니다.
+  복구 폴더는 해당 작업 공간 루트의 `.crow/recovery/`입니다. 휴지통은 파일이 있는 기기·저장소의 기능을 사용합니다.
+  원격 Mac은 Foundation, Linux 서버는 `gio` 또는 `trash-put`이 필요합니다. 지원하지 않으면 파일을 그대로 두고 오류를 표시합니다.
   기존 로컬 `.crow-trash`와 현재 원격 폴더의 `.crow-trash-…` 복구 항목도 다음 삭제 시 이 안으로 합쳐집니다.
 - 저장하지 않은 초안과 세션 정보는 로컬 JSON 파일에 권한 `0600`으로 저장되며
   별도 암호화되지는 않습니다.
@@ -356,6 +366,8 @@ Crow 전용 OAuth App을 등록하고 **Enable Device Flow**를 켠 뒤, 빌드 
 `CROW_GITHUB_CLIENT_ID`에 해당 앱의 공개 Client ID를 지정하세요. 두 플랫폼의 Info.plist가
 이 값을 `CrowGitHubClientID`로 읽습니다. Client Secret이나 별도 콜백 서버는 사용하지 않습니다.
 예: `xcodebuild … CROW_GITHUB_CLIENT_ID=등록한_Client_ID`.
+재빌드 없이 설정하려면 **Settings → GitHub Account → OAuth App Setup**에 Client ID를 입력합니다.
+기기에 입력한 ID가 빌드 기본값보다 우선하며, 지우면 빌드 기본값을 다시 사용합니다.
 
 현재 요청 범위는 계정 확인용 `read:user`입니다. 브라우저에 표시된 코드를 입력하고 승인하면
 계정을 확인한 뒤 기기 Keychain에 저장합니다. 토큰 자동 갱신은 아직 없으므로 OAuth App의

@@ -23,16 +23,8 @@ struct SSHCommandView: View {
                 Text("Uses your OpenSSH config, keys and agent. Password and server verification prompts appear in the terminal.")
                     .font(.caption).foregroundStyle(.secondary)
                 #else
-                Text("Saved hosts reuse their password or SSH key. For a new key connection, add an SSH host below.")
+                Text("Saved hosts reuse their credentials. For a new connection, choose a password or SSH key on the next screen.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button {
-                    var host = (try? SSHCommand(command).portableHost(defaultUsername: "").0)
-                        ?? SSHHost(name: "", hostname: "", username: "", remotePath: "~")
-                    host.authentication = .ed25519
-                    model.editHost(host)
-                } label: {
-                    Label("Add Host with SSH Key…", systemImage: "key.fill")
-                }
                 #endif
                 if let error { Text(error).foregroundStyle(CrowTheme.danger).font(.caption) }
             }
@@ -55,31 +47,5 @@ struct SSHCommandView: View {
             catch { self.error = error.localizedDescription }
             connecting = false
         }
-    }
-}
-
-struct SSHPasswordView: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    let host: SSHHost
-    @State private var password = ""
-    @State private var error: String?
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(host.userAtHost).font(.system(.body, design: .monospaced))
-                SecureField("Password", text: $password).onSubmit(connect)
-                if let error { Text(error).foregroundStyle(CrowTheme.danger) }
-            }.padding(20)
-            .navigationTitle("SSH Password")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Connect", action: connect) }
-            }
-        }
-    }
-    private func connect() {
-        do { try model.storeHost(host, credential: HostCredential(password: password)); dismiss(); model.connect(host) }
-        catch { self.error = error.localizedDescription }
     }
 }

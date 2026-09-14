@@ -68,6 +68,10 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     }
 }
 
+public enum FileDeletionDestination: String, Codable, CaseIterable, Sendable {
+    case recovery, trash
+}
+
 public struct EditorSettings: Codable, Equatable, Sendable {
     public var fontSize: Double = 16
     public var terminalFontSize: Double = 16
@@ -79,6 +83,8 @@ public struct EditorSettings: Codable, Equatable, Sendable {
     public var keyboardBarItems: [KeyboardBarKey]?
     public var textSnippets: [TextSnippet]?
     public var showHiddenFiles: Bool?
+    public var fileDeletionDestination: FileDeletionDestination?
+    public var effectiveFileDeletionDestination: FileDeletionDestination { fileDeletionDestination ?? .recovery }
     public var effectiveKeyboardBarItems: [KeyboardBarKey] { keyboardBarItems ?? KeyboardBarKey.defaults }
     public init() {}
 }

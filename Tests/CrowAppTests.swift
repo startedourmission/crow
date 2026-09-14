@@ -243,6 +243,25 @@ final class CrowAppTests: XCTestCase {
     }
 
     #if os(iOS)
+    @MainActor func testNewSSHCommandAllowsKeyAuthenticationBeforeConnecting() async throws {
+        for command in ["ssh fixture@127.0.0.1 -p 1", "ssh -i ~/.ssh/id_ed25519 fixture@127.0.0.1 -p 1"] {
+            let model = fixture()
+            model.sshCommandVisible = true
+            try await model.connectCommand(command)
+            var host = try XCTUnwrap(model.pendingCredentialRequest)
+            XCTAssertNil(model.credentialRequest, "Wait until the command sheet closes before presenting authentication")
+            XCTAssertTrue(model.hosts.isEmpty)
+            XCTAssertFalse(model.selectedWorkspace.isRemote)
+            if command.contains(" -i ") { XCTAssertEqual(host.authentication, .ed25519) }
+            host.authentication = .ed25519
+            defer { try? SecureStore.remove(host.id.rawValue.uuidString) }
+            try model.saveHostFromEditor(host, credential: HostCredential(privateKey: hostEditorKey), connectAfterSaving: true)
+            XCTAssertEqual(model.pendingHostConnection?.authentication, .ed25519)
+            XCTAssertEqual(try SecureStore.credential(host).privateKey, hostEditorKey)
+            XCTAssertEqual(model.connectionState(for: host), .disconnected, "Connect starts after authentication sheet dismissal")
+        }
+    }
+
     @MainActor func testSSHCommandReusesSavedKeyWithoutRequestingPassword() async throws {
         let model = fixture()
         var host = SSHHost(name: "Saved key", hostname: "127.0.0.1", port: 1, username: "fixture")

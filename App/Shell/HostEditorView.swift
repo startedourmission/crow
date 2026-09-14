@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct HostEditorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    private let authenticationOnly: Bool
     @State private var host: SSHHost
     @State private var credential = HostCredential()
     @State private var importKey = false
@@ -12,23 +13,28 @@ struct HostEditorView: View {
     @State private var keyFilename: String?
     @State private var loadedCredential = false
     @State private var error: String?
-    init(host: SSHHost?) {
+    init(host: SSHHost?, authenticationOnly: Bool = false) {
+        self.authenticationOnly = authenticationOnly
         _host = State(initialValue: host ?? SSHHost(name: "", hostname: "", username: "", remotePath: "~"))
     }
     var body: some View {
         NavigationStack {
             Form {
-                Section("Server") {
-                    hostField("Hostname / IP", text: $host.hostname, prompt: "192.168.1.10")
-                        .accessibilityIdentifier("crow.host.hostname")
-                    hostField("Username", text: $host.username, prompt: "ubuntu")
-                        .accessibilityIdentifier("crow.host.username")
-                    LabeledContent("Port") {
-                        TextField("Port", value: $host.port, format: .number.grouping(.never))
-                            .multilineTextAlignment(.trailing)
-                            #if os(iOS)
-                            .keyboardType(.numberPad)
-                            #endif
+                if authenticationOnly {
+                    Section { Text(host.userAtHost).font(.system(.body, design: .monospaced)) }
+                } else {
+                    Section("Server") {
+                        hostField("Hostname / IP", text: $host.hostname, prompt: "192.168.1.10")
+                            .accessibilityIdentifier("crow.host.hostname")
+                        hostField("Username", text: $host.username, prompt: "ubuntu")
+                            .accessibilityIdentifier("crow.host.username")
+                        LabeledContent("Port") {
+                            TextField("Port", value: $host.port, format: .number.grouping(.never))
+                                .multilineTextAlignment(.trailing)
+                                #if os(iOS)
+                                .keyboardType(.numberPad)
+                                #endif
+                        }
                     }
                 }
                 Section {
@@ -36,7 +42,7 @@ struct HostEditorView: View {
                         Text("Password").tag(SSHAuthenticationKind.password)
                         Text("SSH Key · Ed25519").tag(SSHAuthenticationKind.ed25519)
                         Text("SSH Key · RSA").tag(SSHAuthenticationKind.rsa)
-                    }
+                    }.accessibilityIdentifier("crow.host.authentication")
                     if host.authentication == .password {
                         SecureField("Password", text: $credential.password)
                     } else {
@@ -71,18 +77,20 @@ struct HostEditorView: View {
                     }
                     #endif
                 }
-                Section("Optional") {
-                    hostField("Display name", text: $host.name, prompt: "My server")
-                    hostField("Remote folder", text: $host.remotePath, prompt: "~")
+                if !authenticationOnly {
+                    Section("Optional") {
+                        hostField("Display name", text: $host.name, prompt: "My server")
+                        hostField("Remote folder", text: $host.remotePath, prompt: "~")
+                    }
+                    #if os(iOS)
+                    Section {
+                        Toggle("WSL default shell", isOn: $host.usesWSL)
+                            .accessibilityIdentifier("crow.host.wsl")
+                    } footer: {
+                        Text("Enable for a Windows SSH server configured to open WSL as its default shell. Terminals start in the selected remote project folder. When off, they start in Remote folder (~ means home). Reconnect after changing this setting.")
+                    }
+                    #endif
                 }
-                #if os(iOS)
-                Section {
-                    Toggle("WSL default shell", isOn: $host.usesWSL)
-                        .accessibilityIdentifier("crow.host.wsl")
-                } footer: {
-                    Text("Enable for a Windows SSH server configured to open WSL as its default shell. Terminals start in the selected remote project folder. When off, they start in Remote folder (~ means home). Reconnect after changing this setting.")
-                }
-                #endif
                 if let error {
                     Section {
                         Label(error, systemImage: "exclamationmark.circle")
@@ -100,25 +108,29 @@ struct HostEditorView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
                     Button { save(connect: true) } label: {
-                        Label("Save & Connect", systemImage: "network")
+                        Label(authenticationOnly ? "Connect" : "Save & Connect", systemImage: "network")
                             .frame(maxWidth: .infinity, minHeight: 36)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("crow.host.save-connect")
-                    Text("Save keeps this host in Hosts for later.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if !authenticationOnly {
+                        Text("Save keeps this host in Workspaces for later.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 .padding(16).background(CrowTheme.bg1)
             }
-            .navigationTitle(model.hosts.contains(where: { $0.id == host.id }) ? "Edit SSH Host" : "Add SSH Host")
+            .navigationTitle(authenticationOnly ? "SSH Authentication" : model.hosts.contains(where: { $0.id == host.id }) ? "Edit SSH Host" : "Add SSH Host")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save(connect: false) }
-                        .accessibilityIdentifier("crow.host.save")
+                if !authenticationOnly {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { save(connect: false) }
+                            .accessibilityIdentifier("crow.host.save")
+                    }
                 }
             }
         }
@@ -184,38 +196,57 @@ struct CrowSettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var showingKeys = false
-    @State private var showingSnippets = false
-    @State private var showingGit = false
     var body: some View {
         @Bindable var model = model
         NavigationStack {
             Form {
-                Button { showingKeys = true } label: { Label("SSH Keys", systemImage: "key") }
-                Button { showingGit = true } label: { Label("Git Accounts", systemImage: "point.3.connected.trianglepath.dotted") }
-                Button { showingSnippets = true } label: { Label("Snippets", systemImage: "text.badge.plus") }
+                Section("Editor") {
+                    Stepper("Font: \(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32)
+                    Stepper("Indent: \(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8)
+                    Toggle("Line numbers", isOn: $model.settings.lineNumbers)
+                }
+                Section("Terminal & Layout") {
+                    Stepper("Terminal font: \(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32)
+                    Toggle("Sidebar", isOn: $model.settings.sidebarVisible)
+                    Toggle("Terminal", isOn: $model.settings.terminalVisible)
+                }
+                Section {
+                    Toggle("Show hidden files", isOn: $model.showHiddenFiles)
+                    Picker("Delete moves files to", selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 })) {
+                        Text("Recovery Folder").tag(FileDeletionDestination.recovery)
+                        Text("Trash").tag(FileDeletionDestination.trash)
+                    }.accessibilityIdentifier("crow.settings.delete-destination")
+                } header: { Text("Files") } footer: {
+                    Text("Recovery Folder keeps deleted items in .crow/recovery inside the workspace. Trash uses the file’s computer or storage provider. If trash is unavailable, the file stays in place.")
+                }
+                Section("SSH") {
+                    Button { showingKeys = true } label: { Label("Manage SSH Keys…", systemImage: "key") }
+                }
                 #if os(macOS)
                 ReverseSSHPasswordSettings()
                 #endif
+                GitAccountSettings()
                 #if os(iOS)
-                NavigationLink("Keyboard Bar") { KeyboardBarSettingsView().environment(model) }
+                KeyboardBarSettingsContent()
                 #endif
-                Stepper("Editor font: \(Int(model.settings.fontSize)) pt", value: $model.settings.fontSize, in: 10...32)
-                Stepper("Terminal font: \(Int(model.settings.terminalFontSize)) pt", value: $model.settings.terminalFontSize, in: 10...32)
-                Stepper("Indent: \(model.settings.indentWidth) spaces", value: $model.settings.indentWidth, in: 1...8)
-                Toggle("Line numbers", isOn: $model.settings.lineNumbers)
-                Toggle("Sidebar", isOn: $model.settings.sidebarVisible)
-                Toggle("Terminal", isOn: $model.settings.terminalVisible)
             }
             .formStyle(.grouped)
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .sheet(isPresented: $showingGit) { GitSettingsView().environment(model) }
         .sheet(isPresented: $showingKeys) { SSHKeysView().environment(model) }
-        .sheet(isPresented: $showingSnippets) { SnippetsView().environment(model) }
         #if os(macOS)
-        .frame(minWidth: 320, idealWidth: 440, minHeight: 340)
+        .frame(minWidth: 700, idealWidth: 880, minHeight: 600, idealHeight: 740)
         #endif
+    }
+}
+
+extension View {
+    func crowSettingsInput() -> some View {
+        self.textFieldStyle(.plain)
+            .padding(9)
+            .background(CrowTheme.bg0, in: RoundedRectangle(cornerRadius: 6))
+            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(CrowTheme.textDim.opacity(0.35), lineWidth: 1) }
     }
 }
 
@@ -233,8 +264,10 @@ private struct ReverseSSHPasswordSettings: View {
                 .font(.callout)
             SecureField("New access password", text: $password)
                 .accessibilityIdentifier("crow.reverse-ssh.password")
+                .crowSettingsInput()
             SecureField("Confirm password", text: $confirmation)
                 .accessibilityIdentifier("crow.reverse-ssh.password-confirmation")
+                .crowSettingsInput()
             Button(access.hasPassword ? "Change Password" : "Set Password") {
                 do {
                     guard password == confirmation else { throw CommandError("The passwords do not match.") }

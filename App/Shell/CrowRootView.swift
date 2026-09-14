@@ -50,7 +50,9 @@ struct CrowRootView: View {
                let session = model.current.terminals[id] { session.view.window?.makeFirstResponder(session.view) }
             #endif
         }) { SSHCommandView().environment(model) }
-        .sheet(item: Bindable(model).credentialRequest) { host in SSHPasswordView(host: host).environment(model) }
+        .sheet(item: Bindable(model).credentialRequest, onDismiss: {
+            model.finishHostEditorDismissal()
+        }) { host in HostEditorView(host: host, authenticationOnly: true).environment(model) }
         .alert("Crow", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(model.errorMessage ?? "") }
@@ -85,10 +87,15 @@ struct CrowRootView: View {
             Button("Overwrite", role: .destructive) { Task { await model.saveBuffer(id, overwrite: true) } }
             Button("Cancel", role: .cancel) {}
         } message: { _ in Text("The original changed after you opened it. Overwrite only if you want to replace those changes with your edited text.") }
-        .alert("Move to recovery folder?", isPresented: Binding(get: { model.deleteRequest != nil }, set: { if !$0 { model.deleteRequest = nil } }), presenting: model.deleteRequest) { entry in
-            Button("Move", role: .destructive) { model.trash(entry) }
+        .alert("Delete this item?", isPresented: Binding(get: { model.deleteRequest != nil }, set: { if !$0 { model.deleteRequest = nil } }), presenting: model.deleteRequest) { entry in
+            Button("Delete", role: .destructive) { model.trash(entry, workspaceID: model.deleteWorkspaceID) }
+                .keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
-        } message: { entry in Text("\(entry.name) will be moved to .crow/recovery in this workspace. The recovery path will appear in the status bar.") }
+        } message: { entry in
+            Text(model.settings.effectiveFileDeletionDestination == .recovery
+                ? "\(entry.name) will be moved to .crow/recovery in this workspace. The recovery path will appear in the status bar."
+                : "\(entry.name) will be moved to the trash on the computer or storage provider where it is stored.")
+        }
         .alert("Verify SSH host key", isPresented: Binding(get: { model.hostKeyChallenge != nil }, set: { if !$0 { model.hostKeyChallenge = nil } }), presenting: model.hostKeyChallenge) { challenge in
             Button(challenge.changed ? "Replace Trusted Key" : "Trust and Connect", role: challenge.changed ? .destructive : nil) {
                 model.trustHostKey(challenge)
