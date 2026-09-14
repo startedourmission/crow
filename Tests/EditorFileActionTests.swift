@@ -33,6 +33,46 @@ import WebKit
     }
 
     #if os(macOS)
+    func testFolderPathSuggestionsSupportTildeSpacesAndFoldersOnly() throws {
+        for name in ["Project One", "Project Two", ".private"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        try Data().write(to: root.appendingPathComponent("Project.txt"))
+        XCTAssertEqual(try FolderPathCompletion.suggestions(for: "~/Pro", home: root.path), ["~/Project One/", "~/Project Two/"])
+        XCTAssertEqual(try FolderPathCompletion.suggestions(for: "~/.", home: root.path), ["~/.private/"])
+        XCTAssertFalse(try FolderPathCompletion.suggestions(for: root.path + "/").contains { $0.hasSuffix("Project.txt/") })
+    }
+
+    func testLocalFolderPickerIsVisibleAndCancelResetsPresentation() async throws {
+        model.folderImporterVisible = true
+        model.presentFolderPicker()
+        let panel = try XCTUnwrap(model.folderSelectionPanel)
+        defer { panel.cancel(nil) }
+        for _ in 0..<30 where !panel.isVisible { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(panel.canChooseDirectories); XCTAssertFalse(panel.canChooseFiles)
+        XCTAssertNotNil(panel.accessoryView)
+        model.presentFolderPicker()
+        XCTAssertTrue(model.folderSelectionPanel === panel, "Repeated clicks must focus the existing picker")
+        panel.cancel(nil)
+        for _ in 0..<30 where model.folderSelectionPanel != nil { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertNil(model.folderSelectionPanel); XCTAssertFalse(model.folderImporterVisible)
+    }
+
+    func testBaseInventoryPublishesBeforeCompletionAndHonorsCancellation() async throws {
+        for index in 0..<50 { try Data("---\nstatus: reading\n---".utf8).write(to: root.appendingPathComponent("Note-\(index).md")) }
+        let state = model.current
+        var counts: [Int] = []
+        let (files, _) = try await ObsidianFiles.inventory(in: state) { files, _ in counts.append(files.count) }
+        XCTAssertEqual(counts.first, 0)
+        XCTAssertTrue(counts.contains(1), "The first result must be published before scanning the whole workspace")
+        XCTAssertGreaterThan(files.count, 49)
+        let task = Task { _ = try await ObsidianFiles.inventory(in: state) { _, _ in try? await Task.sleep(for: .seconds(10)) } }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Cancelled scans must stop, not swallow cancellation as a file error") }
+        catch is CancellationError {}
+    }
+
     func testObsidianWebViewsRenderCanvasAndBaseFromBundledResources() async throws {
         let node: [String: Any] = ["id": "note", "type": "text", "x": -100, "y": -50, "width": 250, "height": 150, "text": "# Canvas title"]
         let canvas = String(decoding: try JSONSerialization.data(withJSONObject: ["nodes": [node], "edges": []]), as: UTF8.self)

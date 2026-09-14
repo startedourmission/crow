@@ -33,9 +33,7 @@ struct CrowRootView: View {
         .environment(\.keyboardBarItems, model.settings.effectiveKeyboardBarItems)
         #endif
         .tint(CrowTheme.accent)
-        .fileImporter(isPresented: Bindable(model).folderImporterVisible, allowedContentTypes: [.folder]) { result in
-            do { model.openFolder(try result.get()) } catch { model.report(error) }
-        }
+        .modifier(FolderPickerPresentation())
         .sheet(isPresented: Bindable(model).hostEditorVisible, onDismiss: {
             model.finishHostEditorDismissal()
         }) { HostEditorView(host: model.editingHost).environment(model) }
@@ -698,6 +696,97 @@ final class ResizeHandleView: NSView {
         dragOrigin = nil; onEnd()
         NSCursor.arrow.set()
         window?.invalidateCursorRects(for: self)
+    }
+}
+#endif
+
+private struct FolderPickerPresentation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.onChange(of: model.folderImporterVisible) { _, visible in
+            if visible { model.presentFolderPicker() }
+        }
+        #else
+        content.fileImporter(isPresented: Bindable(model).folderImporterVisible, allowedContentTypes: [.folder]) { result in
+            do { model.openFolder(try result.get()) } catch { model.report(error) }
+        }
+        #endif
+    }
+}
+
+#if os(macOS)
+@MainActor @Observable final class FolderPathCompletion {
+    var path: String
+    var matches: [String] = []
+    var error: String?
+    @ObservationIgnored private weak var panel: NSOpenPanel?
+    @ObservationIgnored private var observation: NSKeyValueObservation?
+    init(panel: NSOpenPanel, initialDirectory: String?) {
+        self.panel = panel
+        path = (initialDirectory?.isEmpty == false ? initialDirectory! : FileManager.default.homeDirectoryForCurrentUser.path) + "/"
+        panel.directoryURL = URL(fileURLWithPath: path)
+        observation = panel.observe(\.directoryURL) { [weak self] panel, _ in
+            let value = panel.directoryURL?.path
+            Task { @MainActor in if let value { self?.path = value + (value == "/" ? "" : "/") } }
+        }
+    }
+    nonisolated static func suggestions(for input: String, home: String = FileManager.default.homeDirectoryForCurrentUser.path) throws -> [String] {
+        let expanded = input == "~" ? home : input.hasPrefix("~/") ? home + input.dropFirst() : input
+        guard expanded.hasPrefix("/") else { return [] }
+        let directory = input.hasSuffix("/") || input == "~" ? expanded : (expanded as NSString).deletingLastPathComponent
+        let prefix = input.hasSuffix("/") || input == "~" ? "" : (expanded as NSString).lastPathComponent
+        return try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: [.isDirectoryKey]).filter {
+            $0.lastPathComponent.localizedStandardContains(prefix) && $0.lastPathComponent.lowercased().hasPrefix(prefix.lowercased())
+                && (prefix.hasPrefix(".") || !$0.lastPathComponent.hasPrefix("."))
+                && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }.prefix(4).map {
+            let result = (directory as NSString).appendingPathComponent($0.lastPathComponent) + "/"
+            return input.hasPrefix("~") && result.hasPrefix(home + "/") ? "~" + result.dropFirst(home.count) : result
+        }
+    }
+    func refresh() async {
+        let value = path
+        do {
+            try await Task.sleep(for: .milliseconds(120))
+            let results = try await Task.detached(priority: .userInitiated) { try Self.suggestions(for: value) }.value
+            guard !Task.isCancelled, path == value else { return }
+            matches = results; error = nil
+        } catch is CancellationError {} catch { if !Task.isCancelled { matches = []; self.error = "This folder cannot be read." } }
+    }
+    func choose(_ value: String) {
+        path = value
+        let expanded = (value as NSString).expandingTildeInPath
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &directory), directory.boolValue else { error = "Enter an existing folder path."; return }
+        panel?.directoryURL = URL(fileURLWithPath: expanded); error = nil
+    }
+}
+
+struct FolderPathAccessory: View {
+    @Bindable var completion: FolderPathCompletion
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Path").font(.system(size: 12))
+                TextField("/path/to/folder or ~/", text: $completion.path).textFieldStyle(.roundedBorder)
+                    .onSubmit { completion.choose(completion.path) }
+                    .onKeyPress(.tab) {
+                        guard let first = completion.matches.first else { return .ignored }
+                        completion.choose(first); return .handled
+                    }.accessibilityIdentifier("crow.folder.path")
+                Button("Go") { completion.choose(completion.path) }
+            }
+            ForEach(completion.matches, id: \.self) { path in
+                Button { completion.choose(path) } label: {
+                    Label(path, systemImage: "folder").font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(.leading, 36)
+            }
+            if let error = completion.error { Text(error).font(.caption).foregroundStyle(.secondary) }
+            Spacer(minLength: 0)
+        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .task(id: completion.path) { await completion.refresh() }
     }
 }
 #endif

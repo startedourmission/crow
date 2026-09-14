@@ -17,7 +17,6 @@ struct AgentWorkspaceBrowser: View {
     @State private var renaming: AgentTerminalRoute?
     @State private var name = ""
     @State private var closing: UUID?
-    @State private var pickingLocalFolder = false
     @State private var folderSource: WorkspaceID?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
@@ -70,12 +69,6 @@ struct AgentWorkspaceBrowser: View {
             }
         }.background(CrowTheme.bg1).foregroundStyle(CrowTheme.text)
             .accessibilityIdentifier("crow.agents.browser")
-            .fileImporter(isPresented: $pickingLocalFolder, allowedContentTypes: [.folder]) { result in
-                switch result {
-                case .success(let url): model.openFolder(url); onOpen?()
-                case .failure(let error): model.report(error)
-                }
-            }
             .sheet(isPresented: Binding(get: { folderSource != nil }, set: { if !$0 { folderSource = nil } })) {
                 if let id = folderSource, let state = model.states.first(where: { $0.id == id }) {
                     RemoteProjectFolderPicker(workspaceID: id, initialPath: state.snapshot.rootPath)
@@ -107,7 +100,7 @@ struct AgentWorkspaceBrowser: View {
 
     private var addWorkspaceMenu: some View {
         Menu {
-            Button("Open Local Folder…", systemImage: "folder.badge.plus") { pickingLocalFolder = true }
+            Button("Open Local Folder…", systemImage: "folder.badge.plus") { model.folderImporterVisible = true }
             ForEach(model.hosts) { host in
                 if let source = model.states.first(where: { $0.snapshot.workspace.hostID == host.id && $0.remote?.isConnected == true }) {
                     Button("Open Folder on \(host.name)…", systemImage: "network") { folderSource = source.id }
@@ -171,7 +164,7 @@ struct AgentWorkspaceBrowser: View {
                         Button("Edit Host…") { model.editHost(host) }
                         Button("Remove Host…", role: .destructive) { removeHost = host }
                     } else if id == nil {
-                        Button("Open Local Folder…") { pickingLocalFolder = true }
+                        Button("Open Local Folder…") { model.folderImporterVisible = true }
                     } else {
                         Button("Add SSH Host…") { model.sshCommandVisible = true }
                     }

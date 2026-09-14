@@ -82,6 +82,29 @@ final class AppModel {
     var deleteWorkspaceID: WorkspaceID?
     var hostKeyChallenge: HostKeyChallenge?
     var folderImporterVisible = false
+    #if os(macOS)
+    @ObservationIgnored private(set) var folderSelectionPanel: NSOpenPanel?
+    func presentFolderPicker() {
+        if let panel = folderSelectionPanel { panel.makeKeyAndOrderFront(nil); return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = true
+        panel.prompt = "Open"; panel.title = "Open Local Folder"
+        let pathModel = FolderPathCompletion(panel: panel, initialDirectory: current.snapshot.workspace.isRemote ? nil : current.snapshot.rootPath)
+        let accessory = NSHostingView(rootView: FolderPathAccessory(completion: pathModel))
+        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 164)
+        panel.accessoryView = accessory; panel.isAccessoryViewDisclosed = true
+        folderSelectionPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self, weak panel] response in
+            guard let self else { return }
+            let url = panel?.url
+            self.folderSelectionPanel = nil; self.folderImporterVisible = false
+            if response == .OK, let url { self.openFolder(url) }
+        }
+        panel.makeKeyAndOrderFront(nil)
+    }
+    #endif
     var hostEditorVisible = false
     var editingHost: SSHHost?
     var pendingHostEditor = false

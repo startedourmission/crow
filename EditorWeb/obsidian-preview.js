@@ -66,7 +66,7 @@ function baseView() {
   if(result.view.summaries || result.doc.summaries)main.append(el('p','Summary calculations are not supported in this preview.','warning'));
   const title=c=>result.doc.properties?.[c]?.displayName??c.replace(/^note\./,'');
   const body=el('div',null,'base-body');main.append(body);
-  if(!result.rows.length){body.append(el('p','No files match this view.','empty'));return;}
+  if(!result.rows.length){body.append(el('p',data.loading?'Reading workspace files…':'No files match this view.','empty'));return;}
   let group=Symbol(),holder,tableBody;
   for(const row of result.rows) {
     const key=JSON.stringify(row.group);
@@ -79,7 +79,7 @@ function baseView() {
   }
 }
 function render(){generation++;assets.clear();main.replaceChildren();try{data.kind==='canvas'?canvasView():baseView();}catch(e){main.append(el('p',e.message,'error'));}}
-window.crowObsidian={receive(value){data=value;viewIndex=0;render();},asset(id,value){const item=assets.get(id);if(!item)return;const {target,background,style}=item;
+window.crowObsidian={validateBase(value){try{base(value.source,[],value.path,0);return true;}catch(e){main.replaceChildren(el('p',e.message,'error'));return false;}},receive(value){if(data?.source!==value.source||data?.path!==value.path)viewIndex=0;data=value;render();},asset(id,value){const item=assets.get(id);if(!item)return;const {target,background,style}=item;
   if(value.image){if(background){target.style.backgroundImage=`url("${value.image}")`;target.style.backgroundSize=style==='repeat'?'auto':style==='ratio'?'contain':'cover';target.style.backgroundRepeat=style==='repeat'?'repeat':'no-repeat';}else{target.replaceChildren();const img=el('img');img.src=value.image;target.append(img);}}
   else if(!background){target.replaceChildren();if(value.html){const div=el('div',null,'markdown');div.innerHTML=value.html;target.append(div);}else target.textContent=value.error??'Open this file to view it.';}
 }};

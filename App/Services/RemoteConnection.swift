@@ -246,23 +246,28 @@ final class RemoteConnection {
     }
 
     func list(_ path: String) async throws -> [FileEntry] {
+        try await listing(path).map(\.entry)
+    }
+    func listing(_ path: String) async throws -> [RemoteFileListing] {
         #if os(macOS)
-        if let system { return try await system.list(path) }
+        if let system { return try await system.listing(path) }
         #endif
         let messages: [SFTPMessage.Name]
         do { messages = try await files().listDirectory(atPath: path) }
         catch { throw folderError(error, path: path) }
-        var entries: [FileEntry] = []
+        var entries: [RemoteFileListing] = []
         for message in messages {
             for component in message.components where component.filename != "." && component.filename != ".." {
                 let directory = ((component.attributes.permissions ?? 0) & 0o170000) == 0o040000
-                entries.append(FileEntry(name: component.filename,
-                    path: (path as NSString).appendingPathComponent(component.filename), isDirectory: directory))
+                entries.append(RemoteFileListing(entry: FileEntry(name: component.filename,
+                    path: (path as NSString).appendingPathComponent(component.filename), isDirectory: directory),
+                    size: component.attributes.size, modified: component.attributes.accessModificationTime?.modificationTime,
+                    permissions: component.attributes.permissions))
             }
         }
         return entries.sorted { left, right in
-            if left.isDirectory != right.isDirectory { return left.isDirectory }
-            return left.name.localizedStandardCompare(right.name) == .orderedAscending
+            if left.entry.isDirectory != right.entry.isDirectory { return left.entry.isDirectory }
+            return left.entry.name.localizedStandardCompare(right.entry.name) == .orderedAscending
         }
     }
 
@@ -433,4 +438,12 @@ final class RemoteConnection {
         try await rename(entry.path, to: target)
         return target
     }
+}
+
+struct RemoteFileListing: Sendable {
+    var entry: FileEntry
+    var size: UInt64?
+    var modified: Date?
+    var permissions: UInt32?
+    var created: Date? = nil
 }

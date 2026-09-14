@@ -84,10 +84,13 @@ final class SystemSFTP: @unchecked Sendable {
         try await run { try $0.resolvePath(path) }
     }
     func list(_ path: String) async throws -> [FileEntry] {
+        try await listing(path).map(\.entry)
+    }
+    func listing(_ path: String) async throws -> [RemoteFileListing] {
         try await run { wire in
             var opened = try wire.request(11, .string(path), expecting: 102)
             let handle = try opened.bytes(); defer { try? wire.close(handle) }
-            var entries: [FileEntry] = []
+            var entries: [RemoteFileListing] = []
             while true {
                 var response = try wire.request(12, .bytes(handle), expecting: 104, allowEOF: true)
                 if response.eof { break }
@@ -97,13 +100,14 @@ final class SystemSFTP: @unchecked Sendable {
                     let name = try response.string(); _ = try response.string()
                     let attrs = try response.attributes()
                     if name == "." || name == ".." || name.contains("/") || name.contains("\0") { continue }
-                    entries.append(FileEntry(name: name, path: (path as NSString).appendingPathComponent(name),
-                        isDirectory: (attrs.permissions ?? 0) & 0o170000 == 0o040000))
+                    entries.append(RemoteFileListing(entry: FileEntry(name: name, path: (path as NSString).appendingPathComponent(name),
+                        isDirectory: (attrs.permissions ?? 0) & 0o170000 == 0o040000),
+                        size: attrs.size, modified: attrs.modified.map { Date(timeIntervalSince1970: Double($0)) }, permissions: attrs.permissions))
                 }
             }
             return entries.sorted {
-                if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
-                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                if $0.entry.isDirectory != $1.entry.isDirectory { return $0.entry.isDirectory }
+                return $0.entry.name.localizedStandardCompare($1.entry.name) == .orderedAscending
             }
         }
     }

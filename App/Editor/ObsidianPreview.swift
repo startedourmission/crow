@@ -2,6 +2,12 @@ import CrowCore
 import SwiftUI
 import WebKit
 
+@MainActor @Observable final class ObsidianPreviewStatus {
+    var message: String?
+    var loading = false
+    @ObservationIgnored var cancel: (() -> Void)?
+}
+
 struct ObsidianDocumentView: View {
     @Environment(AppModel.self) private var model
     let buffer: OpenBuffer
@@ -9,6 +15,7 @@ struct ObsidianDocumentView: View {
     @State private var source = false
     @State private var refresh = 0
     @State private var find = 0
+    @State private var status = ObsidianPreviewStatus()
     private var kind: String { (buffer.path as NSString).pathExtension.lowercased() }
     private var text: Binding<String> {
         Binding(get: { model.locate(buffer.id).map { $0.0.snapshot.buffers[$0.1].text } ?? buffer.text },
@@ -31,7 +38,14 @@ struct ObsidianDocumentView: View {
                     lineNumbers: model.settings.lineNumbers, findRequest: find,
                     onSave: { Task { await model.saveBuffer(buffer.id) } }, focused: isActive)
             } else {
-                ObsidianWebView(model: model, bufferID: buffer.id, source: text.wrappedValue, kind: kind, refresh: refresh)
+                if let message = status.message {
+                    HStack(spacing: 8) {
+                        if status.loading { ProgressView().controlSize(.small) }
+                        Text(message).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+                        if status.loading { Button("Stop") { status.cancel?() } }
+                    }.foregroundStyle(CrowTheme.textDim).padding(10)
+                }
+                ObsidianWebView(model: model, bufferID: buffer.id, source: text.wrappedValue, kind: kind, refresh: refresh, status: status)
             }
         }
         .task(id: buffer.path) { await model.observeBuffer(buffer.id) }
@@ -89,58 +103,81 @@ struct ObsidianDocumentView: View {
         let html = try await Task.detached(priority: .utility) { MarkdownPreview.body(try TextFiles.decode(data)) }.value
         return ["html": html]
     }
-    static func inventory(in state: WorkspaceState) async throws -> ([[String: Any]], String?) {
-        let root = state.snapshot.workspace.isRemote ? state.snapshot.rootPath : URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
-        var queue = [root], files: [[String: Any]] = [], warnings = Set<String>(), total = 0
-        var visited = 0
+    static func inventory(in state: WorkspaceState,
+        progress: @MainActor ([[String: Any]], Int) async -> Void = { _, _ in }) async throws -> ([[String: Any]], String?) {
+        let remote = state.snapshot.workspace.isRemote
+        if remote && state.remote == nil { throw FileFailure.disconnected }
+        let root = state.snapshot.rootPath
+        var queue = [root], files: [[String: Any]] = [], warnings = Set<String>(), total = 0, visited = 0
+        var lastReport = Date.distantPast
+        await progress([], 0)
         while let folder = queue.popLast() {
             try Task.checkCancellation()
             visited += 1
             if visited > 3000 || files.count >= 2000 { warnings.insert("Preview limited to 2,000 files / 3,000 folders."); break }
-            let entries: [FileEntry]
+            if Date().timeIntervalSince(lastReport) > 0.5 { lastReport = Date(); await progress(files, visited) }
+            let entries: [RemoteFileListing]
             do {
-                if state.snapshot.workspace.isRemote {
-                    guard let remote = state.remote else { throw FileFailure.disconnected }
-                    entries = try await remote.list(folder)
+                if remote {
+                    guard let connection = state.remote else { throw FileFailure.disconnected }
+                    entries = try await connection.listing(folder)
+                    guard state.remote === connection else { throw FileFailure.disconnected }
                 } else {
                     entries = try await Task.detached(priority: .utility) {
-                        try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]).compactMap { url in
-                            let attrs = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                            guard attrs.isSymbolicLink != true else { return nil }
-                            return FileEntry(name: url.lastPathComponent, path: (folder as NSString).appendingPathComponent(url.lastPathComponent), isDirectory: attrs.isDirectory == true)
+                        try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey]).compactMap { url in
+                            let attrs = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey])
+                            guard attrs.isSymbolicLink != true, attrs.isDirectory == true || attrs.isRegularFile == true else { return nil }
+                            return RemoteFileListing(entry: FileEntry(name: url.lastPathComponent,
+                                path: (folder as NSString).appendingPathComponent(url.lastPathComponent), isDirectory: attrs.isDirectory == true),
+                                size: attrs.fileSize.map(UInt64.init), modified: attrs.contentModificationDate, permissions: attrs.isDirectory == true ? 0o040000 : 0o100000, created: attrs.creationDate)
                         }
                     }.value
                 }
-            } catch { warnings.insert("Some folders could not be read."); continue }
-            for entry in entries.sorted(by: { $0.path < $1.path }) where !entry.isHidden && entry.name != "node_modules" {
+            } catch is CancellationError { throw CancellationError() }
+            catch { try Task.checkCancellation(); warnings.insert("Some folders could not be read."); continue }
+            for details in entries.sorted(by: { $0.entry.path < $1.entry.path }) {
+                try Task.checkCancellation()
+                let entry = details.entry, type = (details.permissions ?? 0) & 0o170000
+                guard !entry.isHidden, entry.name != "node_modules", type == 0o040000 || type == 0o100000 else { continue }
                 if entry.isDirectory { queue.append(entry.path); continue }
                 if files.count >= 2000 { warnings.insert("Preview limited to 2,000 files."); break }
                 let relative = String(entry.path.dropFirst(root == "/" ? 1 : root.count + 1))
                 var item: [String: Any] = ["path": relative]
+                if let size = details.size { item["size"] = size }
+                if let date = details.modified { item["modified"] = date.timeIntervalSince1970 }
+                if let date = details.created { item["created"] = date.timeIntervalSince1970 }
                 do {
-                    let path = try await resolve(relative, in: state)
-                    if state.snapshot.workspace.isRemote {
-                        if let revision = try await state.remote?.revision(path) {
-                            if let size = revision.size { item["size"] = size }
-                            if let modified = revision.modified { item["modified"] = modified.timeIntervalSince1970 }
+                    if ["md", "markdown"].contains((entry.path as NSString).pathExtension.lowercased()) {
+                        if total >= 20 * 1024 * 1024 || (details.size ?? 0) > 512 * 1024 { throw FileFailure.tooLarge }
+                        let data: Data
+                        if remote {
+                            let path = try await resolve(relative, in: state)
+                            data = try await bytes(path, in: state, limit: 512 * 1024)
+                        } else {
+                            data = try await Task.detached(priority: .utility) {
+                                let rootURL = URL(fileURLWithPath: root).resolvingSymlinksInPath()
+                                let url = URL(fileURLWithPath: entry.path).resolvingSymlinksInPath()
+                                guard url.path.hasPrefix(rootURL.path == "/" ? "/" : rootURL.path + "/"),
+                                      try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { throw FileFailure.unsupportedText }
+                                let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+                                let data = try handle.read(upToCount: 512 * 1024 + 1) ?? Data()
+                                guard data.count <= 512 * 1024 else { throw FileFailure.tooLarge }
+                                return data
+                            }.value
                         }
-                    } else {
-                        let attrs = try FileManager.default.attributesOfItem(atPath: path)
-                        item["size"] = attrs[.size]
-                        item["modified"] = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970
-                        item["created"] = (attrs[.creationDate] as? Date)?.timeIntervalSince1970
-                    }
-                    if ["md", "markdown"].contains((path as NSString).pathExtension.lowercased()) {
-                        if total >= 20 * 1024 * 1024 { throw FileFailure.tooLarge }
-                        let bytes = try await bytes(path, in: state, limit: 512 * 1024)
-                        total += bytes.count; item["text"] = try TextFiles.decode(bytes)
+                        try Task.checkCancellation()
+                        total += data.count; item["text"] = try TextFiles.decode(data)
                     }
                     files.append(item)
-                } catch { warnings.insert("Unreadable or oversized notes were omitted (512 KB per note, 20 MB total).") }
+                } catch is CancellationError { throw CancellationError() }
+                catch { try Task.checkCancellation(); warnings.insert("Unreadable or oversized notes were omitted (512 KB per note, 20 MB total).") }
+                if files.count == 1 || Date().timeIntervalSince(lastReport) > 0.5 { lastReport = Date(); await progress(files, visited) }
             }
         }
+        try Task.checkCancellation()
         return (files, warnings.isEmpty ? nil : warnings.sorted().joined(separator: " "))
     }
+
 }
 
 @MainActor private struct ObsidianWebView {
@@ -149,7 +186,8 @@ struct ObsidianDocumentView: View {
     let source: String
     let kind: String
     let refresh: Int
-    func makeCoordinator() -> Coordinator { Coordinator(model: model, bufferID: bufferID) }
+    let status: ObsidianPreviewStatus
+    func makeCoordinator() -> Coordinator { Coordinator(model: model, bufferID: bufferID, status: status) }
     func makeView(_ coordinator: Coordinator) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
@@ -160,6 +198,7 @@ struct ObsidianDocumentView: View {
         let style = Bundle.main.url(forResource: "obsidian-preview", withExtension: "css").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = coordinator
+        coordinator.begin()
         view.loadHTMLString("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:;\"><style>\(style)</style></head><body><main>Loading preview…</main></body></html>", baseURL: nil)
         update(view, coordinator: coordinator)
         return view
@@ -172,23 +211,46 @@ struct ObsidianDocumentView: View {
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let model: AppModel
         let bufferID: BufferID
+        let status: ObsidianPreviewStatus
         var source = "", kind = "", refresh = -1, ready = false
         var task: Task<Void, Never>?
+        var watchdog: Task<Void, Never>?
         var assets: [String: Task<Void, Never>] = [:]
         var assetTail: Task<Void, Never>?
         var assetBytes = 0
-        init(model: AppModel, bufferID: BufferID) { self.model = model; self.bufferID = bufferID }
+        init(model: AppModel, bufferID: BufferID, status: ObsidianPreviewStatus) { self.model = model; self.bufferID = bufferID; self.status = status }
+        func begin() {
+            watchdog?.cancel()
+            watchdog = Task { [weak self] in
+                guard let self, !Task.isCancelled else { return }
+                status.loading = true; status.message = "Preparing preview…"
+                status.cancel = { [weak self] in self?.finishEarly("Stopped. Showing files already loaded. Refresh to try again, or open Source.") }
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                finishEarly("Preview stopped after 30 seconds. Showing files already loaded. Open a smaller workspace or use Source.")
+            }
+        }
+        func finishEarly(_ message: String) {
+            task?.cancel(); watchdog?.cancel(); status.loading = false; status.message = message; status.cancel = nil
+        }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; render(webView) }
         func render(_ view: WKWebView) {
             guard ready, let (state, index) = model.locate(bufferID) else { return }
             task?.cancel(); assets.values.forEach { $0.cancel() }; assets.removeAll(); assetTail = nil; assetBytes = 0
+            begin()
             let value = source, format = kind, path = state.snapshot.buffers[index].path
             task = Task { [weak self, weak view] in
                 guard let self, let view else { return }
                 var payload: [String: Any] = ["source": value, "kind": format, "path": String(path.dropFirst(state.snapshot.rootPath == "/" ? 1 : state.snapshot.rootPath.count + 1))]
                 do {
                     if format == "base" {
-                        let (files, warning) = try await ObsidianFiles.inventory(in: state)
+                        let valid = try await view.callAsyncJavaScript("return window.crowObsidian.validateBase(payload)", arguments: ["payload": payload], in: nil, contentWorld: .defaultClient) as? Bool
+                        guard valid == true else { finishEarly("This Base could not be rendered. See the error below or open Source."); return }
+                        let (files, warning) = try await ObsidianFiles.inventory(in: state) { files, folders in
+                            guard !Task.isCancelled else { return }
+                            self.status.message = "Reading workspace: \(files.count) files · \(folders) folders"
+                            var partial = payload; partial["files"] = files; partial["loading"] = true
+                            _ = try? await view.callAsyncJavaScript("window.crowObsidian.receive(payload)", arguments: ["payload": partial], in: nil, contentWorld: .defaultClient)
+                        }
                         payload["files"] = files; payload["warning"] = warning
                     } else {
                         let html = await Task.detached(priority: .utility) {
@@ -202,7 +264,11 @@ struct ObsidianDocumentView: View {
                     }
                     try Task.checkCancellation()
                     _ = try await view.callAsyncJavaScript("window.crowObsidian.receive(payload)", arguments: ["payload": payload], in: nil, contentWorld: .defaultClient)
+                    try Task.checkCancellation()
+                    watchdog?.cancel(); status.loading = false; status.message = nil; status.cancel = nil
                 } catch is CancellationError {} catch {
+                    guard !Task.isCancelled else { return }
+                    watchdog?.cancel(); status.loading = false; status.message = error.localizedDescription; status.cancel = nil
                     _ = try? await view.callAsyncJavaScript("document.querySelector('main').textContent = message", arguments: ["message": error.localizedDescription], in: nil, contentWorld: .defaultClient)
                 }
             }
@@ -250,7 +316,9 @@ struct ObsidianDocumentView: View {
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             decisionHandler(action.navigationType != .linkActivated && action.request.url?.scheme == "about" ? .allow : .cancel)
         }
-        func stop() { task?.cancel(); assets.values.forEach { $0.cancel() }; assets.removeAll(); assetTail = nil; assetBytes = 0 }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finishEarly(error.localizedDescription) }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { finishEarly("Preview stopped. Refresh to try again or open Source.") }
+        func stop() { task?.cancel(); watchdog?.cancel(); status.cancel = nil; assets.values.forEach { $0.cancel() }; assets.removeAll(); assetTail = nil; assetBytes = 0 }
     }
 }
 #if os(macOS)
