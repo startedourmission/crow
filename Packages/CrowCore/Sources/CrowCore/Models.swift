@@ -286,9 +286,17 @@ public struct IMEProbe: Equatable, Sendable {
 
 public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
     case files
-    case hosts
-    case agents
-    case tmux
+    case workspaces
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        switch value {
+        case "files": self = .files
+        case "workspaces", "hosts", "agents", "tmux": self = .workspaces
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown sidebar pane")
+        }
+    }
 }
 
 public enum CompactSurface: String, Hashable, Codable, Sendable, CaseIterable {

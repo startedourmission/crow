@@ -7,9 +7,7 @@ struct ActivityBar: View {
     var body: some View {
         VStack(spacing: 4) {
             paneButton(.files, symbol: "doc.text")
-            paneButton(.hosts, symbol: "network")
-            paneButton(.agents, symbol: "sparkles")
-            paneButton(.tmux, symbol: "rectangle.split.2x2")
+            paneButton(.workspaces, symbol: "square.stack.3d.up")
             Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 18)).crowForeground(CrowTheme.textDim)
@@ -68,8 +66,8 @@ struct ActivityBar: View {
         }
         .buttonStyle(CrowButtonStyle())
         .windowDragExcluded()
-        .help(pane == .files ? "Files" : pane == .hosts ? "Hosts" : pane == .agents ? "Agents" : "tmux")
-        .accessibilityLabel(pane == .files ? "Files" : pane == .hosts ? "Hosts" : pane == .agents ? "Agents" : "tmux")
+        .help(pane == .files ? "Files" : "Workspaces")
+        .accessibilityLabel(pane == .files ? "Files" : "Workspaces")
         .accessibilityIdentifier("crow.activity." + pane.rawValue)
     }
 }

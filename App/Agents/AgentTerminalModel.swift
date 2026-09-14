@@ -31,8 +31,8 @@ extension AppModel {
     }
 
     func showWorkspaces() {
-        compactSurface = .files
-        sidebarPane = .agents; sidebarVisible = true
+        compactSurface = .hosts
+        sidebarPane = .workspaces; sidebarVisible = true
     }
 
     func activateWorkspace(_ id: WorkspaceID, reconnect: Bool = true) {

@@ -112,6 +112,25 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(imported.count, 1, "The same live terminal must only be imported once")
     }
 
+    @MainActor func testUnifiedTmuxRoutingNeverFallsBackToAnotherHost() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-host-routing-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let local = model.current
+        let host = SSHHost(name: "Offline", hostname: "192.0.2.8", username: "fixture")
+        model.hosts = [host]
+        let remote = WorkspaceState(.init(workspace: Workspace(name: "Remote", kind: .remote(hostID: host.id, path: "/tmp"), connection: .disconnected), rootPath: "/tmp"))
+        model.states.append(remote)
+        XCTAssertTrue(model.tmuxWorkspace(on: nil) === local)
+        XCTAssertNil(model.tmuxWorkspace(on: host.id), "A disconnected host must never use the local command runner")
+        model.activateWorkspace(remote.id, reconnect: false)
+        XCTAssertTrue(model.tmuxWorkspace(on: nil) === local, "Local tmux remains local while viewing an SSH workspace")
+        XCTAssertNil(model.tmuxWorkspace(on: host.id))
+        model.showWorkspaces()
+        XCTAssertEqual(model.sidebarPane, .workspaces)
+        XCTAssertEqual(model.compactSurface, .hosts)
+    }
+
     @MainActor func testTmuxReusesOnlyLiveTerminalsInTheCurrentWorkspace() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-routing-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
@@ -151,11 +170,11 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         model.newTerminal()
         let terminalID = try XCTUnwrap(second.snapshot.selectedTerminalID)
         let terminal = model.terminal(terminalID, in: second)
-        model.sidebarPane = .agents
+        model.sidebarPane = .workspaces
         model.activateWorkspace(first.id)
         XCTAssertEqual(model.selectedBufferID, bufferID)
         XCTAssertEqual(model.selectedBuffer?.text, "unsaved workspace text")
-        XCTAssertEqual(model.sidebarPane, .agents)
+        XCTAssertEqual(model.sidebarPane, .workspaces)
         model.activateWorkspace(second.id)
         XCTAssertEqual(model.current.snapshot.selectedTerminalID, terminalID)
         XCTAssertTrue(model.terminal(terminalID, in: model.current) === terminal)

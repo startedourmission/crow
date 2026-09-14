@@ -54,7 +54,6 @@ struct SidebarView: View {
     @State private var entryName = ""
     @State private var renameEntry: FileEntry?
     @State private var createDirectory = false
-    @State private var removeHost: SSHHost?
     @State private var creationPath: String?
     @State private var dropFolder: String?
     @FocusState private var searchFocused: Bool
@@ -63,16 +62,12 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.sidebarPane == .files || model.sidebarPane == .hosts { sidebarHeader }
+            if model.sidebarPane == .files { sidebarHeader }
             #if !os(macOS)
             CrowDivider()
             #endif
-            if model.sidebarPane == .agents {
+            if model.sidebarPane == .workspaces {
                 AgentWorkspaceBrowser()
-            } else if model.sidebarPane == .tmux {
-                TmuxPanel().id(model.selectedWorkspaceID)
-            } else if model.sidebarPane == .hosts {
-                hostsList
             } else if model.hasWorkspace {
                 filesList
             } else {
@@ -108,66 +103,21 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .alert("Remove SSH host?", isPresented: Binding(get: { removeHost != nil }, set: { if !$0 { removeHost = nil } }), presenting: removeHost) { host in
-            Button("Remove", role: .destructive) { model.removeHost(host) }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in Text("The saved credentials will be removed from this device. Server files will not be changed.") }
-    }
-
-    private var showsHostsHeading: Bool {
-        #if os(macOS)
-        true
-        #else
-        phoneLayout
-        #endif
     }
 
     private var sidebarHeader: some View {
         HStack {
-            if model.sidebarPane == .hosts && showsHostsHeading {
-                Text("HOSTS")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .crowForeground(CrowTheme.textDim)
-            }
-            if model.sidebarPane == .files {
-                toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
-                toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
-                Spacer(minLength: 0)
-                    #if os(macOS)
-                    .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
-                    #endif
-                toolbarButton("Search Files", symbol: "magnifyingglass") {
-                    if explorer.searchVisible { explorer.searchVisible = false; explorer.query = "" }
-                    else { model.focusFileSearch() }
-                }
-                .accessibilityIdentifier("crow.sidebar-search")
-            } else {
-                Spacer()
-                    #if os(macOS)
-                    .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
-                    #endif
-                #if os(iOS)
-                Button { model.sshCommandVisible = true } label: { toolbarIcon("plus") }
-                    .buttonStyle(CrowButtonStyle()).accessibilityLabel("Add SSH Host")
-                    .accessibilityIdentifier("crow.host.add")
-                if phoneLayout {
-                    Button { model.folderImporterVisible = true } label: { toolbarIcon("folder.badge.plus") }
-                        .buttonStyle(CrowButtonStyle()).accessibilityLabel("Open Folder")
-                        .accessibilityIdentifier("crow.host.open-folder")
-                    Button { model.settingsVisible = true } label: { toolbarIcon("gearshape") }
-                        .buttonStyle(CrowButtonStyle()).accessibilityLabel("Settings")
-                }
-                #else
-                Button { model.sshCommandVisible = true } label: { Image(systemName: "plus") }.buttonStyle(CrowButtonStyle()).help("SSH Command").windowDragExcluded()
+            toolbarButton("New File", symbol: "doc.badge.plus") { beginCreate(directory: false) }
+            toolbarButton("New Folder", symbol: "folder.badge.plus") { beginCreate(directory: true) }
+            Spacer(minLength: 0)
+                #if os(macOS)
+                .frame(maxHeight: .infinity).overlay { WindowDragRegion() }
                 #endif
-                Button { model.sshKeysVisible = true } label: { toolbarIcon("key") }
-                    .buttonStyle(CrowButtonStyle()).help("SSH Keys").accessibilityLabel("SSH Keys")
-                    .accessibilityIdentifier("crow.keys.open").windowDragExcluded()
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: phoneLayout ? 44 : 40)
+            toolbarButton("Search Files", symbol: "magnifyingglass") {
+                if explorer.searchVisible { explorer.searchVisible = false; explorer.query = "" }
+                else { model.focusFileSearch() }
+            }.accessibilityIdentifier("crow.sidebar-search")
+        }.padding(.horizontal, 12).frame(height: phoneLayout ? 44 : 40)
     }
 
     private func toolbarIcon(_ symbol: String) -> some View {
@@ -372,148 +322,6 @@ struct SidebarView: View {
         model.focusFileSearch()
     }
 
-    private var hostsList: some View {
-        let list = List {
-            #if os(iOS)
-            if phoneLayout && !model.localWorkspaces.isEmpty {
-                Section("Workspaces") {
-                    ForEach(model.localWorkspaces) { workspace in
-                        HStack(spacing: 8) {
-                            Button {
-                                model.selectWorkspace(workspace.id, showFiles: false)
-                                model.compactSurface = .files
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "folder")
-                                        .crowForeground(CrowTheme.textDim)
-                                    Text(workspace.name).lineLimit(1)
-                                    Spacer(minLength: 0)
-                                    if workspace.id == model.selectedWorkspaceID { Image(systemName: "checkmark") }
-                                }.frame(minHeight: 44).contentShape(Rectangle())
-                            }.buttonStyle(CrowButtonStyle())
-                            Menu {
-                                Button("New Terminal", systemImage: "terminal") { model.newTerminal(inWorkspace: workspace.id) }
-                                Button("Remove Workspace…", systemImage: "trash", role: .destructive) { model.requestWorkspaceRemoval(workspace.id) }
-                            } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
-                                .buttonStyle(CrowButtonStyle()).accessibilityLabel("Options for \(workspace.name)")
-                        }.listRowBackground(Color.clear)
-                    }
-                }
-            }
-            if phoneLayout {
-                Section("SSH Hosts") { mobileHostRows }
-            } else { mobileHostRows }
-            #else
-            hostRows
-            #endif
-        }
-        return Group {
-            #if os(iOS)
-            if phoneLayout {
-                list.listStyle(.sidebar)
-            } else {
-                list.listStyle(.plain)
-                    .contentMargins(.top, 0, for: .scrollContent)
-                    .contentMargins(.horizontal, 0, for: .scrollContent)
-            }
-            #else
-            list.listStyle(.sidebar)
-            #endif
-        }
-        .scrollContentBackground(.hidden)
-        .accessibilityIdentifier("crow.hosts.workspaces")
-        .safeAreaInset(edge: .bottom) {
-            #if os(iOS)
-            if !model.hosts.isEmpty {
-                Text("Tap a host to connect. Use its status icon to connect or disconnect.")
-                    .font(.caption).foregroundStyle(CrowTheme.textDim).padding(12)
-            }
-            #else
-            Text(model.hosts.isEmpty ? "Run ssh user@host in the Mac terminal, or enter an SSH command with +." : "Click a host to reconnect. Click its status icon to connect or disconnect.")
-                .font(.system(size: 11)).crowForeground(CrowTheme.textDim).padding(12)
-            #endif
-        }
-    }
-
-    #if os(iOS)
-    @ViewBuilder private var mobileHostRows: some View {
-        if model.hosts.isEmpty {
-            Text("Use + to add an SSH host.").font(.caption).crowForeground(CrowTheme.textDim)
-                .listRowBackground(Color.clear)
-                .listRowInsets(phoneLayout ? nil : EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 8))
-        }
-        hostRows
-    }
-    #endif
-
-    private var hostRows: some View {
-        ForEach(model.hosts) { (host: SSHHost) in
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Button {
-                        model.connect(host)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(host.name)
-                                #if os(iOS)
-                                .font(.body.weight(.medium))
-                                #else
-                                .font(.system(size: 13, weight: .medium))
-                                #endif
-                            Text("\(host.userAtHost):\(host.port)")
-                                #if os(iOS)
-                                .font(.system(.caption, design: .monospaced))
-                                #else
-                                .font(.system(size: 11, design: .monospaced))
-                                #endif
-                                .crowForeground(CrowTheme.textDim)
-                            #if os(iOS)
-                            HStack(spacing: 8) {
-                                Label(host.authentication == .password ? "Password" : (host.authentication == .ed25519 ? "Ed25519 key" : "RSA key"),
-                                    systemImage: host.authentication == .password ? "lock" : "key")
-                                Text(model.connectionState(for: host).hostStatusText)
-                            }
-                            .font(.caption).foregroundStyle(CrowTheme.textDim)
-                            #endif
-                        }
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(CrowButtonStyle())
-                    HostConnectionButton(host: host)
-                    #if os(iOS)
-                    Menu {
-                        Button("Edit Host…", systemImage: "pencil") { model.editHost(host) }
-                        Button("Remove Host…", systemImage: "trash", role: .destructive) { removeHost = host }
-                    } label: {
-                        Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Options for \(host.name)")
-                    .buttonStyle(.plain)
-                    #endif
-                }
-                .contextMenu {
-                    Button("Connect") { model.connect(host) }
-                    if model.connectionState(for: host) == .connected {
-                        Button("Disconnect") { model.disconnect(host) }
-                    }
-                    Button("Edit Host…") { model.editHost(host) }
-                    Button("Remove Host…", role: .destructive) { removeHost = host }
-                }
-                #if os(macOS)
-                ReverseSSHHostToggle(host: host)
-                #endif
-            }
-            .listRowBackground(Color.clear)
-            #if os(iOS)
-            .listRowInsets(phoneLayout ? nil : EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 8))
-            #endif
-            .windowDragExcluded()
-        }
-    }
-
     private func icon(for name: String) -> String {
         if ImagePreview.supports(name) { return "photo" }
         switch LanguageMode.infer(filename: name) {
@@ -525,7 +333,7 @@ struct SidebarView: View {
     }
 }
 
-private extension ConnectionState {
+extension ConnectionState {
     var hostStatusText: String {
         switch self {
         case .connected: "Connected"
@@ -536,7 +344,7 @@ private extension ConnectionState {
     }
 }
 
-private struct HostConnectionButton: View {
+struct HostConnectionButton: View {
     @Environment(AppModel.self) private var model
     let host: SSHHost
 
@@ -588,7 +396,7 @@ private struct HostConnectionButton: View {
 }
 
 #if os(macOS)
-private struct ReverseSSHHostToggle: View {
+struct ReverseSSHHostToggle: View {
     @Environment(AppModel.self) private var model
     let host: SSHHost
     private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }

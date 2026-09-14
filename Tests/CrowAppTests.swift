@@ -193,7 +193,7 @@ final class CrowAppTests: XCTestCase {
         XCTAssertEqual(saved.username, "ubuntu")
         XCTAssertEqual(saved.remotePath, "~")
         XCTAssertEqual(model.compactSurface, .hosts)
-        XCTAssertEqual(model.sidebarPane, .hosts)
+        XCTAssertEqual(model.sidebarPane, .workspaces)
         XCTAssertTrue(model.sidebarVisible)
         XCTAssertEqual(model.selectedWorkspaceID, selectedID)
         XCTAssertEqual(model.connectionState(for: saved), .disconnected)
@@ -233,7 +233,7 @@ final class CrowAppTests: XCTestCase {
         XCTAssertTrue(model.pendingHostEditor)
         XCTAssertFalse(model.hostEditorVisible)
         model.showHosts()
-        XCTAssertEqual(model.sidebarPane, .hosts)
+        XCTAssertEqual(model.sidebarPane, .workspaces)
         model.compactSurface = .files
         XCTAssertEqual(model.sidebarPane, .files)
         model.showHosts()
@@ -581,7 +581,7 @@ final class CrowAppTests: XCTestCase {
         XCTAssertEqual(restored.selectedBuffer?.text, "opened from folder")
         XCTAssertTrue(restored.files.contains { $0.name == file.lastPathComponent })
         let count = restored.workspaces.count
-        restored.sidebarPane = .hosts
+        restored.sidebarPane = .workspaces
         restored.sidebarVisible = false
         restored.openFolder(directory)
         XCTAssertEqual(restored.workspaces.count, count)

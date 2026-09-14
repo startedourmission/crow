@@ -294,14 +294,12 @@ private struct PhoneWorkspaceBar: View {
     @State private var snippetSurface: CompactSurface = .editor
     @State private var restoreSnippetKeyboard = false
     @State private var showingTabs = false
-    @State private var showingAgentTabs = false
-    @State private var showingTmux = false
     @State private var restoreTabsKeyboard = false
     @State private var copyToast: (id: UUID, message: String)?
 
     private var title: String {
         switch model.compactSurface {
-        case .hosts: return "Hosts"
+        case .hosts: return "Workspaces"
         case .editor: return model.selectedBuffer.map { $0.title + ($0.isDirty ? " •" : "") } ?? "Editor"
         case .files, .terminal:
             if case .remote(let id, _) = model.selectedWorkspace.kind,
@@ -311,7 +309,7 @@ private struct PhoneWorkspaceBar: View {
     }
     private var symbol: String {
         switch model.compactSurface {
-        case .hosts: "server.rack"
+        case .hosts: "square.stack.3d.up"
         case .files: "folder"
         case .editor: "doc.text"
         case .terminal: "terminal"
@@ -370,7 +368,7 @@ private struct PhoneWorkspaceBar: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Show Hosts and Workspaces")
+                .accessibilityLabel("Show Workspaces")
                 .accessibilityIdentifier("crow.phone.hosts")
                 .highPriorityGesture(
                     LongPressGesture(minimumDuration: 0.4).exclusively(before: TapGesture())
@@ -471,8 +469,6 @@ private struct PhoneWorkspaceBar: View {
             keyboardVisible = false
         }
         .accessibilityIdentifier("crow.phone.navigation")
-        .sheet(isPresented: $showingAgentTabs) { AgentWorkspaceSheet().environment(model) }
-        .sheet(isPresented: $showingTmux) { TmuxSheet().environment(model) }
         .sheet(isPresented: $showingTabs, onDismiss: {
             if restoreTabsKeyboard { keyboard?.show(for: model.compactSurface) }
         }) {
@@ -501,10 +497,8 @@ private struct PhoneWorkspaceBar: View {
     }
 
     @ViewBuilder private var generalMenu: some View {
-        Button("Agents", systemImage: "sparkles") { showingAgentTabs = true }
-            .accessibilityIdentifier("crow.phone.agent-tabs")
-        Button("tmux", systemImage: "rectangle.split.2x2") { showingTmux = true }
-            .accessibilityIdentifier("crow.phone.tmux")
+        Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
+            .accessibilityIdentifier("crow.phone.workspaces")
         if model.selectedWorkspace.isRemote {
             Button("Server Screen", systemImage: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }
                 .disabled(model.selectedWorkspace.connection != .connected)

@@ -2,6 +2,17 @@ import CrowCore
 import Foundation
 
 extension AppModel {
+    /// A host owns one tmux tree even when it has several folder workspaces.
+    func tmuxWorkspace(on hostID: HostID?) -> WorkspaceState? {
+        #if os(iOS)
+        guard hostID != nil else { return nil }
+        #endif
+        let candidates = states.filter {
+            $0.snapshot.workspace.hostID == hostID && (hostID == nil || $0.remote?.isConnected == true)
+        }
+        return candidates.first { $0.id == selectedWorkspaceID } ?? candidates.first
+    }
+
     func selectedTerminalID(in state: WorkspaceState) -> UUID? {
         #if os(iOS)
         return state.snapshot.selectedTerminalID
@@ -24,9 +35,11 @@ extension AppModel {
         }
     }
 
-    func attachTmux(_ location: TmuxLocation) async throws {
+    func attachTmux(_ location: TmuxLocation, in target: WorkspaceState? = nil) async throws {
         let command = try TmuxCommand.attach(location)
-        let state = current
+        let state = target ?? current
+        guard states.contains(where: { $0 === state }) else { throw CommandError("This workspace was removed.") }
+        activateWorkspace(state.id, reconnect: false)
         if let session = attachedTmuxTerminal(for: location.sessionID, in: state) {
             _ = try await runTmux(TmuxCommand.select(location), in: state)
             try Task.checkCancellation()

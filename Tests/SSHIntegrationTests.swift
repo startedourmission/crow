@@ -321,7 +321,7 @@ final class SSHIntegrationTests: XCTestCase {
 
         let quickModel = AppModel(vaultURL: root.appendingPathComponent("quick-vault"))
         defer { quickModel.shutdown() }
-        quickModel.sidebarPane = .hosts
+        quickModel.sidebarPane = .workspaces
         try await quickModel.connectCommand(command)
         for _ in 0..<200 {
             if quickModel.current.snapshot.workspace.connection == .connected { break }
@@ -331,7 +331,7 @@ final class SSHIntegrationTests: XCTestCase {
         XCTAssertTrue(quickModel.current.terminals.values.contains(where: \.running))
         XCTAssertFalse(quickModel.hostEditorVisible)
         XCTAssertNil(quickModel.credentialRequest, "Mac authentication stays inside OpenSSH, not an app password form")
-        XCTAssertEqual(quickModel.sidebarPane, .hosts, "Connecting must preserve the selected sidebar pane")
+        XCTAssertEqual(quickModel.sidebarPane, .workspaces, "Connecting must preserve the selected sidebar pane")
         XCTAssertEqual(quickModel.compactSurface, .terminal, "An explicit SSH connection opens the terminal")
         let initialTree = quickModel.current.explorer
         for _ in 0..<100 where initialTree.children[quickModel.current.snapshot.rootPath] == nil {

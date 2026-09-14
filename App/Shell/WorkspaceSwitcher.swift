@@ -14,7 +14,7 @@ struct WorkspaceSwitcher: View {
                 }
             }
             if !model.workspaces.isEmpty { Divider() }
-            Button("Manage Workspaces…", systemImage: "square.grid.2x2") { model.showWorkspaces() }
+            Button("Manage Workspaces…", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             if model.hasWorkspace {
                 Divider()
                 workspaceActions(model.selectedWorkspace)

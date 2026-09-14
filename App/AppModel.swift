@@ -60,7 +60,7 @@ final class AppModel {
     }
     var compactSurface: CompactSurface = .editor {
         didSet {
-            if compactSurface == .hosts { sidebarPane = .hosts }
+            if compactSurface == .hosts { sidebarPane = .workspaces }
             if compactSurface == .files { sidebarPane = .files }
         }
     }
@@ -965,7 +965,7 @@ final class AppModel {
     }
 
     func showHosts() {
-        sidebarPane = .hosts; sidebarVisible = true; compactSurface = .hosts
+        sidebarPane = .workspaces; sidebarVisible = true; compactSurface = .hosts
     }
 
     func editHost(_ host: SSHHost? = nil) {

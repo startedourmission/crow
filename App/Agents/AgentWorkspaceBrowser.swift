@@ -12,17 +12,33 @@ struct AgentWorkspaceBrowser: View {
     var onOpen: (() -> Void)?
     @State private var search = ""
     @State private var collapsed: Set<WorkspaceID> = []
+    @State private var collapsedHosts: Set<String> = []
+    @State private var removeHost: SSHHost?
     @State private var renaming: AgentTerminalRoute?
     @State private var name = ""
     @State private var closing: UUID?
     @State private var pickingLocalFolder = false
     @State private var folderSource: WorkspaceID?
 
-    private var workspaces: [WorkspaceState] {
+    private var hostIDs: [HostID] {
+        var ids = model.hosts.map(\.id)
+        for state in model.states {
+            if let id = state.snapshot.workspace.hostID, !ids.contains(id) { ids.append(id) }
+        }
+        return ids
+    }
+
+    private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
         model.states.filter { state in
-            search.isEmpty || ([state.snapshot.workspace.name, state.snapshot.rootPath, model.workspaceHostName(state)]
-                + state.snapshot.agentTerminals.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search)
+            state.snapshot.workspace.hostID == hostID && (search.isEmpty ||
+                ([state.snapshot.workspace.name, state.snapshot.rootPath, model.workspaceHostName(state)]
+                 + state.snapshot.agentTerminals.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search))
         }.sorted { ($0.snapshot.lastOpenedAt ?? .distantPast) > ($1.snapshot.lastOpenedAt ?? .distantPast) }
+    }
+
+    private func matchesHost(_ host: SSHHost?, id: HostID?) -> Bool {
+        search.isEmpty || (host.map { $0.name + " " + $0.userAtHost } ?? (id == nil ? "Local" : "SSH"))
+            .localizedCaseInsensitiveContains(search) || !workspaces(on: id).isEmpty
     }
 
     var body: some View {
@@ -32,25 +48,16 @@ struct AgentWorkspaceBrowser: View {
                 Spacer()
                 addWorkspaceMenu
             }.foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12).frame(height: 40)
-            TextField("Search workspaces", text: $search).textFieldStyle(.plain).font(.system(size: 12))
+            TextField("Search hosts and workspaces", text: $search).textFieldStyle(.plain).font(.system(size: 12))
                 .padding(8).background(CrowTheme.bg0, in: RoundedRectangle(cornerRadius: 5))
                 .padding(.horizontal, 10).padding(.bottom, 10)
                 .accessibilityIdentifier("crow.agents.search")
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    let pinned = workspaces.filter { $0.snapshot.isPinned }
-                    let recent = workspaces.filter { !$0.snapshot.isPinned }
-                    if !pinned.isEmpty {
-                        sectionLabel("Pinned", count: pinned.count, symbol: "pin")
-                        ForEach(pinned) { workspaceRow($0) }
-                    }
-                    if !recent.isEmpty {
-                        sectionLabel("Recent", count: recent.count, symbol: "clock")
-                        ForEach(recent) { workspaceRow($0) }
-                    }
-                    if workspaces.isEmpty {
-                        Text(search.isEmpty ? "Open a local or SSH folder with +." : "No matching workspaces")
-                            .font(.caption).foregroundStyle(CrowTheme.textDim).padding(12)
+                    if matchesHost(nil, id: nil) { hostGroup(nil, id: nil) }
+                    ForEach(hostIDs, id: \.self) { id in
+                        let host = model.hosts.first { $0.id == id }
+                        if matchesHost(host, id: id) { hostGroup(host, id: id) }
                     }
                 }.padding(.vertical, 8)
             }
@@ -68,6 +75,10 @@ struct AgentWorkspaceBrowser: View {
                         .environment(model)
                 }
             }
+            .alert("Remove SSH host?", isPresented: Binding(get: { removeHost != nil }, set: { if !$0 { removeHost = nil } }), presenting: removeHost) { host in
+                Button("Remove", role: .destructive) { model.removeHost(host) }
+                Button("Cancel", role: .cancel) { }
+            } message: { _ in Text("The saved credentials will be removed from this device. Server files will not be changed.") }
             .alert("Close this terminal?", isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } })) {
                 Button("Close Terminal", role: .destructive) { if let id = closing { model.closeTerminal(id) }; closing = nil }
                     .keyboardShortcut(.defaultAction)
@@ -93,10 +104,83 @@ struct AgentWorkspaceBrowser: View {
                     Button("Connect to \(host.name)…", systemImage: "network") { model.connect(host); onOpen?() }
                 }
             }
-            Button("Add SSH Host…", systemImage: "plus") { model.sshCommandVisible = true; onOpen?() }
+            Button("Add SSH Host…", systemImage: "plus") { model.sshCommandVisible = true }
+            Divider()
+            Button("SSH Keys…", systemImage: "key") { model.sshKeysVisible = true }
+            Button("Settings…", systemImage: "gearshape") { model.settingsVisible = true }
         } label: { Image(systemName: "plus").frame(width: 24, height: 24).contentShape(Rectangle()) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel("Add workspace").accessibilityIdentifier("crow.workspaces.add").windowDragExcluded()
+    }
+
+    private func hostGroup(_ host: SSHHost?, id: HostID?) -> some View {
+        let key = id?.rawValue.uuidString ?? "local"
+        let rows = workspaces(on: id)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Button {
+                    if !collapsedHosts.insert(key).inserted { collapsedHosts.remove(key) }
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: collapsedHosts.contains(key) ? "chevron.right" : "chevron.down").font(.system(size: 9))
+                        Image(systemName: id == nil ? "laptopcomputer" : "server.rack")
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(host?.name ?? (id == nil ? "Local" : "SSH (not saved)")).fontWeight(.semibold)
+                            if let host {
+                                Text(host.userAtHost).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                            }
+                        }.lineLimit(1)
+                        Spacer(minLength: 0)
+                    }.contentShape(Rectangle())
+                }.accessibilityLabel("Toggle " + (host?.name ?? (id == nil ? "Local" : "SSH")))
+                if let host { HostConnectionButton(host: host) }
+                Menu {
+                    if let host {
+                        Button("Connect") { model.connect(host) }
+                        if model.connectionState(for: host) == .connected {
+                            Button("Open Folder…") {
+                                folderSource = model.tmuxWorkspace(on: id)?.id
+                            }
+                            Button("Disconnect") { model.disconnect(host) }
+                        }
+                        Button("Edit Host…") { model.editHost(host) }
+                        Button("Remove Host…", role: .destructive) { removeHost = host }
+                    } else if id == nil {
+                        Button("Open Local Folder…") { pickingLocalFolder = true }
+                    } else {
+                        Button("Add SSH Host…") { model.sshCommandVisible = true }
+                    }
+                } label: { Image(systemName: "ellipsis").frame(width: 26, height: 28).contentShape(Rectangle()) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel("Host options")
+            }.font(.system(size: 12)).padding(.horizontal, 10).padding(.vertical, 6)
+            if !collapsedHosts.contains(key) {
+                #if os(macOS)
+                if let host { ReverseSSHHostToggle(host: host).padding(.horizontal, 26) }
+                #endif
+                let pinned = rows.filter { $0.snapshot.isPinned }
+                let recent = rows.filter { !$0.snapshot.isPinned }
+                if !pinned.isEmpty {
+                    sectionLabel("Pinned", count: pinned.count, symbol: "pin")
+                    ForEach(pinned) { workspaceRow($0) }
+                }
+                if !recent.isEmpty {
+                    if !pinned.isEmpty { sectionLabel("Recent", count: recent.count, symbol: "clock") }
+                    ForEach(recent) { workspaceRow($0) }
+                }
+                if rows.isEmpty {
+                    Text(search.isEmpty ? "No workspaces. Open a folder from the host menu." : "No matching workspaces")
+                        .font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 16).padding(.vertical, 6)
+                }
+                if let state = model.tmuxWorkspace(on: id) {
+                    TmuxPanel(workspace: state, onAttach: onOpen).padding(.leading, 10)
+                } else if id != nil {
+                    Label("Connect host to manage tmux", systemImage: "rectangle.split.2x2")
+                        .font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 16).padding(.vertical, 6)
+                }
+            }
+        }.buttonStyle(.plain).windowDragExcluded()
+            .accessibilityIdentifier("crow.workspaces.host." + key)
     }
 
     private func sectionLabel(_ title: String, count: Int, symbol: String) -> some View {
@@ -120,7 +204,7 @@ struct AgentWorkspaceBrowser: View {
                             Text(state.snapshot.workspace.name).fontWeight(.semibold).lineLimit(1)
                             Spacer(minLength: 0)
                         }
-                        Text(model.workspaceHostName(state) + " · " + state.snapshot.rootPath)
+                        Text(state.snapshot.rootPath)
                             .font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).lineLimit(1).truncationMode(.middle)
                         if state.snapshot.workspace.isRemote {
                             Text(connectionLabel(state)).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
@@ -205,16 +289,3 @@ struct AgentWorkspaceBrowser: View {
             }
     }
 }
-
-#if os(iOS)
-struct AgentWorkspaceSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            AgentWorkspaceBrowser(onOpen: { dismiss() })
-                .navigationTitle("Workspaces").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-    }
-}
-#endif

@@ -3,7 +3,9 @@ import SwiftUI
 
 struct TmuxPanel: View {
     @Environment(AppModel.self) private var model
+    var workspace: WorkspaceState?
     var onAttach: (() -> Void)?
+    @State private var expanded = false
     @State private var sessions: [TmuxSession] = []
     @State private var busy = false
     @State private var error: String?
@@ -26,40 +28,50 @@ struct TmuxPanel: View {
     }
     @State private var task: Task<Void, Never>?
 
+    private var target: WorkspaceState { workspace ?? model.current }
+    private var selectedLocation: TmuxLocation? {
+        model.current.snapshot.workspace.hostID == target.snapshot.workspace.hostID ? model.selectedTmuxLocation : nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("TMUX").font(.system(size: 11, weight: .semibold)).tracking(0.6)
-                Spacer()
+            HStack(spacing: 6) {
+                Button { expanded.toggle() } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9))
+                        Image(systemName: "rectangle.split.2x2")
+                        Text("tmux").font(.system(size: 11, weight: .medium))
+                        Spacer(minLength: 0)
+                    }.contentShape(Rectangle())
+                }.accessibilityLabel(expanded ? "Collapse tmux" : "Expand tmux")
                 if busy { ProgressView().controlSize(.small) }
-                Button { refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Refresh sessions").accessibilityLabel("Refresh sessions")
-                Button { renaming = nil; name = ""; editing = true } label: { Image(systemName: "plus") }
-                    .help("New tmux session").accessibilityLabel("New tmux session")
-            }.buttonStyle(.plain).disabled(busy || !model.hasWorkspace).padding(12).frame(height: 40)
-            Text(model.workspaceHostName(model.current)).font(.system(size: 12, weight: .medium)).lineLimit(1).padding(.horizontal, 12)
-            Text("Host sessions · default socket").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12).padding(.top, 4)
-            if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(12) }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 5) {
+                Button { if expanded { refresh() } else { expanded = true } } label: {
+                    Image(systemName: "arrow.clockwise").frame(width: 24, height: 28).contentShape(Rectangle())
+                }.help("Refresh sessions").accessibilityLabel("Refresh sessions")
+                Button { renaming = nil; name = ""; editing = true } label: {
+                    Image(systemName: "plus").frame(width: 24, height: 28).contentShape(Rectangle())
+                }.help("New tmux session").accessibilityLabel("New tmux session")
+            }.buttonStyle(.plain).disabled(busy).font(.system(size: 11)).padding(.horizontal, 10).frame(height: 34)
+            if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(10) }
+            if expanded {
+                VStack(alignment: .leading, spacing: 5) {
                     if sessions.isEmpty && !busy && error == nil {
-                        Text("No tmux sessions. Use + to create one.").font(.caption).foregroundStyle(CrowTheme.textDim).padding(12)
+                        Text("No tmux sessions. Use + to create one.").font(.caption).foregroundStyle(CrowTheme.textDim).padding(10)
                     }
                     ForEach(sessions) { session in sessionGroup(session) }
-                }.padding(.vertical, 10).disabled(busy)
+                }.disabled(busy)
+                    .task(id: "\(target.id)-\(target.snapshot.workspace.connection)") { refresh() }
             }
-            Text("Detach in the terminal: Ctrl-B, then D").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).padding(12)
-        }.background(CrowTheme.bg1).foregroundStyle(CrowTheme.text)
+        }.foregroundStyle(CrowTheme.text)
             .accessibilityIdentifier("crow.tmux.panel")
             .windowDragExcluded()
-            .task(id: model.selectedWorkspace.connection) { refresh() }
             .onDisappear { task?.cancel() }
             .alert(renaming == nil ? "New tmux session" : "Rename tmux session", isPresented: $editing) {
                 TextField("Session name", text: $name)
                 Button("Save") {
                     do {
                         let command = try renaming.map { try TmuxCommand.rename(id: $0.id, name: name) }
-                            ?? TmuxCommand.create(name: name, directory: model.current.snapshot.rootPath)
+                            ?? TmuxCommand.create(name: name, directory: target.snapshot.rootPath)
                         perform(command)
                     } catch { self.error = error.localizedDescription }
                 }
@@ -81,7 +93,7 @@ struct TmuxPanel: View {
 
     private func sessionGroup(_ session: TmuxSession) -> some View {
         let location = TmuxLocation(sessionID: session.id)
-        let selected = model.selectedTmuxLocation?.sessionID == session.id
+        let selected = selectedLocation?.sessionID == session.id
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 disclosure(session.name, collapsed: collapsedSessions.contains(session.id)) {
@@ -106,7 +118,7 @@ struct TmuxPanel: View {
                 } label: { Image(systemName: "ellipsis").frame(width: 22, height: 24) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }.padding(8)
-                .background(model.selectedTmuxLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
+                .background(selectedLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
             if !collapsedSessions.contains(session.id) {
                 ForEach(session.windowList) { window in windowRow(window, session: session) }
             }
@@ -132,7 +144,7 @@ struct TmuxPanel: View {
                 }
                 closeButton(location, name: label)
             }.padding(.vertical, 5).padding(.horizontal, 8)
-                .background(model.selectedTmuxLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
+                .background(selectedLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
             if !collapsedWindows.contains(key) {
                 ForEach(window.panes) { pane in
                     paneRow(pane, window: window, session: session).padding(.leading, 18)
@@ -153,7 +165,7 @@ struct TmuxPanel: View {
             splitButtons(location)
             closeButton(location, name: "\(session.name) / \(window.index) / \(label)")
         }.padding(.vertical, 5).padding(.horizontal, 8)
-            .background(model.selectedTmuxLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
+            .background(selectedLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
     }
 
     private func splitButtons(_ location: TmuxLocation) -> some View {
@@ -179,7 +191,8 @@ struct TmuxPanel: View {
 
     private func create(_ command: String, sessionID: String) {
         task?.cancel()
-        let state = model.current
+        let state = target
+        let selection = model.selectedWorkspaceID
         busy = true; error = nil
         task = Task { @MainActor in
             defer { busy = false }
@@ -187,10 +200,10 @@ struct TmuxPanel: View {
                 let output = try await model.runTmux(command, in: state)
                 try Task.checkCancellation()
                 let location = try TmuxCommand.parseCreated(output, sessionID: sessionID)
-                guard model.selectedWorkspaceID == state.id else { return }
+                guard model.selectedWorkspaceID == selection else { return }
                 collapsedSessions.remove(sessionID)
                 if let window = location.windowID { collapsedWindows.remove(sessionID + ":" + window) }
-                try await model.attachTmux(location)
+                try await model.attachTmux(location, in: state)
                 let list = try await model.runTmux(TmuxCommand.list, in: state)
                 try Task.checkCancellation()
                 sessions = try TmuxCommand.parse(list)
@@ -219,11 +232,12 @@ struct TmuxPanel: View {
     }
 
     private func attach(_ location: TmuxLocation) {
+        let state = target
         task?.cancel()
         busy = true; error = nil
         task = Task { @MainActor in
             defer { busy = false }
-            do { try await model.attachTmux(location); onAttach?() }
+            do { try await model.attachTmux(location, in: state); onAttach?() }
             catch is CancellationError { }
             catch { self.error = error.localizedDescription }
         }
@@ -231,8 +245,8 @@ struct TmuxPanel: View {
     private func refresh() { perform(nil) }
     private func perform(_ command: String?) {
         task?.cancel()
-        guard model.hasWorkspace else { return }
-        let state = model.current
+        guard model.states.contains(where: { $0 === target }) else { return }
+        let state = target
         busy = true; error = nil
         task = Task { @MainActor in
             defer { busy = false }
@@ -241,22 +255,9 @@ struct TmuxPanel: View {
                 let output = try await model.runTmux(TmuxCommand.list, in: state)
                 try Task.checkCancellation()
                 sessions = try TmuxCommand.parse(output)
+                expanded = true
             } catch is CancellationError { }
             catch { if !Task.isCancelled { self.error = error.localizedDescription; sessions = [] } }
         }
     }
 }
-
-#if os(iOS)
-struct TmuxSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            TmuxPanel(onAttach: { dismiss() }).id(model.selectedWorkspaceID)
-                .navigationTitle("tmux").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-    }
-}
-#endif

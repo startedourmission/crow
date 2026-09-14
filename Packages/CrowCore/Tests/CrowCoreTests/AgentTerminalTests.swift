@@ -2,6 +2,15 @@ import XCTest
 @testable import CrowCore
 
 final class AgentTerminalTests: XCTestCase {
+    func testLegacySidebarRoutesRestoreIntoUnifiedWorkspaces() throws {
+        for value in ["hosts", "agents", "tmux", "workspaces"] {
+            let data = try JSONEncoder().encode(value)
+            XCTAssertEqual(try JSONDecoder().decode(SidebarPane.self, from: data), .workspaces)
+        }
+        XCTAssertEqual(try JSONDecoder().decode(SidebarPane.self, from: Data("\"files\"".utf8)), .files)
+        XCTAssertEqual(String(decoding: try JSONEncoder().encode(SidebarPane.workspaces), as: UTF8.self), "\"workspaces\"")
+    }
+
     func testWorkspaceMetadataRoundTripAndLegacyDefault() throws {
         var snapshot = WorkspaceSnapshot(workspace: Workspace(name: "Project", kind: .local, connection: .local), rootPath: "/tmp/project")
         var agent = AgentTerminal(provider: .claude, directory: snapshot.rootPath)

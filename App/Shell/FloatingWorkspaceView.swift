@@ -36,12 +36,12 @@ struct FloatingWorkspaceView: View {
             HStack(spacing: 4) {
                 Button { model.showHosts() } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "server.rack")
+                        Image(systemName: "square.stack.3d.up")
                         Text(title).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 0)
                     }.padding(.horizontal, 8).frame(maxWidth: .infinity, minHeight: 36)
                         .background(CrowTheme.bg2, in: RoundedRectangle(cornerRadius: 5))
-                }.accessibilityLabel("Show Hosts and Workspaces")
+                }.accessibilityLabel("Show Workspaces")
                 ForEach([CompactSurface.terminal, .editor, .files].filter { $0 != model.compactSurface }, id: \.self) { surface in
                     Button { model.compactSurface = surface } label: {
                         Image(systemName: surface == .terminal ? "terminal" : surface == .editor ? "doc.text" : "folder")
