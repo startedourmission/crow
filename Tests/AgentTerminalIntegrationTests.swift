@@ -112,6 +112,32 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(imported.count, 1, "The same live terminal must only be imported once")
     }
 
+    @MainActor func testReversePasswordPersistsAndRevokesAllSessionsOnChange() async throws {
+        let account = "reverse-password-test-" + UUID().uuidString
+        defer { try? SecureStore.remove(account) }
+        let access = ReverseSSHAccessSettings(account: account)
+        XCTAssertNil(try access.password())
+        try access.save("initial password")
+        XCTAssertEqual(try ReverseSSHAccessSettings(account: account).password(), "initial password")
+        let first = ReverseSSHSession(), second = ReverseSSHSession()
+        defer { first.stop(); second.stop() }
+        for session in [first, second] {
+            session.start(password: "initial password") {
+                try await Task.sleep(for: .seconds(10))
+                throw CancellationError()
+            }
+        }
+        XCTAssertThrowsError(try access.save("short"))
+        XCTAssertThrowsError(try access.save("line one\nline two"))
+        XCTAssertTrue(first.isEnabled)
+        XCTAssertEqual(try access.password(), "initial password")
+        try access.save("changed password")
+        XCTAssertFalse(first.isEnabled)
+        XCTAssertFalse(second.isEnabled)
+        XCTAssertEqual(try access.password(), "changed password")
+        await first.stopAndWait(); await second.stopAndWait()
+    }
+
     @MainActor func testUnifiedTmuxRoutingNeverFallsBackToAnotherHost() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-host-routing-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

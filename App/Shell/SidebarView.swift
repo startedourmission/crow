@@ -396,65 +396,31 @@ struct HostConnectionButton: View {
 }
 
 #if os(macOS)
-struct ReverseSSHHostToggle: View {
+struct ReverseSSHHostButton: View {
     @Environment(AppModel.self) private var model
     let host: SSHHost
     private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }
+    private var enabled: Bool { session?.isEnabled == true }
+    private var preparing: Bool { enabled && session?.connectCommand == nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Toggle("Reverse SSH", isOn: Binding(
-                get: { session?.isEnabled ?? false },
-                set: { model.setReverseSSH($0, for: host) }))
-                .toggleStyle(.switch).controlSize(.mini)
-                .font(.system(size: 11))
-                .help("Allow this server's agents to run commands and edit files on this Mac as your account. Off disconnects their sessions.")
-                .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
-            if let session {
-                if let command = session.connectCommand {
-                    CopyClientCommandButton(command: command)
-                } else if session.status != "Off" {
-                    Text(session.status).font(.system(size: 10)).crowForeground(CrowTheme.textDim)
-                        .fixedSize(horizontal: false, vertical: true)
+        Button { model.setReverseSSH(!enabled, for: host) } label: {
+            Group {
+                if preparing { ProgressView().controlSize(.small) }
+                else {
+                    Image(systemName: enabled ? "arrow.uturn.backward.circle.fill" : "arrow.uturn.backward.circle")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(enabled ? CrowTheme.ok : CrowTheme.textDim)
                 }
-            }
-        }
-        .padding(.bottom, 5)
-        .windowDragExcluded()
+            }.frame(width: 32, height: 32).contentShape(Rectangle())
+        }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+            .help("Reverse SSH · " + (session?.status ?? "Off") + " — " + (enabled ? "click to turn off" : "turn on and copy access command"))
+            .accessibilityLabel((enabled ? "Disable Reverse SSH for " : "Enable Reverse SSH and copy command for ") + host.userAtHost)
+            .accessibilityValue(session?.status ?? "Off")
+            .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
     }
 }
 
-struct CopyClientCommandButton: View {
-    let command: String
-    var pasteboard: NSPasteboard = .general
-    @State private var copied: Bool?
-    @State private var feedbackID: UUID?
-
-    private var title: String { copied.map { $0 ? "Copied!" : "Copy Failed" } ?? "Copy Client Command" }
-    var body: some View {
-        Button {
-            pasteboard.clearContents()
-            copied = pasteboard.setString(command, forType: .string)
-            feedbackID = UUID()
-        } label: {
-            ZStack(alignment: .leading) {
-                Label("Copy Client Command", systemImage: "doc.on.doc").hidden()
-                Label(title, systemImage: copied.map { $0 ? "checkmark" : "exclamationmark.triangle" } ?? "doc.on.doc")
-            }
-            .font(.system(size: 11))
-            .crowForeground(CrowTheme.textDim)
-        }
-        .buttonStyle(CrowButtonStyle())
-        .accessibilityLabel(title).accessibilityIdentifier("crow.reverse-ssh-copy")
-        .help("Run this command on the server, including from an agent or tmux session. It connects only to the Mac that generated it. Append a command to execute on that Mac.")
-        .task(id: feedbackID) {
-            guard feedbackID != nil else { return }
-            do { try await Task.sleep(for: .milliseconds(1600)); copied = nil }
-            catch { /* A new click restarts the feedback interval. */ }
-        }
-        .onChange(of: command) { _, _ in copied = nil; feedbackID = nil }
-    }
-}
 #endif
 
 struct RemoteProjectFolderPicker: View {

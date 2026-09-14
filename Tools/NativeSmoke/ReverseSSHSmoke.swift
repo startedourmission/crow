@@ -284,6 +284,7 @@ import AppKit
         session.start { spec }
         try await wait("Restart after health failure did not finish") { session.connectCommand != nil || !session.isEnabled }
         try require(session.connectCommand != nil, "Health failure prevented a fresh toggle")
+        try await passwordAccess(spec: spec, root: root)
         #if CROW_APP_TEST
         var savedHost = host
         savedHost.commandArguments = ["-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
@@ -295,26 +296,85 @@ import AppKit
         try await wait("Lost SSH master left Reverse SSH enabled") { !session.isEnabled }
     }
 
+    @MainActor static func passwordAccess(spec: SystemSSHSpec, root: URL) async throws {
+        let password = "Crow test ' $() \u{D55C}\u{AE00} " + UUID().uuidString
+        let session = ReverseSSHSession(bundleBasePath: root.path)
+        defer { session.stop() }
+        session.start(password: password) { spec }
+        try await wait("Password-protected reverse endpoint did not start") { session.connectCommand != nil || !session.isEnabled }
+        guard let command = session.connectCommand else { throw CommandError(session.status) }
+        let helper = root.appendingPathComponent("password-askpass")
+        let secret = root.appendingPathComponent("test-password")
+        let prompts = root.appendingPathComponent("password-prompts")
+        let quote = SystemSSHBridge.quote
+        let helperText = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + quote(prompts.path) + "\nexec /bin/cat " + quote(secret.path) + "\n"
+        try Data(helperText.utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let prefix = "env SSH_ASKPASS_REQUIRE=force DISPLAY=crow-test SSH_ASKPASS=" + quote(helper.path) + " "
+        for attempt in ["", "wrong-password"] {
+            try Data(attempt.utf8).write(to: secret)
+            var denied = false
+            do { _ = try await ReverseSSHCommand.remote(spec, command: prefix + command + " -T 'printf UNEXPECTED_ACCESS'") }
+            catch { denied = true }
+            try require(denied, "A missing or wrong password gained reverse access")
+        }
+        try Data(password.utf8).write(to: secret)
+        try Data().write(to: prompts)
+        for _ in 0..<2 {
+            let result = try await ReverseSSHCommand.remote(spec, command: prefix + command + " -T 'printf PASSWORD_OK'")
+            try require(result == "PASSWORD_OK", "The correct password could not execute on the Mac")
+        }
+        let promptLines = try String(contentsOf: prompts, encoding: .utf8).split(separator: "\n")
+        try require(promptLines.count >= 2, "New connections did not ask for the password again")
+        let script = try await ReverseSSHCommand.remote(spec, command: "cat " + command)
+        try require(!script.contains(password), "The password leaked into the remote connector")
+        // Even direct use of the health key is forced to its marker, regardless of the requested command.
+        guard let probeLine = script.components(separatedBy: .newlines).first(where: { $0.contains("/probe'") }) else {
+            throw CommandError("Missing restricted health probe")
+        }
+        let forbidden = root.appendingPathComponent("probe-must-not-write")
+        let result = try await ReverseSSHCommand.remote(spec, command: probeLine + " " + quote("touch " + quote(forbidden.path)))
+        try require(result == "CROW_REVERSE_OK" && !FileManager.default.fileExists(atPath: forbidden.path), "Health key allowed an arbitrary command")
+        // A regular authenticated session must also be revoked while it is running.
+        let started = root.appendingPathComponent("password-live-started")
+        let live = Task { try await ReverseSSHCommand.remote(spec, command: prefix + command + " -T " + quote("touch " + quote(started.path) + "; sleep 30")) }
+        try await wait("Password-authenticated live command did not start") { FileManager.default.fileExists(atPath: started.path) }
+        await session.stopAndWait()
+        _ = await live.result
+        let removed = try? await ReverseSSHCommand.remote(spec, command: "test ! -e " + command)
+        try require(removed != nil, "Protected connector was not removed")
+        print("PASS reverse password: missing/wrong rejected, correct accepted, repeated prompt, restricted probe, live revocation and cleanup")
+    }
+
     #if CROW_APP_TEST
     @MainActor static func appToggle(root: URL, host: SSHHost) async throws {
         let model = AppModel(vaultURL: root.appendingPathComponent("vault"))
         defer { model.shutdown() }
-        model.hosts = [host]; model.sidebarPane = .hosts
+        model.hosts = [host]; model.sidebarPane = .workspaces
+        let account = "reverse-password-smoke-" + UUID().uuidString
+        defer { try? SecureStore.remove(account) }
+        let access = ReverseSSHAccessSettings(account: account)
+        try access.save(String(contentsOf: root.appendingPathComponent("test-password"), encoding: .utf8))
+        model.reverseSSHAccess = access
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        model.reverseSSHPasteboard = pasteboard
+        let prefix = "env SSH_ASKPASS_REQUIRE=force DISPLAY=crow-test SSH_ASKPASS=" + SystemSSHBridge.quote(root.appendingPathComponent("password-askpass").path) + " "
         let session = ReverseSSHSession(bundleBasePath: root.path)
         model.reverseSSHConnections[host.id] = session
         let commandLine = "ssh " + host.commandArguments!.map(SystemSSHBridge.quote).joined(separator: " ")
         try await model.connectCommand(commandLine)
-        try require(model.sidebarPane == .hosts, "Starting SSH switched to the file explorer")
+        try require(model.sidebarPane == .workspaces, "Starting SSH switched to the file explorer")
         try await wait("Ordinary SSH did not connect") { model.current.snapshot.workspace.connection == .connected }
-        try require(model.sidebarPane == .hosts, "SSH completion switched to the file explorer")
+        try require(model.sidebarPane == .workspaces, "SSH completion switched to the file explorer")
         try await model.connectCommand(commandLine)
-        try require(model.sidebarPane == .hosts, "Selecting an already connected SSH host switched the sidebar")
+        try require(model.sidebarPane == .workspaces, "Selecting an already connected SSH host switched the sidebar")
         model.disconnectCurrent()
         try await Task.sleep(for: .milliseconds(300))
         print("PASS SSH sidebar selection: start, connection completion, already-connected host")
         for attempt in 0..<2 {
             // Both a new connection and a previously disconnected workspace must work from one toggle.
-            let selectedPane: SidebarPane = attempt == 0 ? .hosts : .files
+            let selectedPane: SidebarPane = attempt == 0 ? .workspaces : .files
             model.sidebarPane = selectedPane
             model.setReverseSSH(true, for: host)
             try await wait("App toggle did not finish") { session.connectCommand != nil || !session.isEnabled }
@@ -322,7 +382,8 @@ import AppKit
                 throw CommandError("App toggle failed: \(session.status)")
             }
             try require(model.sidebarPane == selectedPane, "Enabling Reverse SSH changed the selected sidebar pane")
-            let result = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments + [command + " 'printf APP_TOGGLE_OK'"])
+            try require(pasteboard.string(forType: .string) == command, "Enabling Reverse SSH did not automatically copy its command")
+            let result = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments + [prefix + command + " 'printf APP_TOGGLE_OK'"])
             try require(result == "APP_TOGGLE_OK", "App toggle did not enable client execution")
             model.setReverseSSH(false, for: host)
             try require(!session.isEnabled, "App toggle Off did not revoke access")

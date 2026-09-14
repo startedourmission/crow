@@ -193,6 +193,9 @@ struct CrowSettingsView: View {
                 Button { showingKeys = true } label: { Label("SSH Keys", systemImage: "key") }
                 Button { showingGit = true } label: { Label("Git Accounts", systemImage: "point.3.connected.trianglepath.dotted") }
                 Button { showingSnippets = true } label: { Label("Snippets", systemImage: "text.badge.plus") }
+                #if os(macOS)
+                ReverseSSHPasswordSettings()
+                #endif
                 #if os(iOS)
                 NavigationLink("Keyboard Bar") { KeyboardBarSettingsView().environment(model) }
                 #endif
@@ -215,3 +218,39 @@ struct CrowSettingsView: View {
         #endif
     }
 }
+
+#if os(macOS)
+private struct ReverseSSHPasswordSettings: View {
+    private let access = ReverseSSHAccessSettings.shared
+    @State private var password = ""
+    @State private var confirmation = ""
+    @State private var message: String?
+    @State private var failed = false
+
+    var body: some View {
+        Section("Reverse SSH") {
+            Text(access.hasPassword ? "Access password is set" : "Set a password before enabling Reverse SSH")
+                .font(.callout)
+            SecureField("New access password", text: $password)
+                .accessibilityIdentifier("crow.reverse-ssh.password")
+            SecureField("Confirm password", text: $confirmation)
+                .accessibilityIdentifier("crow.reverse-ssh.password-confirmation")
+            Button(access.hasPassword ? "Change Password" : "Set Password") {
+                do {
+                    guard password == confirmation else { throw CommandError("The passwords do not match.") }
+                    try access.save(password)
+                    password = ""; confirmation = ""; failed = false
+                    message = "Saved. Turn Reverse SSH on for the hosts you want to access."
+                } catch { failed = true; message = error.localizedDescription }
+            }.disabled(password.isEmpty || confirmation.isEmpty)
+                .accessibilityIdentifier("crow.reverse-ssh.password-save")
+            if let message { Text(message).font(.caption).foregroundStyle(failed ? Color.red : CrowTheme.textDim) }
+            Text("Enter this password when connecting from a server. It is stored in this Mac’s Keychain. Changing it disconnects all current reverse SSH sessions.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+        }.onAppear {
+            do { _ = try access.password() }
+            catch { failed = true; message = error.localizedDescription }
+        }
+    }
+}
+#endif

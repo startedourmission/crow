@@ -20,16 +20,21 @@ import CrowCore
         username = NSUserName()
     }
 
-    static func create() async throws -> ReverseSSHServer {
+    static func create(password: String? = nil) async throws -> ReverseSSHServer {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-client-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let server = ReverseSSHServer(directory: root)
         do {
-            for name in ["host", "identity"] {
-                _ = try await ReverseSSHCommand.run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", root.appendingPathComponent(name).path])
-            }
+            try await ReverseSSHCommand.generateKey(at: root.appendingPathComponent("host"))
+            try await ReverseSSHCommand.generateKey(at: root.appendingPathComponent("identity"), password: password)
             try Task.checkCancellation()
-            let key = try Data(contentsOf: root.appendingPathComponent("identity.pub"))
+            var key = try Data(contentsOf: root.appendingPathComponent("identity.pub"))
+            if password != nil {
+                try await ReverseSSHCommand.generateKey(at: root.appendingPathComponent("probe"))
+                let probe = try String(contentsOf: root.appendingPathComponent("probe.pub"), encoding: .utf8)
+                // Health checks can only print this marker, never open a shell, PTY or forward.
+                key.append(Data(("restrict,command=\"echo CROW_REVERSE_OK\" " + probe).utf8))
+            }
             try key.write(to: root.appendingPathComponent("authorized_keys"))
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: root.appendingPathComponent("authorized_keys").path)
             let config = """
@@ -50,7 +55,7 @@ import CrowCore
             X11Forwarding no
             PermitTunnel no
             StrictModes yes
-            LoginGraceTime 15
+            LoginGraceTime \(password == nil ? 15 : 120)
             LogLevel ERROR
             Subsystem sftp /usr/libexec/sftp-server
 
@@ -64,6 +69,10 @@ import CrowCore
     }
 
     var privateKey: String { get throws { try String(contentsOf: directory.appendingPathComponent("identity"), encoding: .utf8) } }
+    var probePrivateKey: String? { get throws {
+        let url = directory.appendingPathComponent("probe")
+        return FileManager.default.fileExists(atPath: url.path) ? try String(contentsOf: url, encoding: .utf8) : nil
+    } }
     var hostPublicKey: String { get throws { try String(contentsOf: directory.appendingPathComponent("host.pub"), encoding: .utf8) } }
 
     private func listen() throws {
@@ -139,13 +148,37 @@ import CrowCore
 
 /// Only bounded noninteractive commands. Credentials never enter process arguments or logs.
 enum ReverseSSHCommand {
+    static func generateKey(at url: URL, password: String? = nil) async throws {
+        let arguments = ["-q", "-t", "ed25519", "-a", "64", "-f", url.path]
+        guard let password else {
+            _ = try await run("/usr/bin/ssh-keygen", arguments + ["-N", ""])
+            return
+        }
+        guard !password.isEmpty, !password.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\0" }) else {
+            throw CommandError("Use a nonempty, single-line Reverse SSH password.")
+        }
+        let root = url.deletingLastPathComponent().appendingPathComponent("askpass-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secret = root.appendingPathComponent("password"), helper = root.appendingPathComponent("askpass")
+        try Data(password.utf8).write(to: secret)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secret.path)
+        try Data(("#!/bin/sh\nexec /bin/cat " + SystemSSHBridge.quote(secret.path) + "\n").utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        var environment = ProcessInfo.processInfo.environment
+        environment["SSH_ASKPASS"] = helper.path
+        environment["SSH_ASKPASS_REQUIRE"] = "force"
+        environment["DISPLAY"] = "crow-keygen"
+        _ = try await run("/usr/bin/ssh-keygen", arguments, environment: environment)
+    }
+
     /// Use shell stdin, not SSH exec quoting (Windows DefaultShell may launch WSL).
     static func remote(_ spec: SystemSSHSpec, command: String) async throws -> String {
         let input = "exec sh -c " + SystemSSHBridge.quote(command) + "\n"
         return try await run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments, input: Data(input.utf8))
     }
 
-    static func run(_ executable: String = "/usr/bin/ssh", _ arguments: [String], input: Data? = nil, operation: String = "Reverse SSH") async throws -> String {
+    static func run(_ executable: String = "/usr/bin/ssh", _ arguments: [String], input: Data? = nil, operation: String = "Reverse SSH", environment: [String: String]? = nil) async throws -> String {
         let work = Task.detached {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-command-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -160,6 +193,7 @@ enum ReverseSSHCommand {
             defer { try? stdin.close() }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
+            process.environment = environment
             process.standardInput = stdin; process.standardOutput = output; process.standardError = errors
             try Task.checkCancellation()
             try process.run()
@@ -192,7 +226,7 @@ enum ReverseSSHCommand {
 enum ReverseSSHConnector {
     enum Route { case direct, windowsLoopback }
 
-    static func script(path: String, port: Int, username: String, route: Route) -> String {
+    static func script(path: String, port: Int, username: String, route: Route, passwordRequired: Bool = false) -> String {
         let quote = SystemSSHBridge.quote
         let proxy: String
         switch route {
@@ -201,11 +235,19 @@ enum ReverseSSHConnector {
             let encoded = Data(windowsRelay(port: port).utf16.flatMap { [UInt8($0 & 255), UInt8($0 >> 8)] }).base64EncodedString()
             proxy = " -o " + quote("ProxyCommand=powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded)
         }
+        let options = "ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityAgent=none -o AddKeysToAgent=no -o PreferredAuthentications=publickey -o StrictHostKeyChecking=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o UserKnownHostsFile=" + quote(path + "/known_hosts") + proxy
+        let destination = " -p \(port) -l " + quote(username) + " 127.0.0.1"
+        let probe = passwordRequired ? """
+        if [ "${1-}" = --crow-check ]; then
+            exec \(options) -o BatchMode=yes -T -i \(quote(path + "/probe"))\(destination)
+        fi
+        """ : ""
         return """
         #!/bin/sh
         # This bundle's private identity and pinned host key select exactly one Mac.
-        # Agent subprocesses and reused tmux shells may have missing or stale SSH_CONNECTION.
-        exec ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o UserKnownHostsFile=\(quote(path + "/known_hosts")) -i \(quote(path + "/identity"))\(proxy) -p \(port) -l \(quote(username)) 127.0.0.1 "$@"
+        # The health-check key can only return a fixed marker; it cannot run commands.
+        \(probe)
+        exec \(options) -o BatchMode=\(passwordRequired ? "no" : "yes") -i \(quote(path + "/identity"))\(destination) "$@"
 
         """
     }
@@ -245,9 +287,16 @@ enum ReverseSSHConnector {
     private var task: Task<Void, Never>?
     private let bundleBasePath: String?
 
-    init(bundleBasePath: String? = nil) { self.bundleBasePath = bundleBasePath }
+    private static let sessions = NSHashTable<ReverseSSHSession>.weakObjects()
 
-    func start(connection: @escaping @MainActor () async throws -> SystemSSHSpec) {
+    init(bundleBasePath: String? = nil) {
+        self.bundleBasePath = bundleBasePath
+        Self.sessions.add(self)
+    }
+
+    static func revokeAll() { sessions.allObjects.forEach { $0.stop() } }
+
+    func start(password: String? = nil, onReady: (@MainActor (String) -> Void)? = nil, connection: @escaping @MainActor () async throws -> SystemSSHSpec) {
         guard !isEnabled else { return }
         isEnabled = true; status = "Connecting…"; connectCommand = nil
         let operation = Operation(), bundleBasePath = bundleBasePath
@@ -257,13 +306,14 @@ enum ReverseSSHConnector {
                 try Task.checkCancellation()
                 let spec = try await connection()
                 try Task.checkCancellation()
-                try await operation.open(spec, bundleBasePath: bundleBasePath) { [weak self] status in
+                try await operation.open(spec, bundleBasePath: bundleBasePath, password: password) { [weak self] status in
                     if self?.operation === operation { self?.status = status }
                 }
                 try Task.checkCancellation()
                 guard let self, self.operation === operation else { throw CancellationError() }
                 self.connectCommand = operation.connectCommand
-                self.status = "On · server can access this Mac"
+                self.status = password == nil ? "On · server can access this Mac" : "On · password required"
+                if let command = self.connectCommand { onReady?(command) }
                 var checks = 0
                 while true {
                     try await Task.sleep(for: .seconds(3))
@@ -302,12 +352,14 @@ enum ReverseSSHConnector {
         var remoteDirectory: String?
         var remotePort: Int?
         var connectCommand: String?
+        var passwordRequired = false
 
-        func open(_ spec: SystemSSHSpec, bundleBasePath: String?, progress: (String) -> Void) async throws {
+        func open(_ spec: SystemSSHSpec, bundleBasePath: String?, password: String?, progress: (String) -> Void) async throws {
             self.spec = spec
+            passwordRequired = password != nil
             try Task.checkCancellation()
             progress("Preparing this Mac…")
-            server = try await ReverseSSHServer.create()
+            server = try await ReverseSSHServer.create(password: password)
             try Task.checkCancellation()
             guard let server else { throw CancellationError() }
             // Don't cancel a forward allocation halfway through: retain its port for cleanup.
@@ -331,9 +383,9 @@ enum ReverseSSHConnector {
             let path = bundles + "/" + UUID().uuidString
             // Remember the path even if the transfer fails, so partial credentials are removed.
             remoteDirectory = path
-            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .direct)
+            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .direct, passwordRequired: passwordRequired)
             try await files.installReverseSSHBundle(at: path, identity: server.privateKey,
-                knownHosts: "[127.0.0.1]:\(port) \(try server.hostPublicKey)", command: command)
+                knownHosts: "[127.0.0.1]:\(port) \(try server.hostPublicKey)", command: command, probeIdentity: server.probePrivateKey)
             try Task.checkCancellation()
             connectCommand = SystemSSHBridge.quote(path + "/connect")
             progress("Verifying server → Mac access…")
@@ -345,7 +397,7 @@ enum ReverseSSHConnector {
                 // Probe the bridge capability instead of assuming a host name, WSL distro or network mode.
                 do {
                     _ = try await ReverseSSHCommand.remote(spec, command: "command -v powershell.exe >/dev/null")
-                    let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .windowsLoopback)
+                    let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .windowsLoopback, passwordRequired: passwordRequired)
                     try await files.write(bridged, path: path + "/connect", expected: command, overwrite: false)
                     try Task.checkCancellation()
                     try await verify()
@@ -358,9 +410,9 @@ enum ReverseSSHConnector {
 
         func verify() async throws {
             guard let spec, let connectCommand else { throw CommandError("Reverse SSH is not ready.") }
-            let marker = "CROW_REVERSE_OK_" + UUID().uuidString
-            let output = try await ReverseSSHCommand.remote(spec,
-                command: "exec " + connectCommand + " -T " + SystemSSHBridge.quote("printf '%s\\n' '" + marker + "'"))
+            let marker = passwordRequired ? "CROW_REVERSE_OK" : "CROW_REVERSE_OK_" + UUID().uuidString
+            let arguments = passwordRequired ? " --crow-check" : " -T " + SystemSSHBridge.quote("printf '%s\\n' '" + marker + "'")
+            let output = try await ReverseSSHCommand.remote(spec, command: "exec " + connectCommand + arguments)
             guard output.components(separatedBy: .newlines).contains(marker) else {
                 throw CommandError("The reverse connection did not return its authenticated readiness response.")
             }

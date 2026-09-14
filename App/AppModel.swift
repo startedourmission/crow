@@ -97,6 +97,8 @@ final class AppModel {
     var pendingCredentialRequest: SSHHost?
     #if os(macOS)
     var reverseSSHConnections: [HostID: ReverseSSHSession] = [:]
+    @ObservationIgnored var reverseSSHAccess = ReverseSSHAccessSettings.shared
+    @ObservationIgnored var reverseSSHPasteboard = NSPasteboard.general
     @ObservationIgnored private var sshBridge: SystemSSHBridge?
     #endif
     let windowID: UUID
@@ -1224,11 +1226,30 @@ final class AppModel {
     }
     func disconnectCurrent() { disconnect(current) }
     #if os(macOS)
+    func copyReverseSSHCommand(for host: SSHHost) {
+        guard let command = reverseSSHConnections[host.id]?.connectCommand else { return }
+        reverseSSHPasteboard.clearContents()
+        if reverseSSHPasteboard.setString(command, forType: .string) {
+            statusMessage = "Reverse SSH command copied — paste it on the server and enter your access password."
+        } else { report(CommandError("Could not copy the Reverse SSH command. Use the host menu to try again.")) }
+    }
+
     func setReverseSSH(_ enabled: Bool, for host: SSHHost) {
         if !enabled { reverseSSHConnections[host.id]?.stop(); return }
+        let password: String
+        do {
+            guard let saved = try reverseSSHAccess.password() else {
+                settingsVisible = true
+                statusMessage = "Set a Reverse SSH password in Settings first."
+                return
+            }
+            password = saved
+        } catch { report(error); return }
         let session = reverseSSHConnections[host.id] ?? ReverseSSHSession()
         reverseSSHConnections[host.id] = session
-        session.start { [weak self] in
+        session.start(password: password, onReady: { [weak self] _ in
+            self?.copyReverseSSHCommand(for: host)
+        }) { [weak self] in
             guard let self else { throw CancellationError() }
             @MainActor func state() -> WorkspaceState? {
                 self.states.first { if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false }
@@ -1466,3 +1487,33 @@ final class AppModel {
     }
     func report(_ error: Error) { errorMessage = error.localizedDescription; statusMessage = error.localizedDescription }
 }
+
+#if os(macOS)
+@MainActor @Observable final class ReverseSSHAccessSettings {
+    static let shared = ReverseSSHAccessSettings()
+    private let account: String
+    private(set) var hasPassword = false
+
+    init(account: String = "reverse-ssh-access-password") { self.account = account }
+
+    func password() throws -> String? {
+        guard let data = try SecureStore.data(for: account) else { hasPassword = false; return nil }
+        guard let value = String(data: data, encoding: .utf8), !value.isEmpty else {
+            throw CommandError("Could not read the Reverse SSH password. Set it again in Settings.")
+        }
+        hasPassword = true
+        return value
+    }
+
+    func save(_ password: String) throws {
+        guard password.count >= 8, password.utf8.count <= 1024,
+              !password.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\0" }) else {
+            throw CommandError("Use 8 or more characters on a single line (up to 1,024 bytes).")
+        }
+        try SecureStore.set(Data(password.utf8), for: account)
+        hasPassword = true
+        // Applies to every host in every Crow window, including startup in progress.
+        ReverseSSHSession.revokeAll()
+    }
+}
+#endif

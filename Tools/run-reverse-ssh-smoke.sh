@@ -16,7 +16,7 @@ if [[ $# -gt 0 ]]; then
     crow_modules+=(-Xcc "-fmodule-map-file=$crow_map")
   done
   swiftc -parse-as-library -swift-version 6 -D CROW_APP_TEST -target arm64-apple-macos15 -I "$crow_products" \
-    -F "$crow_products/PackageFrameworks" "${crow_modules[@]}" \
+    -F "$crow_products" -F "$crow_products/PackageFrameworks" "${crow_modules[@]}" \
     -Xlinker "$crow_products/Crow.app/Contents/MacOS/Crow.debug.dylib" \
     -Xlinker -rpath -Xlinker "$crow_products/Crow.app/Contents/MacOS" \
     -Xlinker -rpath -Xlinker "$crow_products/Crow.app/Contents/Frameworks" \

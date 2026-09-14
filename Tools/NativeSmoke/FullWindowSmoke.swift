@@ -72,21 +72,21 @@ import WebKit
             try require(pixels() == before, "Hover did not reset: \(label)")
         }
         func clickTopButton(search: Bool) async throws {
-            let topButtonInset: CGFloat = search ? 61 : (model.sidebarVisible ? 20 : 18)
+            let topButtonInset: CGFloat = search ? SidebarTopBar.height + 1 + 20 : SidebarTopBar.height / 2
             let buttons = views(hosting, WindowMoveAnchorView.self).filter { anchor in
                 let rect = anchor.convert(anchor.activeRect, to: nil)
-                return anchor.excludesMovement && rect.width == 28 && rect.height == 28 &&
-                    (search || model.sidebarVisible || rect.maxX < 150) &&
+                return anchor.excludesMovement && rect.width == 28 && rect.height == 28 && rect.maxX < hosting.bounds.midX &&
+                    (search || model.sidebarVisible || rect.maxX <= CrowTheme.activityWidth + 1 + SidebarTopBar.collapsedWidth) &&
                     abs(rect.midY - (hosting.bounds.height - topButtonInset)) < 1
             }.sorted { $0.convert($0.activeRect, to: nil).midX < $1.convert($1.activeRect, to: nil).midX }
-            try require(buttons.count == (search ? 3 : 1), "Search must be right-aligned beside New Folder; only the sidebar toggle belongs in the top row")
+            try require(buttons.count == (search ? 3 : 2), "Search must follow New Folder; the top row contains float and sidebar controls")
             for button in buttons {
                 try await verifyControlHover(button.convert(button.activeRect, to: nil), search ? "explorer toolbar" : "sidebar toggle")
             }
             let button = buttons.last!
             let rect = button.convert(button.activeRect, to: nil)
             if !model.sidebarVisible && !search {
-                try require(rect.maxX < 150, "Collapsed sidebar reopen button is not on the left")
+                try require(rect.maxX <= CrowTheme.activityWidth + 1 + SidebarTopBar.collapsedWidth, "Collapsed sidebar reopen button is not on the left")
                 for source in views(hosting, WorkspaceTabDragView.self) where source.payload != nil {
                     let tabRect = source.convert(source.bounds, to: nil)
                     try require(!tabRect.intersects(rect), "Sidebar reopen button overlaps a tab")
@@ -436,7 +436,6 @@ import WebKit
         try require(model.current.snapshot.layout!.activePane?.selected == rightPane.tabs[1], "Numbered tab shortcut did not select the second tab")
         print("PASS shortcut actions: explorer focus/query preservation, current-document find, font size, pane-local numbered tabs, contents search")
         try await verifyHover()
-        try await verifyCopyFeedback()
         try require(!NSApp.isActive, "Fixture stole app focus")
     }
     @MainActor static func verifyHover() async throws {
@@ -479,43 +478,6 @@ import WebKit
         await move(310)
         try require(try bitmap() == baseline, "Disabled button reacted to hover")
         print("PASS hover rendering via window mouse events: plain label, filled background, exit, disabled; no pointer movement")
-    }
-    @MainActor static func verifyCopyFeedback() async throws {
-        let pasteboard = NSPasteboard.withUniqueName()
-        defer { pasteboard.releaseGlobally() }
-        let command = "'/private/test client/connect'"
-        let view = NSHostingView(rootView: CopyClientCommandButton(command: command, pasteboard: pasteboard)
-            .padding(20).background(CrowTheme.bg0))
-        let window = FixtureWindow(contentRect: NSRect(x: -22000, y: -22000, width: 220, height: 70),
-            styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = view; window.orderBack(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(150))
-        func pixels() -> Data {
-            view.layoutSubtreeIfNeeded()
-            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
-            view.cacheDisplay(in: view.bounds, to: rep)
-            return Data(bytes: rep.bitmapData!, count: rep.bytesPerRow * rep.pixelsHigh)
-        }
-        func click() async {
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                NSApp.sendEvent(NSEvent.mouseEvent(with: type, location: NSPoint(x: 110, y: 35), modifierFlags: [],
-                    timestamp: 1, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-        let baseline = pixels()
-        await click()
-        try require(pasteboard.string(forType: .string) == command, "Copy button wrote the wrong command")
-        let confirmation = pixels()
-        try require(confirmation != baseline, "Copy button has no visible confirmation")
-        try await Task.sleep(for: .milliseconds(800))
-        await click()
-        try await Task.sleep(for: .milliseconds(800))
-        try require(pixels() == confirmation, "Repeated click did not extend confirmation")
-        try await Task.sleep(for: .milliseconds(900))
-        try require(pixels() == baseline, "Copy confirmation did not reset")
-        print("PASS Copy Client Command: clipboard, confirmation, repeated-click timer, reset; private test clipboard only")
     }
     static func require(_ value: Bool, _ message: String) throws {
         if !value { throw NSError(domain: "CrowWindowSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }

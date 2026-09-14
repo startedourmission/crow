@@ -60,8 +60,10 @@ moving the desktop pointer), compare rendered pixels for plain/filled/disabled
 buttons, and require a clearly visible color change for explorer toolbar actions,
 sidebar toggles, and summary headings. They also check that file/tab hover regions
 do not intercept native input and the collapsed sidebar's reopen button is on the left.
-Copy-command checks use a private test pasteboard, verify rendered confirmation,
-repeat-click timeout extension and reset, without replacing the user's clipboard.
+Reverse SSH app checks use a private test pasteboard to verify automatic command
+copying on enable, without replacing the user's clipboard. Password checks reject
+missing and incorrect passwords, require a prompt on new connections, and verify
+that the restricted health key cannot execute arbitrary commands.
 
 Both fixtures override `performDrag(with:)` to record the request without entering
 Window Server pointer tracking. They verify routing and that OS window movement is

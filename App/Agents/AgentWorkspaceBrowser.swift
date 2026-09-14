@@ -121,19 +121,31 @@ struct AgentWorkspaceBrowser: View {
                 Button {
                     if !collapsedHosts.insert(key).inserted { collapsedHosts.remove(key) }
                 } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: collapsedHosts.contains(key) ? "chevron.right" : "chevron.down").font(.system(size: 9))
+                    Image(systemName: collapsedHosts.contains(key) ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9)).frame(width: 14, height: 28).contentShape(Rectangle())
+                }.accessibilityLabel("Toggle folders for " + (host?.userAtHost ?? "Local"))
+                Button {
+                    collapsedHosts.remove(key)
+                    if let host { model.connect(host); onOpen?() }
+                    else if id == nil, let local = model.states.first(where: { !$0.snapshot.workspace.isRemote }) {
+                        model.activateWorkspace(local.id); onOpen?()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
                         Image(systemName: id == nil ? "laptopcomputer" : "server.rack")
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(host?.name ?? (id == nil ? "Local" : "SSH (not saved)")).fontWeight(.semibold)
-                            if let host {
-                                Text(host.userAtHost).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
-                            }
-                        }.lineLimit(1)
+                        Text(host?.userAtHost ?? (id == nil ? "Local" : "SSH (not saved)"))
+                            .font(.system(size: host == nil ? 12 : 11, weight: .semibold))
+                            .lineLimit(1).minimumScaleFactor(0.85).truncationMode(.middle)
                         Spacer(minLength: 0)
                     }.contentShape(Rectangle())
-                }.accessibilityLabel("Toggle " + (host?.name ?? (id == nil ? "Local" : "SSH")))
-                if let host { HostConnectionButton(host: host) }
+                }.accessibilityLabel(host.map { "Connect to " + $0.userAtHost } ?? "Open Local workspaces")
+                    .accessibilityIdentifier("crow.workspaces.connect." + key)
+                if let host {
+                    HostConnectionButton(host: host)
+                    #if os(macOS)
+                    ReverseSSHHostButton(host: host)
+                    #endif
+                }
                 Menu {
                     if let host {
                         Button("Connect") { model.connect(host) }
@@ -143,6 +155,11 @@ struct AgentWorkspaceBrowser: View {
                             }
                             Button("Disconnect") { model.disconnect(host) }
                         }
+                        #if os(macOS)
+                        if model.reverseSSHConnections[host.id]?.connectCommand != nil {
+                            Button("Copy Reverse SSH Command") { model.copyReverseSSHCommand(for: host) }
+                        }
+                        #endif
                         Button("Edit Host…") { model.editHost(host) }
                         Button("Remove Host…", role: .destructive) { removeHost = host }
                     } else if id == nil {
@@ -155,9 +172,6 @@ struct AgentWorkspaceBrowser: View {
                     .accessibilityLabel("Host options")
             }.font(.system(size: 12)).padding(.horizontal, 10).padding(.vertical, 6)
             if !collapsedHosts.contains(key) {
-                #if os(macOS)
-                if let host { ReverseSSHHostToggle(host: host).padding(.horizontal, 26) }
-                #endif
                 let pinned = rows.filter { $0.snapshot.isPinned }
                 let recent = rows.filter { !$0.snapshot.isPinned }
                 if !pinned.isEmpty {
@@ -170,13 +184,17 @@ struct AgentWorkspaceBrowser: View {
                 }
                 if rows.isEmpty {
                     Text(search.isEmpty ? "No workspaces. Open a folder from the host menu." : "No matching workspaces")
-                        .font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 16).padding(.vertical, 6)
+                        .font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).padding(.leading, 34).padding(.trailing, 10).padding(.vertical, 6)
                 }
                 if let state = model.tmuxWorkspace(on: id) {
-                    TmuxPanel(workspace: state, onAttach: onOpen).padding(.leading, 10)
+                    TmuxPanel(workspace: state, onAttach: onOpen).padding(.leading, 24)
                 } else if id != nil {
-                    Label("Connect host to manage tmux", systemImage: "rectangle.split.2x2")
-                        .font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 16).padding(.vertical, 6)
+                    HStack(spacing: 7) {
+                        Image(systemName: "chevron.right").font(.system(size: 9))
+                        Label("tmux", systemImage: "rectangle.split.2x2")
+                    }.font(.system(size: 11)).foregroundStyle(CrowTheme.textDim)
+                        .padding(.leading, 34).padding(.vertical, 8)
+                        .help("Connect this host to manage tmux")
                 }
             }
         }.buttonStyle(.plain).windowDragExcluded()
@@ -185,7 +203,7 @@ struct AgentWorkspaceBrowser: View {
 
     private func sectionLabel(_ title: String, count: Int, symbol: String) -> some View {
         HStack(spacing: 5) { Image(systemName: symbol); Text(title); Text("\(count)").foregroundStyle(CrowTheme.textDim) }
-            .font(.system(size: 10, weight: .medium)).padding(.horizontal, 10)
+            .font(.system(size: 10, weight: .medium)).padding(.leading, 34).padding(.trailing, 10)
     }
 
     private func workspaceRow(_ state: WorkspaceState) -> some View {
@@ -198,23 +216,17 @@ struct AgentWorkspaceBrowser: View {
                 } label: { Image(systemName: collapsed.contains(state.id) ? "chevron.right" : "chevron.down").font(.system(size: 9)).frame(width: 18, height: 30) }
                     .accessibilityLabel("Toggle sessions")
                 Button { model.activateWorkspace(state.id); onOpen?() } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "folder")
-                            Text(state.snapshot.workspace.name).fontWeight(.semibold).lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        Text(state.snapshot.rootPath)
-                            .font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).lineLimit(1).truncationMode(.middle)
-                        if state.snapshot.workspace.isRemote {
-                            Text(connectionLabel(state)).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
-                        }
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                        Text(state.snapshot.workspace.name).fontWeight(.semibold).lineLimit(1)
+                        Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
                 }.accessibilityIdentifier("crow.workspaces.select." + state.id.rawValue.uuidString)
                 newSessionMenu(state)
             }.font(.system(size: 12)).padding(.horizontal, 6)
                 .contextMenu {
                     Button("Open Workspace") { model.activateWorkspace(state.id); onOpen?() }
+                    Button("Copy Path") { copyPath(state.snapshot.rootPath) }
                     Button(state.snapshot.isPinned ? "Unpin" : "Pin") { model.pinWorkspace(state.id) }
                     if state.snapshot.workspace.isRemote, state.remote?.isConnected == true {
                         Button("Open Another Folder…") { folderSource = state.id }
@@ -226,16 +238,16 @@ struct AgentWorkspaceBrowser: View {
             }
         }.padding(.bottom, collapsed.contains(state.id) ? 0 : 4)
             .background(selected ? CrowTheme.bg2 : .clear, in: RoundedRectangle(cornerRadius: 6))
-            .buttonStyle(.plain).padding(.horizontal, 5).windowDragExcluded()
+            .buttonStyle(.plain).padding(.leading, 24).padding(.trailing, 5).windowDragExcluded()
     }
 
-    private func connectionLabel(_ state: WorkspaceState) -> String {
-        switch state.snapshot.workspace.connection {
-        case .connected, .local: "Connected"
-        case .connecting: "Connecting…"
-        case .disconnected: "Disconnected"
-        case .failed: "Connection failed"
-        }
+    private func copyPath(_ path: String) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+        #else
+        UIPasteboard.general.string = path
+        #endif
     }
 
     private func newSessionMenu(_ state: WorkspaceState) -> some View {
@@ -278,7 +290,7 @@ struct AgentWorkspaceBrowser: View {
                     .font(.system(size: 9, weight: activity == .needsInput ? .semibold : .regular))
                     .foregroundStyle(statusColor).lineLimit(1)
                     .help(agent == nil ? "Terminal status" : "Estimated from the agent’s terminal screen. Needs input includes questions and approvals.")
-            }.padding(8).padding(.leading, 12).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(8).padding(.leading, 28).frame(maxWidth: .infinity, alignment: .leading)
                 .background(selected ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
         }.accessibilityIdentifier("crow.agents.session." + id.uuidString)
             .contextMenu {
