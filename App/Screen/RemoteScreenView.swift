@@ -65,7 +65,12 @@ struct RemoteScreenView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar { ToolbarItem(placement: .cancellationAction) { screenMenu } }
+            .toolbar {
+                ToolbarItemGroup(placement: .cancellationAction) {
+                    screenConnectionButton
+                    screenMenu
+                }
+            }
             .alert("Connect to Server Screen", isPresented: $connectionOptions) {
                 TextField("VNC port", text: $port)
                     #if os(iOS)
@@ -105,17 +110,23 @@ struct RemoteScreenView: View {
         }
     }
 
+    @ViewBuilder
+    private var screenConnectionButton: some View {
+        if screen.active {
+            Button("Disconnect", systemImage: "network.slash") { screen.stop() }
+                .labelStyle(.titleAndIcon)
+                .help(screen.connected ? "Connected through SSH" : "Connecting…")
+                .accessibilityIdentifier("crow.screen.disconnect")
+        } else {
+            Button("Connect…", systemImage: "network") { connectionOptions = true }
+                .labelStyle(.titleAndIcon)
+                .disabled(!screen.ready || workspace?.snapshot.workspace.connection != .connected)
+                .accessibilityIdentifier("crow.screen.connect")
+        }
+    }
+
     private var screenMenu: some View {
         Menu {
-            if screen.active {
-                Text(screen.connected ? "Connected through SSH" : "Connecting…")
-                Button("Disconnect", systemImage: "network.slash") { screen.stop() }
-            } else {
-                Button("Connect…", systemImage: "network") { connectionOptions = true }
-                    .disabled(!screen.ready || workspace?.snapshot.workspace.connection != .connected)
-                    .accessibilityIdentifier("crow.screen.connect")
-            }
-            Divider()
             Toggle("Fit to Window", isOn: Bindable(screen).fitToWindow)
             Toggle("View Only", isOn: Bindable(screen).viewOnly)
             #if os(macOS)
