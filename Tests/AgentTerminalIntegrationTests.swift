@@ -225,6 +225,39 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(imported.count, 1, "The same live terminal must only be imported once")
     }
 
+    @MainActor func testReverseSSHRejectsUnsupportedHostsBeforeRunningConnector() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-platform-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let uname = root.appendingPathComponent("uname"), ssh = root.appendingPathComponent("ssh")
+        try "#!/bin/sh\nprintf CROW_TEST_SSH_STARTED\n".write(to: ssh, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ssh.path)
+        let environment = ["PATH": root.path + ":/usr/bin:/bin"]
+        let script = ReverseSSHConnector.script(path: root.path, port: 2222, username: "fixture", passwordRequired: true)
+        for system in ["Linux", "MINGW64_NT", "FreeBSD", "Darwin"] {
+            try ("#!/bin/sh\nprintf '%s\\n' '" + system + "'\n").write(to: uname, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: uname.path)
+            let output = try await ReverseSSHCommand.run("/bin/sh", ["-c", ReverseSSHConnector.supportedHostCommand], environment: environment)
+            XCTAssertEqual(ReverseSSHConnector.supportsHost(output), system == "Darwin")
+            if system == "Darwin" {
+                let connected = try await ReverseSSHCommand.run("/bin/sh", ["-c", script], environment: environment)
+                XCTAssertEqual(connected, "CROW_TEST_SSH_STARTED")
+            } else {
+                do {
+                    _ = try await ReverseSSHCommand.run("/bin/sh", ["-c", script], environment: environment)
+                    XCTFail("Unsupported hosts must not execute ssh")
+                } catch {
+                    XCTAssertTrue(error.localizedDescription.contains("only between macOS devices"))
+                    XCTAssertFalse(error.localizedDescription.contains("CROW_TEST_SSH_STARTED"))
+                }
+            }
+        }
+        XCTAssertTrue(ReverseSSHConnector.supportsHost("Welcome\r\nCROW_REVERSE_MACOS\r\n"))
+        for output in ["", "Darwin", "CROW_REVERSE_MACOS\nCROW_REVERSE_UNSUPPORTED", "CROW_REVERSE_MACOS\nCROW_REVERSE_MACOS"] {
+            XCTAssertFalse(ReverseSSHConnector.supportsHost(output))
+        }
+    }
+
     @MainActor func testReversePasswordPersistsAndRevokesAllSessionsOnChange() async throws {
         let account = "reverse-password-test-" + UUID().uuidString
         defer { try? SecureStore.remove(account) }

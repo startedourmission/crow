@@ -172,7 +172,7 @@ enum ReverseSSHCommand {
         _ = try await run("/usr/bin/ssh-keygen", arguments, environment: environment)
     }
 
-    /// Use shell stdin, not SSH exec quoting (Windows DefaultShell may launch WSL).
+    /// Pass the remote shell script through stdin to preserve command quoting.
     static func remote(_ spec: SystemSSHSpec, command: String) async throws -> String {
         let input = "exec sh -c " + SystemSSHBridge.quote(command) + "\n"
         return try await run("/usr/bin/ssh", ["-T"] + spec.multiplexArguments, input: Data(input.utf8))
@@ -223,21 +223,24 @@ enum ReverseSSHCommand {
     }
 }
 
-/// Keep SSH authentication, keys and host verification in the POSIX environment.
-/// Only the raw TCP stream crosses to Windows when its loopback owns the forward.
+/// Reverse SSH is available between Macs only.
 enum ReverseSSHConnector {
-    enum Route { case direct, windowsLoopback }
+    static let supportedHostCommand = """
+    if [ "$(uname -s)" = Darwin ] && [ -x /usr/bin/sw_vers ]; then
+        printf '%s\\n' CROW_REVERSE_MACOS
+    else
+        printf '%s\\n' CROW_REVERSE_UNSUPPORTED
+    fi
+    """
 
-    static func script(path: String, port: Int, username: String, route: Route, passwordRequired: Bool = false) -> String {
+    static func supportsHost(_ output: String) -> Bool {
+        let markers = output.components(separatedBy: .newlines).filter { $0.hasPrefix("CROW_REVERSE_") }
+        return markers == ["CROW_REVERSE_MACOS"]
+    }
+
+    static func script(path: String, port: Int, username: String, passwordRequired: Bool = false) -> String {
         let quote = SystemSSHBridge.quote
-        let proxy: String
-        switch route {
-        case .direct: proxy = ""
-        case .windowsLoopback:
-            let encoded = Data(windowsRelay(port: port).utf16.flatMap { [UInt8($0 & 255), UInt8($0 >> 8)] }).base64EncodedString()
-            proxy = " -o " + quote("ProxyCommand=powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded)
-        }
-        let options = "ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityAgent=none -o AddKeysToAgent=no -o PreferredAuthentications=publickey -o StrictHostKeyChecking=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o UserKnownHostsFile=" + quote(path + "/known_hosts") + proxy
+        let options = "ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityAgent=none -o AddKeysToAgent=no -o PreferredAuthentications=publickey -o StrictHostKeyChecking=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o UserKnownHostsFile=" + quote(path + "/known_hosts")
         let destination = " -p \(port) -l " + quote(username) + " 127.0.0.1"
         let probe = passwordRequired ? """
         if [ "${1-}" = --crow-check ]; then
@@ -246,37 +249,15 @@ enum ReverseSSHConnector {
         """ : ""
         return """
         #!/bin/sh
+        [ "$(uname -s)" = Darwin ] && [ -x /usr/bin/sw_vers ] || {
+            printf '%s\\n' 'Reverse SSH is supported only between macOS devices.' >&2
+            exit 1
+        }
         # This bundle's private identity and pinned host key select exactly one Mac.
         # The health-check key can only return a fixed marker; it cannot run commands.
         \(probe)
         exec \(options) -o BatchMode=\(passwordRequired ? "no" : "yes") -i \(quote(path + "/identity"))\(destination) "$@"
 
-        """
-    }
-
-    private static func windowsRelay(port: Int) -> String {
-        // Binary .NET streams: PowerShell text pipelines would corrupt SSH packets.
-        // Fixed loopback destination; no new listener, firewall rule or credential copy.
-        """
-        $crowTCP = [Net.Sockets.TcpClient]::new()
-        try {
-          if (-not $crowTCP.ConnectAsync('127.0.0.1', \(port)).Wait(4000)) { throw 'Windows loopback connection timed out' }
-          $crowNetwork = $crowTCP.GetStream()
-          $crowInput = [Console]::OpenStandardInput()
-          $crowOutput = [Console]::OpenStandardOutput()
-          $crowSend = $crowInput.CopyToAsync($crowNetwork)
-          $crowReceive = $crowNetwork.CopyToAsync($crowOutput)
-          $crowFirst = [Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]@($crowSend, $crowReceive))
-          if ($crowFirst -eq 0) {
-            $crowSend.GetAwaiter().GetResult()
-            $crowTCP.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
-          }
-          $crowReceive.GetAwaiter().GetResult()
-          $crowOutput.Flush()
-        } catch {
-          [Console]::Error.WriteLine('Crow Windows loopback relay: ' + $_.Exception.Message)
-          exit 1
-        } finally { $crowTCP.Dispose() }
         """
     }
 }
@@ -360,6 +341,12 @@ enum ReverseSSHConnector {
             self.spec = spec
             passwordRequired = password != nil
             try Task.checkCancellation()
+            progress("Checking macOS support…")
+            let platform = try await ReverseSSHCommand.remote(spec, command: ReverseSSHConnector.supportedHostCommand)
+            guard ReverseSSHConnector.supportsHost(platform) else {
+                throw CommandError("Reverse SSH is supported only between macOS devices.")
+            }
+            try Task.checkCancellation()
             progress("Preparing this Mac…")
             server = try await ReverseSSHServer.create(password: password)
             try Task.checkCancellation()
@@ -385,7 +372,7 @@ enum ReverseSSHConnector {
             let path = bundles + "/" + UUID().uuidString
             // Remember the path even if the transfer fails, so partial credentials are removed.
             remoteDirectory = path
-            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .direct, passwordRequired: passwordRequired)
+            let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, passwordRequired: passwordRequired)
             try await files.installReverseSSHBundle(at: path, identity: server.privateKey,
                 knownHosts: "[127.0.0.1]:\(port) \(try server.hostPublicKey)", command: command, probeIdentity: server.probePrivateKey)
             // Installation and verification each need one SSH session channel.
@@ -394,25 +381,7 @@ enum ReverseSSHConnector {
             try Task.checkCancellation()
             connectCommand = SystemSSHBridge.quote(path + "/connect")
             progress("Verifying server → Mac access…")
-            do { try await verify() }
-            catch {
-                try Task.checkCancellation()
-                let directError = error.localizedDescription
-                progress("Checking Windows loopback access…")
-                // Probe the bridge capability instead of assuming a host name, WSL distro or network mode.
-                do {
-                    _ = try await ReverseSSHCommand.remote(spec, command: "command -v powershell.exe >/dev/null")
-                    let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .windowsLoopback, passwordRequired: passwordRequired)
-                    let updateFiles = try SystemSFTP(spec: spec); self.files = updateFiles
-                    try await updateFiles.write(bridged, path: path + "/connect", expected: command, overwrite: false)
-                    updateFiles.close(); self.files = nil
-                    try Task.checkCancellation()
-                    try await verify()
-                } catch {
-                    try Task.checkCancellation()
-                    throw CommandError("Reverse SSH could not verify server → Mac access. The terminal was left open.\n\nDirect loopback: \(directError)\n\nWindows loopback bridge: \(error.localizedDescription)")
-                }
-            }
+            try await verify()
         }
 
         func verify() async throws {

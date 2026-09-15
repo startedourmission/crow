@@ -54,7 +54,6 @@ import AppKit
             throw CommandError(message)
         }
         do {
-            let wrapper = try await ReverseSSHCommand.remote(spec, command: "cat " + command)
             let result = try await ReverseSSHCommand.remote(spec, command: command + " -T 'printf CROW_LIVE_OK'")
             try require(result.contains("CROW_LIVE_OK"), "Authenticated reverse command failed")
             print("PASS existing connection: authenticated server → Mac execution")
@@ -71,17 +70,6 @@ import AppKit
                 try await Task.sleep(for: .milliseconds(100))
             }
             try require(cleaned, "Temporary reverse credentials were not removed")
-            if wrapper.contains("ProxyCommand="), let portText = wrapper.components(separatedBy: " -p ").last?.split(separator: " ").first,
-               let reversePort = Int(portText) {
-                let probe = """
-                $crowProbe = [Net.Sockets.TcpClient]::new()
-                try { if ($crowProbe.ConnectAsync('127.0.0.1', \(reversePort)).Wait(1500) -and $crowProbe.Connected) { exit 1 } }
-                catch { } finally { $crowProbe.Dispose() }
-                exit 0
-                """
-                _ = try await ReverseSSHCommand.remote(spec, command: "powershell.exe -NoProfile -NonInteractive -Command " + SystemSSHBridge.quote(probe))
-                print("PASS existing connection: Windows reverse listener closed on Off")
-            }
             _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
             print("PASS existing connection: temporary endpoint removed, original SSH master preserved")
         } catch {

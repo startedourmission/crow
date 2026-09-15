@@ -344,7 +344,7 @@ private struct ReverseSSHPasswordSettings: View {
     @State private var failed = false
 
     var body: some View {
-        CrowSettingsSection("Reverse SSH") {
+        CrowSettingsSection("Reverse SSH · macOS only") {
             Text(access.hasPassword ? "Access password is set" : "Set a password before enabling Reverse SSH")
                 .font(.callout)
             CrowSettingsCard {

@@ -432,11 +432,32 @@ struct HostConnectionButton: View {
 struct ReverseSSHHostButton: View {
     @Environment(AppModel.self) private var model
     let host: SSHHost
+    @State private var supportsReverseSSH: Bool?
+    private var connection: SystemSSHSpec? { model.connectedSystemSSH(for: host.id) }
     private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }
     private var enabled: Bool { session?.isEnabled == true }
     private var preparing: Bool { enabled && session?.connectCommand == nil }
+    private var helpText: String {
+        "Reverse SSH (macOS only) · " + (session?.status ?? "Off") + " — "
+            + (enabled ? "click to turn off" : "turn on and copy access command")
+    }
 
     var body: some View {
+        Group {
+            if supportsReverseSSH != false || enabled { toggle }
+        }.task(id: connection?.socket) {
+            supportsReverseSSH = nil
+            guard let spec = connection else { return }
+            do {
+                let output = try await ReverseSSHCommand.remote(spec, command: ReverseSSHConnector.supportedHostCommand)
+                try Task.checkCancellation()
+                guard connection?.socket == spec.socket else { return }
+                supportsReverseSSH = ReverseSSHConnector.supportsHost(output)
+            } catch { /* Startup checks again before creating a tunnel if detection was unavailable. */ }
+        }
+    }
+
+    private var toggle: some View {
         Button { model.setReverseSSH(!enabled, for: host) } label: {
             Group {
                 if preparing { ProgressView().controlSize(.small) }
@@ -447,7 +468,7 @@ struct ReverseSSHHostButton: View {
                 }
             }.frame(width: 32, height: 32).contentShape(Rectangle())
         }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
-            .help("Reverse SSH · " + (session?.status ?? "Off") + " — " + (enabled ? "click to turn off" : "turn on and copy access command"))
+            .help(helpText)
             .accessibilityLabel((enabled ? "Disable Reverse SSH for " : "Enable Reverse SSH and copy command for ") + host.userAtHost)
             .accessibilityValue(session?.status ?? "Off")
             .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")

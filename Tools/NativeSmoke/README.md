@@ -70,6 +70,7 @@ Window Server pointer tracking. They verify routing and that OS window movement 
 enabled, not end-to-end physical dragging, snapping, or macOS keyboard shortcuts.
 Those require a separate manual check; these tests never take over the user's cursor.
 
+Reverse SSH supports macOS hosts only; Linux/WSL and Windows loopback relays are not supported.
 `zsh Tools/run-reverse-ssh-smoke.sh` checks authenticated reverse execution, file edits,
 rejected unrelated keys, live revocation, actual listener removal, reverse-path health
 failure while the SSH master is still alive, cleanup, and reconnect. Passing the built
@@ -92,7 +93,7 @@ zsh Tools/run-reverse-ssh-smoke.sh --existing-connection /path/to/control-socket
 ```
 
 This creates a separate temporary reverse listener and private connection bundle on
-that server, exercises the production direct/Windows-loopback selection and UTF-8
+that macOS server, exercises the production reverse connection and UTF-8
 stdin/output/EOF, then removes its bundle and forward. It preserves the original SSH
 master and does not change server configuration or activate the user's Crow.
 
