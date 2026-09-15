@@ -232,7 +232,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     private func connected(_ writer: RemoteWriter) {
         self.writer = writer; running = true; status = "Connected"
     }
-    private func receive(_ bytes: [UInt8]) { view.feed(byteArray: bytes[...]); agentDidReceiveOutput() }
+    private func receive(_ bytes: [UInt8]) { view.feedProcessOutput(bytes[...]); agentDidReceiveOutput() }
 
     private func agentDidReceiveOutput() {
         guard agentProvider != nil else { return }
@@ -446,8 +446,10 @@ private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteT
     var onInput: (@MainActor ([UInt8]) -> Void)?
     var onOutput: (@MainActor () -> Void)?
     override func dataReceived(slice: ArraySlice<UInt8>) {
-        super.dataReceived(slice: slice)
-        MainActor.assumeIsolated { onOutput?() }
+        MainActor.assumeIsolated {
+            feedProcessOutput(slice)
+            onOutput?()
+        }
     }
     override func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
         MainActor.assumeIsolated { onInput?(Array(data)) }

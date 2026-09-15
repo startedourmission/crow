@@ -57,6 +57,18 @@ struct ImagePasteStatusView: View {
 }
 
 @MainActor extension SwiftTerm.TerminalView {
+    /// Incoming output must not cancel a local drag. SwiftTerm's feed preparation
+    /// clears selection whenever mouse reporting is enabled, even outside mouse mode.
+    /// Suppress that feed-side policy only; mouse events keep their normal routing.
+    func feedProcessOutput(_ bytes: ArraySlice<UInt8>) {
+        #if os(macOS)
+        let reporting = allowMouseReporting
+        allowMouseReporting = false
+        defer { allowMouseReporting = reporting }
+        #endif
+        feed(byteArray: bytes)
+    }
+
     func pasteLiteralText(_ text: String) {
         let bracketed = getTerminal().bracketedPasteMode
         let bytes = (bracketed ? "\u{1b}[200~" : "") + text + (bracketed ? "\u{1b}[201~" : "")

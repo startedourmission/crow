@@ -6,6 +6,66 @@ import SwiftTerm
 import AppKit
 
 final class TerminalIntegrationTests: XCTestCase {
+    @MainActor func testStreamingOutputPreservesDragAnchorLocallyAndOverSSH() throws {
+        for local in [true, false] {
+            let workspace = Workspace(name: "Streaming", kind: local ? .local : .remote(hostID: HostID(rawValue: UUID()), path: "/tmp"),
+                connection: local ? .local : .connected)
+            let session = TerminalSession(id: UUID(), workspace: workspace, directory: "/tmp", remote: nil, fontSize: 16)
+            defer { session.stop() }
+            let view = session.view
+            func output(_ value: String) {
+                let bytes = Array(value.utf8)
+                if let pty = view as? LocalProcessTerminalView { pty.dataReceived(slice: bytes[...]) }
+                else { view.feedProcessOutput(bytes[...]) }
+            }
+            output("Stable answer to copy\r\n")
+            view.selection.setSelection(start: Position(col: 0, row: 0), end: Position(col: 6, row: 0))
+            let anchor = view.selection.start
+            for index in 0..<40 {
+                output("\u{1b}[3;1H\u{1b}[2KWorking \(index)")
+                XCTAssertTrue(view.selectionActive, "Streaming must not blink the selection off")
+                XCTAssertEqual(view.getSelection(), "Stable")
+            }
+            view.selection.dragExtend(bufferPosition: Position(col: 13, row: 0))
+            XCTAssertEqual(view.selection.start, anchor)
+            XCTAssertEqual(view.getSelection(), "Stable answer")
+            XCTAssertTrue(view.allowMouseReporting)
+        }
+    }
+
+    @MainActor func testStreamingPreservesShiftSelectionWithoutDisablingTmuxMouseReports() {
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "tmux", kind: .local, connection: .local),
+            directory: "/tmp", remote: nil, fontSize: 16)
+        defer { session.stop() }
+        let view = session.view
+        view.feedProcessOutput(Array("Answer\r\n\u{1b}[?1002h\u{1b}[?1006h".utf8)[...])
+        view.selection.setSelection(start: Position(col: 0, row: 0), end: Position(col: 6, row: 0))
+        let mode = view.getTerminal().mouseMode
+        view.feedProcessOutput(Array("\u{1b}[3;1Hstill working".utf8)[...])
+        XCTAssertEqual(view.getSelection(), "Answer")
+        XCTAssertTrue(view.allowMouseReporting)
+        XCTAssertEqual(view.getTerminal().mouseMode, mode)
+        view.allowMouseReporting = false
+        view.feedProcessOutput(Array(".".utf8)[...])
+        XCTAssertFalse(view.allowMouseReporting, "Respect an explicitly disabled mouse setting")
+    }
+
+    @MainActor func testSynchronizedRedrawKeepsSelectionAcrossSplitOutput() {
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Codex", kind: .local, connection: .local),
+            directory: "/tmp", remote: nil, fontSize: 16)
+        defer { session.stop() }
+        let view = session.view
+        view.feedProcessOutput(Array("Stable answer\r\n".utf8)[...])
+        view.selection.setSelection(start: Position(col: 0, row: 0), end: Position(col: 6, row: 0))
+        view.feedProcessOutput(Array("\u{1b}[?2026h\u{1b}[3;1H\u{1b}[2K".utf8)[...])
+        XCTAssertTrue(view.getTerminal().synchronizedOutputActive)
+        view.feedProcessOutput(Array("새 답변".utf8)[...])
+        XCTAssertTrue(view.selectionActive)
+        view.feedProcessOutput(Array("\u{1b}[?2026l".utf8)[...])
+        XCTAssertFalse(view.getTerminal().synchronizedOutputActive)
+        XCTAssertEqual(view.getSelection(), "Stable")
+    }
+
     @MainActor func testRealShellInputResizeAndWorkspaceRetention() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("crow-pty-" + UUID().uuidString)
         let model = AppModel(vaultURL: directory)
