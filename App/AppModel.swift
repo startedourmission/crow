@@ -1371,13 +1371,21 @@ final class AppModel {
         if !enabled { reverseSSHConnections[host.id]?.stop(); return }
         let session = reverseSSHConnections[host.id] ?? ReverseSSHSession()
         reverseSSHConnections[host.id] = session
-        session.start(onReady: { [weak self] _ in
-            self?.copyReverseSSHCommand(for: host)
-        }) { [weak self] in
+        let ready: @MainActor (String) -> Void = { [weak self] _ in self?.copyReverseSSHCommand(for: host) }
+        let failed: @MainActor (String) -> Void = { [weak self] message in
+            self?.report(CommandError("Reverse SSH · " + host.userAtHost + "\n" + message))
+        }
+        if let remote = connectedNativeSSH(for: host.id) {
+            session.startOperation(onReady: ready, onFailure: failed) {
+                try NativeReverseSSHOperation(remote: remote)
+            }
+            return
+        }
+        session.start(onReady: ready, onFailure: failed) { [weak self] in
             guard let self else { throw CancellationError() }
             if let spec = connectedSystemSSH(for: host.id) { return spec }
             guard let arguments = host.commandArguments else {
-                throw CommandError("Connect this host with an SSH command once to enable Reverse SSH.")
+                throw CommandError("Connect this host, then enable Reverse SSH again.")
             }
             try await connectCommand("ssh " + arguments.map(SystemSSHBridge.quote).joined(separator: " "), preserveReverseSSH: true)
             for _ in 0..<480 {
@@ -1393,6 +1401,13 @@ final class AppModel {
             }
             throw CommandError("Finish SSH authentication in the terminal, then enable Reverse SSH again.")
         }
+    }
+
+    func connectedNativeSSH(for hostID: HostID) -> RemoteConnection? {
+        states.first {
+            $0.snapshot.workspace.hostID == hostID && $0.remote?.client?.isConnected == true
+                && $0.snapshot.workspace.connection == .connected
+        }?.remote
     }
 
     /// Reverse SSH belongs to a host, not whichever project appears first in its list.

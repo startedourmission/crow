@@ -225,56 +225,107 @@ enum ReverseSSHConnector {
     }
 }
 
+@MainActor protocol ReverseSSHOperation: AnyObject {
+    var server: ReverseSSHServer? { get }
+    var connectCommand: String? { get }
+    func open(bundleBasePath: String?, progress: (String) -> Void) async throws
+    func checkConnection() async throws
+    func verify() async throws
+    func revoke()
+    func close() async
+}
+
+extension ReverseSSHOperation {
+    func revoke() { server?.stop() }
+}
+
 @MainActor @Observable final class ReverseSSHSession {
     private(set) var isEnabled = false
     private(set) var status = "Off"
     private(set) var connectCommand: String?
-    private var operation: Operation?
+    private var operation: (any ReverseSSHOperation)?
     private var task: Task<Void, Never>?
     private let bundleBasePath: String?
+    private let setupTimeout: Duration
 
-    init(bundleBasePath: String? = nil) {
+    init(bundleBasePath: String? = nil, setupTimeout: Duration = .seconds(45)) {
         self.bundleBasePath = bundleBasePath
+        self.setupTimeout = setupTimeout
     }
 
-    func start(onReady: (@MainActor (String) -> Void)? = nil, connection: @escaping @MainActor () async throws -> SystemSSHSpec) {
+    func start(onReady: (@MainActor (String) -> Void)? = nil,
+               onFailure: (@MainActor (String) -> Void)? = nil,
+               connection: @escaping @MainActor () async throws -> SystemSSHSpec) {
+        startOperation(onReady: onReady, onFailure: onFailure) {
+            Operation(spec: try await connection())
+        }
+    }
+
+    func startOperation(onReady: (@MainActor (String) -> Void)? = nil,
+                        onFailure: (@MainActor (String) -> Void)? = nil,
+                        makeOperation: @escaping @MainActor () async throws -> any ReverseSSHOperation) {
         guard !isEnabled else { return }
         isEnabled = true; status = "Connecting…"; connectCommand = nil
-        let operation = Operation(), bundleBasePath = bundleBasePath
-        self.operation = operation
+        let generation = UUID()
+        self.generation = generation
+        let bundleBasePath = bundleBasePath, setupTimeout = setupTimeout
         task = Task { [weak self] in
+            var running: (any ReverseSSHOperation)?
+            var deadline: Task<Void, Never>?
+            defer { deadline?.cancel() }
             do {
                 try Task.checkCancellation()
-                let spec = try await connection()
+                let operation = try await makeOperation()
+                running = operation
                 try Task.checkCancellation()
-                try await operation.open(spec, bundleBasePath: bundleBasePath) { [weak self] status in
-                    if self?.operation === operation { self?.status = status }
+                guard let self, self.generation == generation else { throw CancellationError() }
+                self.operation = operation
+                deadline = Task { [weak self] in
+                    do { try await Task.sleep(for: setupTimeout) } catch { return }
+                    guard let self, self.generation == generation, self.connectCommand == nil else { return }
+                    let stage = self.status
+                    self.operation?.revoke()
+                    self.generation = UUID(); self.task?.cancel()
+                    self.operation = nil; self.isEnabled = false
+                    self.status = stage + "\nReverse SSH setup timed out. The terminal connection was left open."
+                    onFailure?(self.status)
+                }
+                try await operation.open(bundleBasePath: bundleBasePath) { [weak self] status in
+                    if self?.generation == generation { self?.status = status }
                 }
                 try Task.checkCancellation()
-                guard let self, self.operation === operation else { throw CancellationError() }
+                guard self.generation == generation else { throw CancellationError() }
+                deadline?.cancel()
                 self.connectCommand = operation.connectCommand
                 self.status = "On · server account can access this Mac"
                 if let command = self.connectCommand { onReady?(command) }
                 var checks = 0
                 while true {
                     try await Task.sleep(for: .seconds(3))
-                    _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
+                    try await operation.checkConnection()
                     checks += 1
                     if checks % 5 == 0 { try await operation.verify() }
                 }
             } catch {
-                if let self, self.operation === operation {
+                if let self, self.generation == generation {
+                    let stage = self.status
                     self.isEnabled = false; self.connectCommand = nil; self.operation = nil
-                    self.status = error is CancellationError ? "Off" : error.localizedDescription
+                    if error is CancellationError { self.status = "Off" }
+                    else {
+                        self.status = stage + "\n" + error.localizedDescription
+                        onFailure?(self.status)
+                    }
                 }
             }
-            await operation.close()
+            await running?.close()
         }
     }
+    private var generation = UUID()
 
     func stop() {
         // Revoke access synchronously. Remote listener/file cleanup can follow asynchronously.
-        operation?.server?.stop()
+        operation?.revoke()
+        generation = UUID()
         operation = nil; task?.cancel(); task = nil
         isEnabled = false; connectCommand = nil; status = "Off"
     }
@@ -286,7 +337,7 @@ enum ReverseSSHConnector {
         await running?.value
     }
 
-    @MainActor private final class Operation {
+    @MainActor private final class Operation: ReverseSSHOperation {
         var server: ReverseSSHServer?
         var spec: SystemSSHSpec?
         var files: SystemSFTP?
@@ -294,8 +345,15 @@ enum ReverseSSHConnector {
         var remotePort: Int?
         var connectCommand: String?
 
-        func open(_ spec: SystemSSHSpec, bundleBasePath: String?, progress: (String) -> Void) async throws {
-            self.spec = spec
+        init(spec: SystemSSHSpec) { self.spec = spec }
+
+        func checkConnection() async throws {
+            guard let spec else { throw FileFailure.disconnected }
+            _ = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "check"] + spec.multiplexArguments)
+        }
+
+        func open(bundleBasePath: String?, progress: (String) -> Void) async throws {
+            guard let spec else { throw FileFailure.disconnected }
             try Task.checkCancellation()
             progress("Checking macOS support…")
             let platform = try await ReverseSSHCommand.remote(spec, command: ReverseSSHConnector.supportedHostCommand)
@@ -369,4 +427,220 @@ enum ReverseSSHConnector {
         }
     }
 }
+#if canImport(Citadel)
+import Foundation
+@preconcurrency import Citadel
+@preconcurrency import NIOCore
+@preconcurrency import NIOPosix
+@preconcurrency import NIOSSH
+import CrowCore
+
+/// Reuses the authenticated in-app connection; never exports its saved SSH key.
+@MainActor final class NativeReverseSSHOperation: ReverseSSHOperation {
+    private let remote: RemoteConnection
+    private let client: SSHClient
+    private(set) var server: ReverseSSHServer?
+    private(set) var connectCommand: String?
+    private var directory: String?
+    private var forwarding: Task<Void, Never>?
+    private var forwardingError: Error?
+    private var setupFiles: SFTPClient?
+
+    init(remote: RemoteConnection) throws {
+        guard let client = remote.client, client.isConnected else { throw FileFailure.disconnected }
+        self.remote = remote; self.client = client
+    }
+
+    func open(bundleBasePath: String?, progress: (String) -> Void) async throws {
+        progress("Checking macOS support…")
+        guard ReverseSSHConnector.supportsHost(try await command(ReverseSSHConnector.supportedHostCommand)) else {
+            throw CommandError("Reverse SSH is supported only between macOS devices.")
+        }
+        try Task.checkCancellation()
+        progress("Preparing this Mac…")
+        let server = try await ReverseSSHServer.create()
+        self.server = server
+        try Task.checkCancellation()
+        progress("Opening reverse connection…")
+        let port = try await openForward(to: server.port)
+        progress("Preparing server access…")
+        let files = try await client.openSFTP()
+        setupFiles = files
+        defer { setupFiles = nil }
+        do {
+            let base = try await files.getRealPath(atPath: bundleBasePath ?? ".")
+            let storage = (base as NSString).appendingPathComponent(".crow")
+            try await ensurePrivateDirectory(storage, files: files)
+            let bundles = storage + "/reverse-ssh"
+            try await ensurePrivateDirectory(bundles, files: files)
+            let path = bundles + "/" + UUID().uuidString
+            var attributes = SFTPFileAttributes(); attributes.permissions = 0o700
+            // Only remember directories we actually created (never delete an existing one).
+            try await files.createDirectory(atPath: path, attributes: attributes)
+            directory = path
+            let entries: [(String, String, UInt32)] = [
+                ("identity", try server.privateKey, 0o600),
+                ("known_hosts", "[127.0.0.1]:\(port) \(try server.hostPublicKey)", 0o600),
+                ("connect", ReverseSSHConnector.script(path: path, port: port, username: server.username), 0o700)
+            ]
+            for (name, text, mode) in entries {
+                try Task.checkCancellation()
+                var attributes = SFTPFileAttributes(); attributes.permissions = mode
+                let filePath = path + "/" + name
+                try await files.withFile(filePath: filePath, flags: [.write, .create, .forceCreate], attributes: attributes) { file in
+                    let actual = try await file.readAttributes()
+                    guard let permissions = actual.permissions, permissions & 0o777 == mode else {
+                        throw CommandError("The server must support private file permissions for Reverse SSH.")
+                    }
+                    try await file.write(ByteBuffer(string: text), at: 0)
+                }
+            }
+            try await files.close()
+            connectCommand = SystemSSHBridge.quote(path + "/connect")
+        } catch { try? await files.close(); throw error }
+        try Task.checkCancellation()
+        progress("Verifying server → Mac access…")
+        try await verify()
+    }
+
+    private func ensurePrivateDirectory(_ path: String, files: SFTPClient) async throws {
+        var attributes = SFTPFileAttributes(); attributes.permissions = 0o700
+        do { try await files.createDirectory(atPath: path, attributes: attributes) }
+        catch { /* Validate existing storage without following a symlink below. */ }
+        let components = try await files.listDirectory(atPath: (path as NSString).deletingLastPathComponent)
+            .flatMap(\.components)
+        let mode = components.first { $0.filename == (path as NSString).lastPathComponent }?.attributes.permissions
+        guard let mode, mode & 0o170777 == 0o040700 else {
+            throw CommandError("Crow storage must be a private directory (permissions 700): " + path)
+        }
+    }
+
+    private func command(_ text: String) async throws -> String {
+        guard remote.client === client else { throw FileFailure.disconnected }
+        return try await remote.workspaceCommand(text, operation: "Reverse SSH")
+    }
+
+    func checkConnection() async throws {
+        if let forwardingError { throw forwardingError }
+        guard client.isConnected, remote.client === client else { throw FileFailure.disconnected }
+    }
+
+    func verify() async throws {
+        try await checkConnection()
+        guard let connectCommand else { throw CommandError("Reverse SSH is not ready.") }
+        let marker = "CROW_REVERSE_OK_" + UUID().uuidString
+        let output = try await command("exec " + connectCommand + " -T " + SystemSSHBridge.quote("printf '%s\\n' '" + marker + "'"))
+        guard output.components(separatedBy: .newlines).contains(marker) else {
+            throw CommandError("The reverse connection did not return its authenticated readiness response.")
+        }
+    }
+
+    private func openForward(to localPort: Int) async throws -> Int {
+        // Citadel registers and cancels using the requested port, so port 0 cannot
+        // route accepted channels or cancel the allocated listener correctly.
+        for attempt in 0..<3 {
+            let port = Int.random(in: 49152...65535)
+            let (opened, sink) = AsyncThrowingStream<Int, Error>.makeStream()
+            let client = client
+            forwardingError = nil
+            forwarding = Task { [weak self] in
+                do {
+                    try await client.withRemotePortForward(host: "127.0.0.1", port: port,
+                        configure: { channel in
+                            channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+                                .flatMap { channel.pipeline.addHandler(ReverseSSHChannelCodec()) }
+                        }, onOpen: { forward in sink.yield(forward.boundPort) },
+                        onAccept: { (incoming: NIOAsyncChannel<ByteBuffer, ByteBuffer>) in
+                            try await Self.relay(incoming, to: localPort)
+                        })
+                } catch {
+                    sink.finish(throwing: error)
+                    if !(error is CancellationError) { self?.forwardingError = error }
+                }
+                sink.finish()
+            }
+            let deadline = Task {
+                try? await Task.sleep(for: .seconds(12))
+                if !Task.isCancelled { sink.finish(throwing: CommandError("Reverse SSH port forwarding timed out.")) }
+            }
+            do {
+                defer { deadline.cancel() }
+                for try await port in opened { try Task.checkCancellation(); return port }
+                throw CancellationError()
+            } catch {
+                forwarding?.cancel()
+                await forwarding?.value
+                try Task.checkCancellation()
+                // A chosen port may already be in use. Retry only explicit refusal.
+                guard attempt < 2, error is NIOSSHError else { throw error }
+            }
+        }
+        throw CommandError("The SSH server refused to open a reverse port.")
+    }
+
+    nonisolated private static func relay(_ incoming: NIOAsyncChannel<ByteBuffer, ByteBuffer>, to port: Int) async throws {
+        try await incoming.executeThenClose { input, output in
+            let local = try await ClientBootstrap(group: incoming.channel.eventLoop)
+                .channelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+                .connect(host: "127.0.0.1", port: port)
+                .flatMapThrowing { try NIOAsyncChannel<ByteBuffer, ByteBuffer>(wrappingChannelSynchronously: $0,
+                    configuration: .init(isOutboundHalfClosureEnabled: true)) }.get()
+            try await local.executeThenClose { localInput, localOutput in
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        for try await bytes in input { try await localOutput.write(bytes) }
+                        localOutput.finish()
+                    }
+                    group.addTask {
+                        for try await bytes in localInput { try await output.write(bytes) }
+                        output.finish()
+                    }
+                    // Preserve the reply after stdin EOF (e.g. a piped command).
+                    try await group.waitForAll()
+                }
+            }
+        }
+    }
+
+    func revoke() {
+        server?.stop()
+        forwarding?.cancel()
+        let files = setupFiles
+        Task.detached { try? await files?.close() }
+    }
+
+    func close() async {
+        revoke()
+        let forwarding = forwarding, directory = directory, client = client
+        // Cleanup must not inherit the cancelled toggle task.
+        await Task.detached {
+            await forwarding?.value
+            if let directory, client.isConnected, let files = try? await client.openSFTP() {
+                for name in ["identity", "known_hosts", "connect"] { try? await files.remove(at: directory + "/" + name) }
+                try? await files.rmdir(at: directory)
+                try? await files.close()
+            }
+        }.value
+        self.forwarding = nil; self.directory = nil; server = nil
+    }
+}
+
+private final class ReverseSSHChannelCodec: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias InboundOut = ByteBuffer
+    typealias OutboundIn = ByteBuffer
+    typealias OutboundOut = SSHChannelData
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let packet = unwrapInboundIn(data)
+        guard packet.type == .channel, case .byteBuffer(let bytes) = packet.data else {
+            context.close(promise: nil); return
+        }
+        context.fireChannelRead(wrapInboundOut(bytes))
+    }
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        context.write(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(unwrapOutboundIn(data)))), promise: promise)
+    }
+}
+#endif
 #endif

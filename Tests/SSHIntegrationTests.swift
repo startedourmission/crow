@@ -28,6 +28,116 @@ final class SSHIntegrationTests: XCTestCase {
         defer { try? pipe.fileHandleForWriting.close() }
         XCTAssertThrowsError(try pipe.fileHandleForWriting.write(contentsOf: Data([1, 2, 3])))
     }
+    @MainActor private func verifyNativeReverseSSH(host: SSHHost, credential: HostCredential, root: URL) async throws {
+        let remote = RemoteConnection()
+        try await remote.connect(host, credential: credential)
+        let model = AppModel(vaultURL: root.appendingPathComponent("reverse-vault"))
+        defer { model.shutdown() }
+        let state = WorkspaceState(.init(workspace: Workspace(name: "Native SSH", kind: .remote(hostID: host.id, path: root.path),
+            connection: .connected), rootPath: root.path))
+        state.remote = remote
+        model.states.append(state); model.hosts = [host]
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        model.reverseSSHPasteboard = board
+        let session = ReverseSSHSession(bundleBasePath: root.path)
+        model.reverseSSHConnections[host.id] = session
+        defer { session.stop() }
+        func ready(_ session: ReverseSSHSession) async throws -> String {
+            for _ in 0..<400 where session.connectCommand == nil && session.isEnabled {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            return try XCTUnwrap(session.connectCommand, "Native reverse startup: " + session.status)
+        }
+        XCTAssertNil(host.commandArguments, "Exercise a saved-key host without a terminal SSH command")
+        model.setReverseSSH(true, for: host)
+        let command = try await ready(session)
+        XCTAssertNil(model.connectedSystemSSH(for: host.id), "Native reverse must not create or replace the terminal connection")
+        XCTAssertTrue(state.remote === remote)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(board.string(forType: .string), command)
+        let reply = try await remote.workspaceCommand(command + " -T 'printf NATIVE_REVERSE_OK'")
+        XCTAssertEqual(reply, "NATIVE_REVERSE_OK")
+        let piped = try await remote.workspaceCommand("printf '한글 👋' | " + command + " -T 'cat; printf EOF_OK'")
+        XCTAssertEqual(piped, "한글 👋EOF_OK", "Reverse forwarding must keep output alive after stdin EOF")
+        let other = ReverseSSHSession(bundleBasePath: root.path)
+        defer { other.stop() }
+        other.startOperation { try NativeReverseSSHOperation(remote: remote) }
+        let second = try await ready(other)
+        XCTAssertNotEqual(command, second)
+        await other.stopAndWait()
+        let survives = try await remote.workspaceCommand(command + " -T 'printf STILL_ALIVE'")
+        XCTAssertEqual(survives, "STILL_ALIVE", "Stopping one native forward must preserve another on the same SSH connection")
+        let bundle = String(command.dropFirst().dropLast())
+        let script = try String(contentsOfFile: bundle, encoding: .utf8)
+        let port = try XCTUnwrap(script.components(separatedBy: " -p ").last?.split(separator: " ").first)
+        let marker = root.appendingPathComponent("reverse-live")
+        var liveFinished = false
+        let live = Task {
+            _ = try? await remote.workspaceCommand(command + " -T " + SystemSSHBridge.quote("touch " + SystemSSHBridge.quote(marker.path) + "; sleep 20"))
+            liveFinished = true
+        }
+        defer { live.cancel() }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: marker.path) { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "A live native reverse session must start")
+        let stopping = Task { await session.stopAndWait() }
+        for _ in 0..<40 where !liveFinished { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(liveFinished, "Native Off must revoke already authenticated sessions immediately")
+        await stopping.value
+        XCTAssertFalse(FileManager.default.fileExists(atPath: (bundle as NSString).deletingLastPathComponent), "Native Off must remove the temporary credentials")
+        let closed = try await remote.workspaceCommand("if /usr/bin/nc -z -G 1 127.0.0.1 " + port + " 2>/dev/null; then printf OPEN; else printf CLOSED; fi")
+        XCTAssertEqual(closed, "CLOSED", "Native Off must cancel the actual allocated remote listener")
+        let normal = try await remote.workspaceCommand("printf NORMAL_SSH_ALIVE")
+        XCTAssertEqual(normal, "NORMAL_SSH_ALIVE")
+        // A real setup failure must reach the app's visible error, not only the tooltip.
+        let storage = root.appendingPathComponent(".crow")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: storage.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: storage.path) }
+        model.setReverseSSH(true, for: host)
+        for _ in 0..<400 where session.isEnabled { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertFalse(session.isEnabled)
+        XCTAssertTrue(model.errorMessage?.contains("permissions 700") == true, model.errorMessage ?? "No visible reverse failure")
+        XCTAssertTrue(model.errorMessage?.contains(host.userAtHost) == true)
+        XCTAssertNil(session.connectCommand)
+        await session.stopAndWait()
+        model.errorMessage = nil
+        session.startOperation(onFailure: { _ in XCTFail("Turning Off during startup must not display an error") }) {
+            try await Task.sleep(for: .seconds(5))
+            return try NativeReverseSSHOperation(remote: remote)
+        }
+        await session.stopAndWait()
+        XCTAssertFalse(session.isEnabled)
+        XCTAssertNil(session.connectCommand)
+    }
+
+    @MainActor func testReverseSSHSetupTimeoutReportsFailureAndRevokes() async throws {
+        final class StalledSetup: ReverseSSHOperation {
+            var server: ReverseSSHServer? { nil }
+            var connectCommand: String? { nil }
+            var revoked = false
+            var closed = false
+            func open(bundleBasePath: String?, progress: (String) -> Void) async throws {
+                progress("Preparing server access…")
+                try await Task.sleep(for: .seconds(60))
+            }
+            func checkConnection() async throws {}
+            func verify() async throws {}
+            func revoke() { revoked = true }
+            func close() async { closed = true }
+        }
+        let operation = StalledSetup()
+        let session = ReverseSSHSession(setupTimeout: .milliseconds(50))
+        var message: String?
+        session.startOperation(onFailure: { message = $0 }) { operation }
+        for _ in 0..<100 where message == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(session.isEnabled)
+        XCTAssertTrue(message?.contains("Preparing server access") == true)
+        XCTAssertTrue(message?.contains("timed out") == true)
+        XCTAssertTrue(operation.revoked)
+        await session.stopAndWait()
+        XCTAssertTrue(operation.closed)
+    }
+
     @MainActor func testLoopbackSSHHostVerificationSFTPAndPTY() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-sshd-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -99,6 +209,7 @@ final class SSHIntegrationTests: XCTestCase {
         let connection = RemoteConnection()
         try await connection.connect(host, credential: credential)
         defer { Task { await connection.disconnect() } }
+        try await verifyNativeReverseSSH(host: host, credential: credential, root: root)
         let commandOutput = try await connection.workspaceCommand("printf '__COMMAND_OK__'")
         XCTAssertEqual(commandOutput, "__COMMAND_OK__")
         do {

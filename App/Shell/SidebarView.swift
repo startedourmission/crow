@@ -434,6 +434,7 @@ struct ReverseSSHHostButton: View {
     let host: SSHHost
     @State private var supportsReverseSSH: Bool?
     private var connection: SystemSSHSpec? { model.connectedSystemSSH(for: host.id) }
+    private var nativeConnection: RemoteConnection? { model.connectedNativeSSH(for: host.id) }
     private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }
     private var enabled: Bool { session?.isEnabled == true }
     private var preparing: Bool { enabled && session?.connectCommand == nil }
@@ -445,13 +446,16 @@ struct ReverseSSHHostButton: View {
     var body: some View {
         Group {
             if supportsReverseSSH != false || enabled { toggle }
-        }.task(id: connection?.socket) {
+        }.task(id: connection?.socket ?? (nativeConnection == nil ? "disconnected" : "native")) {
             supportsReverseSSH = nil
-            guard let spec = connection else { return }
             do {
-                let output = try await ReverseSSHCommand.remote(spec, command: ReverseSSHConnector.supportedHostCommand)
+                let output: String
+                if let spec = connection {
+                    output = try await ReverseSSHCommand.remote(spec, command: ReverseSSHConnector.supportedHostCommand)
+                } else if let remote = nativeConnection {
+                    output = try await remote.workspaceCommand(ReverseSSHConnector.supportedHostCommand, operation: "Reverse SSH")
+                } else { return }
                 try Task.checkCancellation()
-                guard connection?.socket == spec.socket else { return }
                 supportsReverseSSH = ReverseSSHConnector.supportsHost(output)
             } catch { /* Startup checks again before creating a tunnel if detection was unavailable. */ }
         }
