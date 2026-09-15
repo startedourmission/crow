@@ -8,7 +8,7 @@ struct ActivityBar: View {
         VStack(spacing: 4) {
             paneButton(.files, symbol: "doc.text")
             paneButton(.workspaces, symbol: "square.stack.3d.up")
-            paneButton(.automation, symbol: "clock.arrow.2.circlepath")
+            paneButton(.automation, symbol: "clock")
             Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 18)).crowForeground(CrowTheme.textDim)
