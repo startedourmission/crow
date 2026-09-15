@@ -114,10 +114,10 @@ struct DiscoveredSSHKey: Identifiable {
 
 extension SSHKeyStore {
     /// Discovery reads the public envelope only. Encrypted private material is opened on selection.
-    func discoverSystemKeys(in directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")) throws -> [DiscoveredSSHKey] {
+    func discoverSystemKeys(in directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh"), savedKeys: [SSHIdentity]? = nil) throws -> [DiscoveredSSHKey] {
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-        var seen = Set(try identities().map(\.publicKey))
+        var seen = Set(try (savedKeys ?? identities()).map(\.publicKey))
         return files.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
             guard let key = try? Self.inspectSystemKey(at: url), seen.insert(key.publicKey).inserted else { return nil }
             return key

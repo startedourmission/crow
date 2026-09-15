@@ -74,6 +74,22 @@ final class SSHKeyStoreTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testSystemDiscoveryCanRunWhenSavedKeyLibraryIsUnreadable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-discovery-unavailable-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("id_ed25519")
+        let privateKey = Curve25519.Signing.PrivateKey().makeSSHRepresentation()
+        try Data(privateKey.utf8).write(to: file)
+        try SecureStore.set(Data("unreadable library".utf8), for: store.account)
+        XCTAssertThrowsError(try store.identities())
+        let keys = try store.discoverSystemKeys(in: root, savedKeys: [])
+        XCTAssertEqual(keys.count, 1)
+        XCTAssertEqual(keys.first?.name, "id_ed25519")
+        XCTAssertEqual(try SecureStore.data(for: store.account), Data("unreadable library".utf8))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), privateKey)
+    }
+
     func testSystemDiscoveryFindsKeysWithoutChangingFilesAndSkipsDuplicates() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-discovery-test-" + UUID().uuidString)
         XCTAssertTrue(try store.discoverSystemKeys(in: root).isEmpty)

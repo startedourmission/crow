@@ -15,6 +15,7 @@ struct SSHKeysView: View {
     @State private var creating = false
     @State private var path: [UUID] = []
     @State private var error: String?
+    @State private var loading = false
     #if os(macOS)
     @State private var systemKeys: [DiscoveredSSHKey] = []
     @State private var systemKey: DiscoveredSSHKey?
@@ -33,7 +34,7 @@ struct SSHKeysView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                if isEmpty {
+                if isEmpty && error == nil {
                     ContentUnavailableView("No SSH Keys", systemImage: "key", description: Text("Create a key here or import an existing private key."))
                 }
                 ForEach(keys) { key in
@@ -68,7 +69,10 @@ struct SSHKeysView: View {
                     footer: { Text("Found automatically. Select a key to view its public key or use it in Crow.") }
                 }
                 #endif
-                if let error { Text(error).foregroundStyle(CrowTheme.danger) }
+                if let error {
+                    Text(error).foregroundStyle(CrowTheme.danger).textSelection(.enabled)
+                    Button("Retry", action: reload).disabled(loading)
+                }
             }
             .navigationTitle("SSH Keys")
             .toolbar {
@@ -107,18 +111,34 @@ struct SSHKeysView: View {
         .onAppear(perform: reload)
         #if os(macOS)
         .frame(minWidth: 440, idealWidth: 540, minHeight: 500)
-        .onChange(of: scenePhase) { _, next in if next == .active { reload() } }
+        .onChange(of: scenePhase) { _, next in
+            // Returning from a denied Keychain prompt must not immediately ask again.
+            if next == .active && error == nil { reload() }
+        }
         #endif
     }
 
     private func reload() {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        var failures: [String] = []
         do {
-            keys = try SSHKeyStore.shared.identities(); error = nil
-            #if os(macOS)
-            systemKeys = try SSHKeyStore.shared.discoverSystemKeys()
-            #endif
+            keys = try SSHKeyStore.shared.identities()
+        } catch {
+            keys = []
+            let failure = error as NSError
+            if failure.domain == NSOSStatusErrorDomain {
+                failures.append("Could not access saved SSH keys in this device’s Keychain (\(failure.code)). Unlock the keychain and allow Crow access, then retry.")
+            } else {
+                failures.append("Could not load saved SSH keys: " + error.localizedDescription)
+            }
         }
-        catch { self.error = error.localizedDescription }
+        #if os(macOS)
+        do { systemKeys = try SSHKeyStore.shared.discoverSystemKeys(savedKeys: keys) }
+        catch { systemKeys = []; failures.append("Could not list ~/.ssh keys: " + error.localizedDescription) }
+        #endif
+        error = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 }
 
