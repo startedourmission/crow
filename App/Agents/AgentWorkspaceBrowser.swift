@@ -148,16 +148,14 @@ struct GitCloneSheet: View {
             let matches: [String]
             if device == "local" {
                 #if os(macOS)
-                matches = try await Task.detached { try FolderPathCompletion.suggestions(for: value) }.value
+                matches = try await Task.detached { Array(try FolderPathCompletion.suggestions(for: value).prefix(4)) }.value
                 #else
                 matches = []
                 #endif
             } else if let state = remoteState {
-                let browsing = value.hasSuffix("/") || value == "~"
-                let base = browsing ? value : (value as NSString).deletingLastPathComponent
-                let prefix = browsing ? "" : (value as NSString).lastPathComponent
-                let result = try await model.remoteDirectory(in: state.id, at: base.isEmpty ? "~" : base)
-                matches = result.folders.filter { $0.name.lowercased().hasPrefix(prefix.lowercased()) }
+                let query = FolderPathQuery(value, relativeTo: state.snapshot.rootPath)
+                let result = try await model.remoteDirectory(in: state.id, at: query.directory)
+                matches = result.folders.filter { query.matches($0.name) }
                     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.prefix(4).map { $0.path + "/" }
             } else { matches = [] }
             try Task.checkCancellation()
@@ -171,7 +169,7 @@ struct GitCloneSheet: View {
         panel.allowsMultipleSelection = false; panel.prompt = "Choose"
         let completion = FolderPathCompletion(panel: panel, initialDirectory: (parent as NSString).expandingTildeInPath)
         let accessory = NSHostingView(rootView: FolderPathAccessory(completion: completion))
-        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 164)
+        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 208)
         panel.accessoryView = accessory; panel.isAccessoryViewDisclosed = true; folderPanel = panel
         panel.begin { result in
             if result == .OK, let url = panel.url { parent = url.path }

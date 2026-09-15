@@ -1,6 +1,22 @@
 import CrowCore
 import SwiftUI
 
+/// A path prefix selects a directory; the final component filters its children.
+struct FolderPathQuery {
+    let directory: String
+    let fragment: String
+    init(_ input: String, relativeTo base: String) {
+        let browsing = input.isEmpty || input.hasSuffix("/") || ["~", ".", ".."].contains(input)
+        let path = input.isEmpty ? base : input.hasPrefix("/") || input == "~" || input.hasPrefix("~/")
+            ? input : (base as NSString).appendingPathComponent(input)
+        directory = browsing ? path : (path as NSString).deletingLastPathComponent
+        fragment = browsing ? "" : (path as NSString).lastPathComponent
+    }
+    func matches(_ name: String) -> Bool {
+        (fragment.hasPrefix(".") || !name.hasPrefix(".")) && (fragment.isEmpty || name.localizedStandardContains(fragment))
+    }
+}
+
 struct SidebarTopBar: View {
     @Environment(AppModel.self) private var model
     #if os(macOS)
@@ -448,6 +464,10 @@ struct RemoteProjectFolderPicker: View {
     @State private var path = ""
     @State private var loadedPath: String?
     @State private var folders: [FileEntry] = []
+    @State private var loadedFolders: [FileEntry] = []
+    @State private var resolvedPath: String?
+    @State private var searching = false
+    @State private var selectedIndex = 0
     @State private var loading = false
     @State private var error: String?
     @State private var request: Task<Void, Never>?
@@ -463,37 +483,55 @@ struct RemoteProjectFolderPicker: View {
                 Button {
                     if let loadedPath { browse((loadedPath as NSString).deletingLastPathComponent) }
                 } label: { Image(systemName: "arrow.up") }.help("Parent Folder").disabled(loadedPath == nil || loadedPath == "/")
-                TextField("Remote folder path", text: $path).textFieldStyle(.roundedBorder).onSubmit { browse(path) }
+                #if os(macOS)
+                FolderCompletionTextField(path: $path, onComplete: complete, onMove: moveSelection, onSubmit: { browse(resolvedPath ?? path) })
+                    .frame(height: 24).disabled(loading)
+                #else
+                TextField("Remote folder path or part of a name", text: $path).textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled().textInputAutocapitalization(.never)
+                    .onSubmit { browse(resolvedPath ?? path) }
+                    .onKeyPress(.tab) { complete() == nil ? .ignored : .handled }
+                    .onKeyPress(.downArrow) { moveSelection(1); return .handled }
+                    .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+                #endif
                 Button("Go") { browse(path) }
             }
             Button { choosingTerminal = true } label: { Label("From Terminal…", systemImage: "terminal") }
                 .accessibilityIdentifier("crow.project.from-terminal")
-            List(folders) { folder in
-                Button { browse(folder.path) } label: {
-                    Label(folder.name, systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(CrowButtonStyle())
+            ScrollViewReader { reader in
+                List(Array(folders.enumerated()), id: \.element.id) { index, folder in
+                    Button { browse(folder.path) } label: {
+                        Label(folder.name, systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(CrowButtonStyle())
+                        .listRowBackground(index == selectedIndex ? CrowTheme.bg3 : Color.clear).id(folder.id)
+                }.onChange(of: selectedIndex) { _, index in
+                    if folders.indices.contains(index) { reader.scrollTo(folders[index].id) }
+                }
             }
             .overlay {
-                if loading { ProgressView() }
-                else if folders.isEmpty && error == nil { Text("No subfolders").foregroundStyle(.secondary) }
+                if loading || searching { ProgressView() }
+                else if folders.isEmpty && error == nil { Text("No matching folders").foregroundStyle(.secondary) }
             }
+            .disabled(loading || searching)
+            Text("\(folders.count) folders · search any part of a name · Tab completes").font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).font(.caption).crowForeground(CrowTheme.danger).textSelection(.enabled) }
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Open Workspace") {
-                    guard let loadedPath else { return }
+                    guard let resolvedPath else { return }
                     loading = true; error = nil
                     request = Task {
-                        do { try await model.openRemoteWorkspace(loadedPath, from: workspaceID); dismiss() }
+                        do { try await model.openRemoteWorkspace(resolvedPath, from: workspaceID); dismiss() }
                         catch is CancellationError {} catch { self.error = error.localizedDescription }
                         loading = false
                     }
-                }.keyboardShortcut(.defaultAction).disabled(loading || loadedPath == nil || path != loadedPath)
+                }.keyboardShortcut(.defaultAction).disabled(loading || searching || resolvedPath == nil)
             }
         }
         .padding(20).frame(minWidth: 380, idealWidth: 520, minHeight: 360, idealHeight: 440)
         .onAppear { browse(initialPath) }
+        .task(id: path) { await searchFolders() }
         .onDisappear { request?.cancel() }
         .sheet(isPresented: $choosingTerminal) {
             NavigationStack {
@@ -523,21 +561,94 @@ struct RemoteProjectFolderPicker: View {
         }
     }
     private func browse(_ requested: String) {
-        request?.cancel(); loading = true; error = nil; folders = []; loadedPath = nil; path = requested
+        let destination = requested.hasPrefix("/") || requested.hasPrefix("~") ? requested
+            : ((loadedPath ?? initialPath) as NSString).appendingPathComponent(requested)
+        request?.cancel(); loading = true; searching = false; error = nil; folders = []; resolvedPath = nil; path = destination
         request = Task {
             do {
-                let result = try await model.remoteDirectory(in: workspaceID, at: requested)
+                let result = try await model.remoteDirectory(in: workspaceID, at: destination)
                 try Task.checkCancellation()
-                path = result.path; loadedPath = result.path; folders = result.folders; loading = false
+                path = result.path; loadedPath = result.path; resolvedPath = result.path
+                loadedFolders = result.folders.filter { !$0.name.hasPrefix(".") }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                folders = loadedFolders; selectedIndex = 0; loading = false
             } catch is CancellationError {} catch {
                 if !Task.isCancelled { self.error = error.localizedDescription; loading = false }
             }
         }
     }
+    private func searchFolders() async {
+        guard !loading else { return }
+        let value = path
+        if value == loadedPath {
+            folders = loadedFolders; resolvedPath = loadedPath; selectedIndex = 0; searching = false; return
+        }
+        searching = true; resolvedPath = nil; error = nil
+        defer { if path == value { searching = false } }
+        do {
+            try await Task.sleep(for: .milliseconds(150))
+            let query = FolderPathQuery(value, relativeTo: loadedPath ?? initialPath)
+            let result = try await model.remoteDirectory(in: workspaceID, at: query.directory)
+            try Task.checkCancellation()
+            guard path == value, !loading else { return }
+            folders = result.folders.filter { query.matches($0.name) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            selectedIndex = 0
+            resolvedPath = query.fragment.isEmpty ? result.path : folders.first(where: { $0.name == query.fragment })?.path
+        } catch is CancellationError {} catch {
+            if !Task.isCancelled, path == value, !loading { folders = []; self.error = error.localizedDescription }
+        }
+    }
+    private func moveSelection(_ offset: Int) {
+        guard !folders.isEmpty else { return }
+        selectedIndex = max(0, min(folders.count - 1, selectedIndex + offset))
+    }
+    private func complete() -> String? {
+        guard !loading, !searching, folders.indices.contains(selectedIndex) else { return nil }
+        let result = folders[selectedIndex].path + "/"
+        browse(result); return result
+    }
 }
 
 #if os(macOS)
 import AppKit
+
+struct FolderCompletionTextField: NSViewRepresentable {
+    @Binding var path: String
+    let onComplete: () -> String?
+    let onMove: (Int) -> Void
+    let onSubmit: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.placeholderString = "Folder path or part of a name"
+        field.isBezeled = true; field.bezelStyle = .roundedBezel; field.font = .systemFont(ofSize: 13)
+        field.delegate = context.coordinator; field.setAccessibilityIdentifier("crow.project.path")
+        return field
+    }
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != path { field.stringValue = path }
+    }
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: FolderCompletionTextField
+        init(_ parent: FolderCompletionTextField) { self.parent = parent }
+        func controlTextDidChange(_ notification: Notification) {
+            if let field = notification.object as? NSTextField { parent.path = field.stringValue }
+        }
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard !textView.hasMarkedText() else { return false }
+            if selector == #selector(NSResponder.moveDown(_:)) { parent.onMove(1); return true }
+            if selector == #selector(NSResponder.moveUp(_:)) { parent.onMove(-1); return true }
+            if selector == #selector(NSResponder.insertTab(_:)), let result = parent.onComplete() {
+                parent.path = result; (control as? NSTextField)?.stringValue = result
+                textView.string = result
+                textView.setSelectedRange(NSRange(location: (result as NSString).length, length: 0))
+                return true
+            }
+            if selector == #selector(NSResponder.insertNewline(_:)) { parent.onSubmit(); return true }
+            return false
+        }
+    }
+}
 
 private struct NativeExplorerFileSource: NSViewRepresentable {
     let model: AppModel

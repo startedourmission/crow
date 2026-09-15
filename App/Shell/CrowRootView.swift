@@ -722,6 +722,7 @@ private struct FolderPickerPresentation: ViewModifier {
 @MainActor @Observable final class FolderPathCompletion {
     var path: String
     var matches: [String] = []
+    var selectedIndex = 0
     var error: String?
     @ObservationIgnored private weak var panel: NSOpenPanel?
     @ObservationIgnored private var observation: NSKeyValueObservation?
@@ -735,35 +736,43 @@ private struct FolderPickerPresentation: ViewModifier {
             }
         }
     }
-    nonisolated static func suggestions(for input: String, home: String = FileManager.default.homeDirectoryForCurrentUser.path) throws -> [String] {
+    nonisolated static func suggestions(for input: String, home: String = FileManager.default.homeDirectoryForCurrentUser.path, relativeTo base: String? = nil) throws -> [String] {
         let expanded = input == "~" ? home : input.hasPrefix("~/") ? home + input.dropFirst() : input
-        guard expanded.hasPrefix("/") else { return [] }
-        let directory = input.hasSuffix("/") || input == "~" ? expanded : (expanded as NSString).deletingLastPathComponent
-        let prefix = input.hasSuffix("/") || input == "~" ? "" : (expanded as NSString).lastPathComponent
+        let query = FolderPathQuery(input == "~" ? expanded + "/" : expanded, relativeTo: base ?? home)
+        let directory = query.directory
         return try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: [.isDirectoryKey]).filter {
-            $0.lastPathComponent.localizedStandardContains(prefix) && $0.lastPathComponent.lowercased().hasPrefix(prefix.lowercased())
-                && (prefix.hasPrefix(".") || !$0.lastPathComponent.hasPrefix("."))
+            query.matches($0.lastPathComponent)
                 && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-        }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }.prefix(4).map {
+        }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }.map {
             let result = (directory as NSString).appendingPathComponent($0.lastPathComponent) + "/"
             return input.hasPrefix("~") && result.hasPrefix(home + "/") ? "~" + result.dropFirst(home.count) : result
         }
     }
     func refresh() async {
         let value = path
+        let base = panel?.directoryURL?.path
         do {
             try await Task.sleep(for: .milliseconds(120))
-            let results = try await Task.detached(priority: .userInitiated) { try Self.suggestions(for: value) }.value
+            let results = try await Task.detached(priority: .userInitiated) { try Self.suggestions(for: value, relativeTo: base) }.value
             guard !Task.isCancelled, path == value else { return }
-            matches = results; error = nil
+            matches = results; selectedIndex = 0; error = nil
         } catch is CancellationError {} catch { if !Task.isCancelled { matches = []; self.error = "This folder cannot be read." } }
     }
     func choose(_ value: String) {
-        path = value
-        let expanded = (value as NSString).expandingTildeInPath
+        let base = panel?.directoryURL?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let expanded = value.hasPrefix("/") || value.hasPrefix("~") ? (value as NSString).expandingTildeInPath : (base as NSString).appendingPathComponent(value)
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: expanded, isDirectory: &directory), directory.boolValue else { error = "Enter an existing folder path."; return }
+        path = expanded + (expanded.hasSuffix("/") ? "" : "/")
         panel?.directoryURL = URL(fileURLWithPath: expanded); error = nil
+    }
+    func complete() -> String? {
+        guard matches.indices.contains(selectedIndex) else { return nil }
+        choose(matches[selectedIndex]); return path
+    }
+    func moveSelection(_ offset: Int) {
+        guard !matches.isEmpty else { return }
+        selectedIndex = min(matches.count - 1, max(0, selectedIndex + offset))
     }
 }
 
@@ -776,14 +785,25 @@ struct FolderPathAccessory: View {
                 FolderPathInput(completion: completion).frame(height: 24)
                 Button("Go") { completion.choose(completion.path) }
             }
-            ForEach(completion.matches, id: \.self) { path in
-                Button { completion.choose(path) } label: {
-                    Label(path, systemImage: "folder").font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(.plain).padding(.leading, 36)
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(completion.matches.enumerated()), id: \.element) { index, path in
+                            Button { completion.choose(path) } label: {
+                                Label((path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) as NSString).lastPathComponent, systemImage: "folder")
+                                    .font(.system(size: 12)).lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(4)
+                                    .background(index == completion.selectedIndex ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                                    .contentShape(Rectangle())
+                            }.buttonStyle(.plain).id(index)
+                        }
+                    }
+                }.frame(height: 126)
+                    .onChange(of: completion.selectedIndex) { _, index in reader.scrollTo(index) }
             }
             if let error = completion.error { Text(error).font(.caption).foregroundStyle(.secondary) }
-            Spacer(minLength: 0)
+            else { Text(completion.matches.isEmpty ? "No matching folders" : "\(completion.matches.count) folders · ↑ ↓ select · Tab completes")
+                .font(.caption).foregroundStyle(.secondary) }
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
             .task(id: completion.path) { await completion.refresh() }
     }
@@ -809,9 +829,12 @@ struct FolderPathInput: NSViewRepresentable {
             if let field = notification.object as? NSTextField { completion.path = field.stringValue }
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.insertTab(_:)), let first = completion.matches.first {
-                completion.choose(first)
+            guard !textView.hasMarkedText() else { return false }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) { completion.moveSelection(1); return true }
+            if commandSelector == #selector(NSResponder.moveUp(_:)) { completion.moveSelection(-1); return true }
+            if commandSelector == #selector(NSResponder.insertTab(_:)), completion.complete() != nil {
                 (control as? NSTextField)?.stringValue = completion.path
+                textView.string = completion.path
                 textView.setSelectedRange(NSRange(location: (completion.path as NSString).length, length: 0))
                 return true
             }

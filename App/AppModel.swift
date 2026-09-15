@@ -95,7 +95,7 @@ final class AppModel {
         panel.prompt = "Open"; panel.title = "Open Local Folder"
         let pathModel = FolderPathCompletion(panel: panel, initialDirectory: current.snapshot.workspace.isRemote ? nil : current.snapshot.rootPath)
         let accessory = NSHostingView(rootView: FolderPathAccessory(completion: pathModel))
-        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 164)
+        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 208)
         panel.accessoryView = accessory; panel.isAccessoryViewDisclosed = true
         folderSelectionPanel = panel
         NSApp.activate(ignoringOtherApps: true)

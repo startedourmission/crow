@@ -33,6 +33,42 @@ import WebKit
     }
 
     #if os(macOS)
+    func testFolderSearchMatchesPartialNamesAndListsAllChildren() throws {
+        for name in ["Project One", "Project Two", "Team Notes", "Archive", "Build", "한글 자료", ".hidden"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        XCTAssertEqual(try FolderPathCompletion.suggestions(for: "one", relativeTo: root.path), [root.path + "/Project One/"])
+        XCTAssertEqual(try FolderPathCompletion.suggestions(for: "~/자료", home: root.path), ["~/한글 자료/"])
+        XCTAssertEqual(try FolderPathCompletion.suggestions(for: "", relativeTo: root.path).count, 6)
+        XCTAssertEqual(try FolderPathCompletion.suggestions(for: root.path + "/").count, 6)
+        let query = FolderPathQuery("notes", relativeTo: "/srv/projects")
+        XCTAssertEqual(query.directory, "/srv/projects")
+        XCTAssertTrue(query.matches("Team Notes")); XCTAssertFalse(query.matches(".notes"))
+        XCTAssertEqual(FolderPathQuery("~/", relativeTo: "/srv").directory, "~/")
+        XCTAssertEqual(FolderPathQuery("~/proj", relativeTo: "/srv").directory, "~")
+        XCTAssertTrue(FolderPathQuery("/srv/", relativeTo: "~").fragment.isEmpty)
+    }
+
+    func testFolderArrowSelectionAndTabUpdateTheActiveEditor() async throws {
+        for name in ["Project One", "Project Two"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        let panel = NSOpenPanel(), field = NSTextField(), editor = NSTextView()
+        let value = FolderPathCompletion(panel: panel, initialDirectory: root.path)
+        value.path = root.path + "/ject"; await value.refresh()
+        let delegate = FolderPathInput.Coordinator(completion: value)
+        XCTAssertTrue(delegate.control(field, textView: editor, doCommandBy: #selector(NSResponder.moveDown(_:))))
+        XCTAssertTrue(delegate.control(field, textView: editor, doCommandBy: #selector(NSResponder.insertTab(_:))))
+        XCTAssertEqual(editor.string, root.path + "/Project Two/")
+        XCTAssertEqual(field.stringValue, editor.string)
+        var remotePath = "notes"
+        let remote = FolderCompletionTextField(path: Binding(get: { remotePath }, set: { remotePath = $0 }),
+            onComplete: { "/srv/Team Notes/" }, onMove: { _ in }, onSubmit: {})
+        XCTAssertTrue(remote.makeCoordinator().control(field, textView: editor, doCommandBy: #selector(NSResponder.insertTab(_:))))
+        XCTAssertEqual(remotePath, "/srv/Team Notes/")
+        XCTAssertEqual(editor.string, remotePath)
+    }
+
     func testFolderPathNativeTabCompletesAndMovesPicker() async throws {
         let folder = root.appendingPathComponent("Project One")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
