@@ -49,7 +49,7 @@ import AppKit
                 _ = try await ReverseSSHCommand.run("/bin/sh", ["-c", script])
                 throw CommandError("Legacy connector ran successfully")
             } catch {
-                try require(error.localizedDescription.contains("Shared-key terminal access is disabled"),
+                try require(error.localizedDescription.contains(ReverseSSHAccessPolicy.unavailableMessage),
                     "Legacy connector did not explain its refusal")
             }
             print("PASS legacy reverse access: no SSH connection, listener, copied command or password bypass")

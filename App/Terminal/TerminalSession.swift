@@ -26,6 +26,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var status = "Ready"
     var running = false
     var launchCommand: String?
+    var requiresManagedAgent = false
     var tmuxLocation: TmuxLocation?
     var agentProvider: AgentProvider?
     private(set) var agentActivity: AgentActivity = .unknown
@@ -62,6 +63,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     @ObservationIgnored private var appliedFontSize: Double?
     #if os(macOS)
     var systemSSH: SystemSSHSpec?
+    var managedLaunch: String?
     var shellEnvironment: [String]?
     @ObservationIgnored private var imageKeyMonitor: Any?
     #endif
@@ -115,6 +117,12 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
 
     func start() {
         guard !started else { return }; started = true
+        #if !os(macOS)
+        if requiresManagedAgent {
+            status = "Reverse agents require macOS."
+            view.feed(text: status + "\r\n"); return
+        }
+        #endif
         startActivityTracking()
         #if os(macOS)
         imageKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -122,6 +130,17 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                   event.modifierFlags.intersection([.control, .option, .command, .shift]) == .control,
                   event.charactersIgnoringModifiers?.lowercased() == "v" else { return event }
             return self.pasteClipboardImage() ? nil : event
+        }
+        if requiresManagedAgent {
+            guard let launch = managedLaunch, let executable = Bundle.main.executableURL, let local = view as? CrowLocalTerminalView else {
+                status = "Open a new reverse agent to grant access again."
+                view.feed(text: status + "\r\n"); return
+            }
+            local.startProcess(executable: executable.path, args: ["--crow-agent-client", launch],
+                environment: TerminalCommand.utf8Environment(ProcessInfo.processInfo.environment).map { "\($0.key)=\($0.value)" },
+                currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+            running = local.process.running; status = "Connecting to Crow server…"
+            return
         }
         if let systemSSH, let local = view as? CrowLocalTerminalView {
             let args: [String]
@@ -204,6 +223,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         #endif
         shellTask?.cancel(); shellTask = nil; inputTask?.cancel(); inputTask = nil; writer = nil
         #if os(macOS)
+        managedLaunch = nil
         (view as? LocalProcessTerminalView)?.terminate()
         #endif
         running = false; shellWorking = false; status = "Closed"

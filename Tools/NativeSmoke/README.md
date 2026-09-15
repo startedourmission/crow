@@ -66,8 +66,36 @@ Window Server pointer tracking. They verify routing and that OS window movement 
 enabled, not end-to-end physical dragging, snapping, or macOS keyboard shortcuts.
 Those require a separate manual check; these tests never take over the user's cursor.
 
-The shared-key Reverse SSH transport is retired until managed server mode and isolated
-agent access exist. `zsh Tools/run-reverse-ssh-smoke.sh` checks that neither a saved
+The shared-key Reverse SSH transport is permanently disabled. Managed agents use a
+separate paired TLS channel and an OS identity per execution. `zsh Tools/run-reverse-ssh-smoke.sh` checks that neither a saved
 password nor a direct low-level call can open a listener or issue a connection command.
 Passing the built app's DerivedData directory checks the same policy in production code.
 Live connection arguments are no longer supported. The fixture does not contact a server.
+
+Managed-agent security tests are in `AgentTerminalIntegrationTests`: real TLS-PSK
+handshake and wrong-key rejection, client-only enrollment decryption and tamper rejection,
+kernel Unix-socket identity checks, file scope
+and link rejection, ACL grant/revoke, command timeout, and restored-tab rejection.
+They run without administrator privileges.
+
+Before releasing server mode, complete the privileged two-Mac check:
+
+1. On the server Mac, install the signed Crow server from Settings and register a
+   self-contained native CLI. Register the client Mac's public key after comparing its
+   fingerprint, then pair the client with the encrypted code after comparing the server
+   fingerprint. Neither clipboard may contain a private key or the TLS secret.
+2. Open a reverse agent in a disposable user-owned project under `/Users`. Select
+   a disposable local folder. Check interactive input, resize, and `crow-reverse`
+   list/read/write from the agent's command tool.
+3. From another ordinary SSH login to the same account, invoke the helper with the
+   agent's socket path: it must fail. Changing argv or copying the wrapper cannot
+   change the kernel's peer UID. Do not test this rejection as root.
+4. Confirm local `exec` is rejected when off and available only when explicitly on.
+5. Close the tab and interrupt the SSH connection separately. Verify the job's
+   `_crow_…` account, processes, socket, and project ACL entries are removed.
+6. Stop/restart the daemon and reset pairing. Old clients must fail authentication,
+   and stale job leases must be cleaned before accepting new jobs.
+
+These privileged installation/lifecycle checks are not covered by the unprivileged
+suite. Project code and server administrators remain trusted; process identity
+isolation does not prevent an agent from executing malicious code in its own project.

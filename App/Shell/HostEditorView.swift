@@ -337,13 +337,176 @@ extension View {
 
 #if os(macOS)
 private struct ReverseSSHPasswordSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var server = ManagedServerSettings.shared
+    @State private var hostID: HostID?
+    @State private var code = ""
+    @State private var result: String?
+    @State private var publicKeyFingerprint = ""
+    @State private var serverFingerprintConfirmed = false
+
     var body: some View {
-        CrowSettingsSection("Reverse SSH") {
-            Text("Unavailable").font(.callout)
-            Text(ReverseSSHAccessPolicy.unavailableMessage)
+        CrowSettingsSection("Crow Server") {
+            Text("Install on the server Mac, register an agent executable, then pair from your client Mac. Each reverse agent runs with its own isolated account.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+            CrowSettingsCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Client Mac’s public key", text: $server.clientPublicKey).crowSettingsInput()
+                        .onChange(of: server.clientPublicKey) { _, _ in server.clientFingerprintConfirmed = false }
+                    if let key = server.clientKeyData {
+                        Text("Client fingerprint: " + ManagedPairingEnvelope.fingerprint(key)).font(.caption.monospaced())
+                        Toggle("Matches the public-key fingerprint shown on the client Mac", isOn: $server.clientFingerprintConfirmed)
+                            .font(.caption)
+                    }
+                }.padding(.vertical, 8)
+                Divider()
+                CrowSettingsRow("Server on this Mac") {
+                    if server.busy { ProgressView().controlSize(.small) }
+                    Button(server.installed ? "Update Server…" : "Install Server…") { server.administer("install") }
+                }
+                if server.installed {
+                    Divider()
+                    CrowSettingsRow("Service") {
+                        Button("Start") { server.administer("start") }
+                        Button("Stop") { server.administer("stop") }
+                    }
+                    Divider()
+                    ForEach(AgentProvider.allCases) { provider in
+                        CrowSettingsRow(provider.title + " executable") {
+                            Button("Choose…") { chooseExecutable(provider) }
+                        }
+                    }
+                    Divider()
+                    CrowSettingsRow("Pairing code") {
+                        Button("Show…") { server.administer("pair") }
+                        Button("Reset…") { server.administer("reset") }
+                    }
+                    if !server.pairingCode.isEmpty {
+                        if let fingerprint = server.pairingFingerprint {
+                            Text("Server fingerprint: " + fingerprint).font(.caption.monospaced()).padding(.top, 8)
+                        }
+                        HStack(spacing: 10) {
+                            SecureField("Pairing code", text: .constant(server.pairingCode)).crowSettingsInput()
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(server.pairingCode, forType: .string)
+                            }
+                            Button("Hide") { server.pairingCode = "" }
+                        }.padding(.vertical, 8)
+                    }
+                }
+            }.disabled(server.busy)
+            if let message = server.message { Text(message).font(.caption).foregroundStyle(CrowTheme.textDim) }
+            Text("Paste the public key copied from the client Mac below and compare fingerprints before installing. Only the intended client can decrypt the server’s registration code. Resetting pairing disconnects agents and invalidates the old code.")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)
         }
+        CrowSettingsSection("Paired Server") {
+            Text("First copy this Mac’s public key to the server’s Crow settings. After server setup, paste its encrypted code here and compare the server fingerprint on both Macs.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+            CrowSettingsCard {
+                CrowSettingsRow("This Mac’s public key") {
+                    Button("Copy Public Key") {
+                        do {
+                            let key = try AppModel.managedClientKey(create: true).publicKey.rawRepresentation
+                            publicKeyFingerprint = ManagedPairingEnvelope.fingerprint(key)
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(key.base64EncodedString(), forType: .string)
+                        } catch { result = error.localizedDescription }
+                    }
+                }
+                if !publicKeyFingerprint.isEmpty {
+                    Text("Client fingerprint: " + publicKeyFingerprint).font(.caption.monospaced()).padding(.bottom, 8)
+                }
+                Divider()
+                CrowSettingsRow("SSH host") {
+                    Picker("SSH host", selection: $hostID) {
+                        Text("Choose a host").tag(nil as HostID?)
+                        ForEach(model.hosts) { host in Text(host.userAtHost).tag(Optional(host.id)) }
+                    }.labelsHidden().frame(maxWidth: 300)
+                }
+                Divider()
+                HStack(spacing: 12) {
+                    SecureField("Encrypted server pairing code", text: $code).crowSettingsInput()
+                        .onChange(of: code) { _, _ in serverFingerprintConfirmed = false }
+                    Button("Pair") {
+                        guard let hostID else { return }
+                        do { try model.pairManagedServer(code, hostID: hostID); code = ""; result = "Paired. You can now open a reverse agent." }
+                        catch { result = error.localizedDescription }
+                    }.disabled(hostID == nil || code.isEmpty || !serverFingerprintConfirmed)
+                    Button("Forget") {
+                        guard let hostID else { return }
+                        do {
+                            AppModel.revokeManagedAgents(hostID: hostID)
+                            try SecureStore.remove(AppModel.managedPairingAccount(hostID))
+                            result = "Pairing removed from this Mac."
+                        } catch { result = error.localizedDescription }
+                    }.disabled(hostID == nil)
+                }.padding(.vertical, 8)
+                if let envelope = try? ManagedPairingEnvelope.decode(code) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Server fingerprint: " + envelope.fingerprint).font(.caption.monospaced())
+                        Toggle("Matches the fingerprint shown by Crow on the server Mac", isOn: $serverFingerprintConfirmed)
+                            .font(.caption)
+                    }.padding(.bottom, 8)
+                }
+            }
+            if let result { Text(result).font(.caption).foregroundStyle(CrowTheme.textDim) }
+        }
+    }
+    private func chooseExecutable(_ provider: AgentProvider) {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.canChooseFiles = true
+        panel.message = "Choose the standalone native " + provider.title + " executable."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        server.administer("agent", provider: provider, source: url.path)
     }
 }
 
+struct ManagedAgentSheet: View {
+    let workspaceID: WorkspaceID
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var provider: AgentProvider = .codex
+    @State private var folder = ""
+    @State private var commands = false
+    @State private var error: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Open Reverse Agent").font(.title2)
+            Text("This agent can access the local folder you choose through crow-reverse. Other SSH logins cannot use its reverse connection.")
+                .foregroundStyle(CrowTheme.textDim)
+            CrowSettingsCard {
+                CrowSettingsRow("Agent") {
+                    Picker("Agent", selection: $provider) {
+                        ForEach(AgentProvider.allCases) { Text($0.title).tag($0) }
+                    }.labelsHidden()
+                }
+                Divider()
+                CrowSettingsRow("Local folder") {
+                    Text(folder.isEmpty ? "Choose a folder" : (folder as NSString).lastPathComponent).lineLimit(1)
+                    Button("Choose…") {
+                        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                        if panel.runModal() == .OK { folder = panel.url?.path ?? "" }
+                    }
+                }
+                Divider()
+                CrowSettingsRow("Allow local commands") { Toggle("Allow local commands", isOn: $commands).labelsHidden() }
+            }
+            Text(commands
+                 ? "Commands run as your local account and can access files outside the chosen folder. Enable only for an agent and server project you trust."
+                 : "File access is limited to the chosen folder. Symbolic links are not followed. Local command execution is off.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+            Text("The server must be a paired Mac with this agent installed in Crow Server settings. The agent uses a separate home; its CLI may ask you to sign in.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+            if let error { Text(error).font(.callout).foregroundStyle(.red) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Open Agent") {
+                    do { try model.openManagedAgent(provider, workspaceID: workspaceID, localRoot: folder, commands: commands); dismiss() }
+                    catch { self.error = error.localizedDescription }
+                }.keyboardShortcut(.defaultAction).disabled(folder.isEmpty)
+            }
+        }.padding(24).frame(width: 560).background(CrowTheme.bg0)
+    }
+}
 #endif

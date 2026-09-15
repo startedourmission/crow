@@ -5,8 +5,198 @@ import SwiftUI
 @testable import Crow
 #if os(macOS)
 import AppKit
+import Network
+import CryptoKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    func testManagedPairingRejectsInvalidSecretsAndVersions() throws {
+        let pairing = ManagedPairing(id: UUID(), secret: Data(repeating: 7, count: 32), port: 44822)
+        XCTAssertEqual(try ManagedPairing.decode(pairing.code).secret, pairing.secret)
+        XCTAssertThrowsError(try ManagedPairing.decode("not-a-pairing-code"))
+        XCTAssertThrowsError(try ManagedPairing(id: UUID(), secret: Data(), port: 44822).validated())
+        var obsolete = pairing; obsolete.version = 2
+        XCTAssertThrowsError(try obsolete.validated())
+    }
+
+    func testManagedEnrollmentNeverExportsPlaintextSecret() throws {
+        let key = Curve25519.KeyAgreement.PrivateKey()
+        let other = Curve25519.KeyAgreement.PrivateKey()
+        let pairing = ManagedPairing(id: UUID(), secret: Data(repeating: 79, count: 32), port: 44822)
+        let envelope = try ManagedPairingEnvelope.seal(pairing, to: key.publicKey.rawRepresentation)
+        let encoded = try envelope.code
+        let decoded = try ManagedPairingEnvelope.decode(encoded)
+        XCTAssertEqual(try decoded.open(using: key).secret, pairing.secret)
+        XCTAssertThrowsError(try decoded.open(using: other), "A copied server clipboard code must be useless on another Mac")
+        let json = try XCTUnwrap(Data(base64Encoded: encoded))
+        XCTAssertFalse(String(decoding: json, as: UTF8.self).contains(pairing.secret.base64EncodedString()))
+        XCTAssertEqual(decoded.fingerprint, ManagedPairingEnvelope.fingerprint(pairing.secret))
+        var damaged = decoded.ciphertext; damaged[damaged.startIndex] ^= 1
+        let changed = ManagedPairingEnvelope(version: 1, recipient: decoded.recipient, ephemeral: decoded.ephemeral,
+            ciphertext: damaged, fingerprint: decoded.fingerprint)
+        XCTAssertThrowsError(try changed.open(using: key))
+        let wrongFingerprint = ManagedPairingEnvelope(version: 1, recipient: decoded.recipient, ephemeral: decoded.ephemeral,
+            ciphertext: decoded.ciphertext, fingerprint: String(repeating: "0", count: 32))
+        XCTAssertThrowsError(try wrongFingerprint.open(using: key))
+        XCTAssertThrowsError(try ManagedPairingEnvelope.decode(pairing.code), "Legacy plaintext codes are not accepted")
+    }
+
+    func testManagedTLSAcceptsOnlyPairedClient() throws {
+        let pairing = ManagedPairing(id: UUID(), secret: Data(repeating: 37, count: 32), port: 44822)
+        let parameters = try ManagedWire.parameters(pairing)
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try NWListener(using: parameters)
+        let ready = expectation(description: "TLS listener ready")
+        listener.stateUpdateHandler = { state in if case .ready = state { ready.fulfill() } }
+        listener.newConnectionHandler = { connection in
+            DispatchQueue.global().async {
+                let wire = ManagedWire(connection); defer { wire.close() }
+                do { try wire.begin(); let request = try wire.receive(); try wire.send(.init(kind: "pong", text: request.text)) }
+                catch { /* A different pairing key must be rejected during TLS authentication. */ }
+            }
+        }
+        listener.start(queue: .global()); defer { listener.cancel() }
+        wait(for: [ready], timeout: 5)
+        let port = try XCTUnwrap(listener.port)
+        let accepted = ManagedWire(NWConnection(host: "127.0.0.1", port: port, using: try ManagedWire.parameters(pairing)))
+        defer { accepted.close() }
+        try accepted.begin(); try accepted.send(.init(kind: "ping", text: "한글 frame"))
+        XCTAssertEqual(try accepted.receive().text, "한글 frame")
+        let wrong = ManagedPairing(id: pairing.id, secret: Data(repeating: 38, count: 32), port: pairing.port)
+        let rejected = ManagedWire(NWConnection(host: "127.0.0.1", port: port, using: try ManagedWire.parameters(wrong)))
+        defer { rejected.close() }
+        XCTAssertThrowsError(try rejected.begin())
+    }
+
+    func testManagedReverseUsesKernelPeerIdentity() throws {
+        var descriptors: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors), 0)
+        defer { descriptors.forEach { Darwin.close($0) } }
+        XCTAssertTrue(ManagedUnix.authorizedPeer(descriptors[0], uid: geteuid()))
+        XCTAssertFalse(ManagedUnix.authorizedPeer(descriptors[0], uid: geteuid() + 1), "A different execution UID cannot use the agent's connection")
+        XCTAssertFalse(ManagedUnix.authorizedPeer(-1, uid: geteuid()))
+    }
+
+    func testManagedFileAccessRejectsEscapesAndClosesOnRevocation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-managed-files-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("allowed")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let outside = root.appendingPathComponent("outside")
+        try Data("private".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("escape"), withDestinationURL: outside)
+        try FileManager.default.linkItem(at: outside, to: folder.appendingPathComponent("hard-link"))
+        let access = try ManagedLocalAccess(root: folder.path, commandsAllowed: false)
+        _ = try access.perform(.init(kind: "reverse", data: Data("한글".utf8), arguments: ["write", "message.md"]))
+        let read = try access.perform(.init(kind: "reverse", arguments: ["read", "message.md"]))
+        XCTAssertEqual(String(decoding: read.data ?? Data(), as: UTF8.self), "한글")
+        for path in ["../outside", outside.path, "escape", "hard-link"] {
+            XCTAssertThrowsError(try access.perform(.init(kind: "reverse", arguments: ["read", path])))
+            XCTAssertThrowsError(try access.perform(.init(kind: "reverse", data: Data("bad".utf8), arguments: ["write", path])))
+        }
+        XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "private")
+        XCTAssertThrowsError(try access.perform(.init(kind: "reverse", arguments: ["exec", "pwd"])))
+        access.close()
+        XCTAssertThrowsError(try access.perform(.init(kind: "reverse", arguments: ["list"])))
+    }
+
+    func testManagedLocalCommandsAreBoundedAndCancellable() throws {
+        let result = try ManagedCommand().run("/bin/sh", ["-c", "printf 'hello\\n'"])
+        XCTAssertEqual(String(decoding: result.data, as: UTF8.self), "hello\n")
+        XCTAssertThrowsError(try ManagedCommand().run("/bin/sleep", ["10"], timeout: 0.15))
+        let command = ManagedCommand(); command.cancel()
+        XCTAssertThrowsError(try command.run("/usr/bin/true", []))
+    }
+
+    func testManagedMetadataSurvivesRestoreWithoutSecrets() throws {
+        var agent = AgentTerminal(provider: .codex, directory: "/Users/server/project")
+        agent.isManagedReverse = true
+        let data = try JSONEncoder().encode(agent)
+        let restored = try JSONDecoder().decode(AgentTerminal.self, from: data)
+        XCTAssertEqual(restored.isManagedReverse, true)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("secret"))
+    }
+
+    func testManagedProjectACLGrantRevokesWithoutFollowingLinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-managed-acl-" + UUID().uuidString).resolvingSymlinksInPath()
+        let project = root.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = project.appendingPathComponent("file")
+        let outside = root.appendingPathComponent("outside")
+        try Data("inside".utf8).write(to: file); try Data("outside".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: project.appendingPathComponent("symlink"), withDestinationURL: outside)
+        try FileManager.default.linkItem(at: outside, to: project.appendingPathComponent("hard-link"))
+        let identity = UUID()
+        let canonical = try XCTUnwrap(realpath(project.path, nil)); defer { free(canonical) }
+        let grant = try ManagedProjectGrant(path: String(cString: canonical), uid: geteuid(), owner: geteuid(), identity: identity)
+        defer { grant.revoke() }
+        func hasEntry(_ path: URL) throws -> Bool {
+            let fd = open(path.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            guard fd >= 0 else { throw POSIXError(.EIO) }; defer { Darwin.close(fd) }
+            guard let acl = acl_get_fd_np(fd, ACL_TYPE_EXTENDED) else { return false }
+            defer { acl_free(UnsafeMutableRawPointer(acl)) }
+            var entry: acl_entry_t?, cursor = Int32(ACL_FIRST_ENTRY.rawValue)
+            while acl_get_entry(acl, cursor, &entry) == 0, let entry {
+                cursor = Int32(ACL_NEXT_ENTRY.rawValue)
+                if let value = acl_get_qualifier(entry) {
+                    let matches = withUnsafeBytes(of: identity.uuid) { memcmp(value, $0.baseAddress!, 16) == 0 }
+                    acl_free(value); if matches { return true }
+                }
+            }
+            return false
+        }
+        // System-managed temporary ancestors reject ACL changes even by their owner.
+        // Exercise the owned project; parent traversal grants require the privileged server check.
+        try grant.grantProject()
+        XCTAssertTrue(try hasEntry(project)); XCTAssertTrue(try hasEntry(file))
+        XCTAssertFalse(try hasEntry(outside), "Links inside a project must not grant access outside it")
+        grant.revoke()
+        XCTAssertFalse(try hasEntry(project)); XCTAssertFalse(try hasEntry(file))
+    }
+
+    @MainActor func testManagedRestoredTerminalCannotFallbackToOrdinarySSH() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-managed-restore-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let id = try XCTUnwrap(model.newAgentTerminal(.codex))
+        let index = try XCTUnwrap(model.current.snapshot.agentTerminals.firstIndex { $0.id == id })
+        model.current.snapshot.agentTerminals[index].isManagedReverse = true
+        model.current.terminals.removeValue(forKey: id)?.stop()
+        let terminal = model.terminal(id, in: model.current)
+        XCTAssertTrue(terminal.requiresManagedAgent)
+        XCTAssertNil(terminal.managedLaunch)
+        terminal.start()
+        XCTAssertFalse(terminal.running)
+        XCTAssertTrue(terminal.status.contains("Open a new reverse agent"))
+    }
+
+    @MainActor func testManagedPairingRevocationIncludesOtherWindowsAndPendingLaunches() {
+        let host = HostID(rawValue: UUID()), otherHost = HostID(rawValue: UUID())
+        let sessions = (0..<3).map { _ in
+            let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Fixture", kind: .local, connection: .local),
+                directory: "/tmp", remote: nil, fontSize: 14)
+            session.requiresManagedAgent = true; session.managedLaunch = "fixture"
+            return session
+        }
+        defer { sessions.forEach { $0.stop() }; AppModel.revokeManagedAgents(hostID: otherHost) }
+        AppModel.registerManagedAgent(sessions[0], hostID: host)
+        AppModel.registerManagedAgent(sessions[1], hostID: host)
+        AppModel.registerManagedAgent(sessions[2], hostID: otherHost)
+        AppModel.revokeManagedAgents(hostID: host)
+        XCTAssertNil(sessions[0].managedLaunch); XCTAssertNil(sessions[1].managedLaunch)
+        XCTAssertEqual(sessions[2].managedLaunch, "fixture")
+    }
+
+    func testManagedAdministrationRequiresRoot() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Run this rejection test without administrator privileges") }
+        XCTAssertThrowsError(try ManagedSystem.requireRoot())
+        XCTAssertThrowsError(try ManagedSystem.setup())
+        XCTAssertThrowsError(try ManagedSystem.config())
+        XCTAssertThrowsError(try ManagedSystem.resetPairing())
+        XCTAssertThrowsError(try ManagedSystem.installAgent(provider: .codex, source: "/usr/bin/true"))
+    }
+
     @MainActor func testCommandRunnerInheritsEnvironmentUnlessExplicitlyOverridden() async throws {
         let inheritedHome = try XCTUnwrap(ProcessInfo.processInfo.environment["HOME"])
         let inheritedPath = try XCTUnwrap(ProcessInfo.processInfo.environment["PATH"])
@@ -243,7 +433,7 @@ final class AgentTerminalIntegrationTests: XCTestCase {
                 _ = try await ReverseSSHCommand.run("/bin/sh", ["-c", script], environment: environment)
                 XCTFail("Legacy connectors must not execute ssh on any OS")
             } catch {
-                XCTAssertTrue(error.localizedDescription.contains("Shared-key terminal access is disabled"))
+                XCTAssertTrue(error.localizedDescription.contains(ReverseSSHAccessPolicy.unavailableMessage))
                 XCTAssertFalse(error.localizedDescription.contains("CROW_TEST_SSH_STARTED"))
             }
         }

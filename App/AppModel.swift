@@ -4,6 +4,8 @@ import Observation
 import SwiftUI
 #if os(macOS)
 import AppKit
+import Security
+import CryptoKit
 #else
 import UIKit
 #endif
@@ -130,6 +132,7 @@ final class AppModel {
     var pendingCredentialRequest: SSHHost?
     #if os(macOS)
     var reverseSSHConnections: [HostID: ReverseSSHSession] = [:]
+    var managedAgentRequest: WorkspaceID?
     @ObservationIgnored var reverseSSHAccess = ReverseSSHAccessSettings.shared
     @ObservationIgnored var reverseSSHPasteboard = NSPasteboard.general
     @ObservationIgnored private var sshBridge: SystemSSHBridge?
@@ -1245,6 +1248,8 @@ final class AppModel {
             }
             #if os(macOS)
             reverseSSHConnections.removeValue(forKey: host.id)?.stop()
+            Self.revokeManagedAgents(hostID: host.id)
+            try SecureStore.remove(Self.managedPairingAccount(host.id))
             #endif
             try SecureStore.remove(host.id.rawValue.uuidString); hosts.removeAll { $0.id == host.id }
             for state in workspaces { removeWorkspace(state.id) }
@@ -1452,6 +1457,7 @@ final class AppModel {
         if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {
             session.launchCommand = agent.command
             session.agentProvider = agent.provider
+            session.requiresManagedAgent = agent.isManagedReverse == true
         }
         session.imagePasteContext = { [weak self, weak state] in
             guard let self, let state else { return nil }
@@ -1677,6 +1683,195 @@ final class AppModel {
         hasPassword = true
         // Applies to every host in every Crow window, including startup in progress.
         ReverseSSHSession.revokeAll()
+    }
+}
+#endif
+
+#if os(macOS)
+struct ManagedClientLaunch: Codable, Sendable {
+    let account: String
+    let sshArguments: [String]
+    let request: ManagedStart
+    let localRoot: String
+    let commands: Bool
+}
+
+enum ManagedClientEntry {
+    static func handle(_ arguments: [String] = CommandLine.arguments) -> Bool {
+        guard arguments.count == 3, arguments[1] == "--crow-agent-client" else { return false }
+        do {
+            guard let data = Data(base64Encoded: arguments[2]), data.count <= 65536 else { throw CommandError("Invalid managed agent launch.") }
+            let launch = try JSONDecoder().decode(ManagedClientLaunch.self, from: data)
+            guard let saved = try SecureStore.data(for: launch.account) else { throw CommandError("Pair this host in Crow's Server settings first.") }
+            let pairing = try JSONDecoder().decode(ManagedPairing.self, from: saved).validated()
+            let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else { throw POSIXError(.EIO) }
+            var address = sockaddr_in(); address.sin_family = sa_family_t(AF_INET); address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let bound = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0
+            } }
+            let port = UInt16(bigEndian: address.sin_port); Darwin.close(fd)
+            guard bound, port > 0 else { throw POSIXError(.EADDRINUSE) }
+            let forwarding = "127.0.0.1:\(port):127.0.0.1:\(pairing.port)"
+            try ManagedSystem.run("/usr/bin/ssh", ["-O", "forward", "-L", forwarding, "-o", "ExitOnForwardFailure=yes"] + launch.sshArguments)
+            defer { _ = try? ManagedSystem.run("/usr/bin/ssh", ["-O", "cancel", "-L", forwarding] + launch.sshArguments) }
+            try ManagedClientRunner.run(pairing: pairing, port: port, request: launch.request, localRoot: launch.localRoot, commands: launch.commands)
+            exit(0)
+        } catch {
+            try? FileHandle.standardError.write(contentsOf: Data(("\r\n" + error.localizedDescription + "\r\n").utf8))
+            exit(1)
+        }
+    }
+}
+
+@MainActor private final class ManagedAgentReference {
+    let hostID: HostID
+    weak var terminal: TerminalSession?
+    init(hostID: HostID, terminal: TerminalSession) { self.hostID = hostID; self.terminal = terminal }
+}
+
+extension AppModel {
+    private static var managedAgents: [UUID: ManagedAgentReference] = [:]
+    static func registerManagedAgent(_ terminal: TerminalSession, hostID: HostID) {
+        managedAgents = managedAgents.filter { $0.value.terminal != nil }
+        managedAgents[terminal.instanceID] = ManagedAgentReference(hostID: hostID, terminal: terminal)
+    }
+    static func revokeManagedAgents(hostID: HostID) {
+        let matches = managedAgents.filter { $0.value.hostID == hostID }
+        for (id, reference) in matches { reference.terminal?.stop(); managedAgents.removeValue(forKey: id) }
+    }
+    static func managedClientKey(create: Bool = false) throws -> Curve25519.KeyAgreement.PrivateKey {
+        let account = "managed-client-enrollment-key-v1"
+        if let data = try SecureStore.data(for: account) { return try .init(rawRepresentation: data) }
+        guard create else { throw CommandError("Copy this Mac's public key and register it on the server first.") }
+        let key = Curve25519.KeyAgreement.PrivateKey()
+        try SecureStore.set(key.rawRepresentation, for: account)
+        return key
+    }
+    static func managedPairingAccount(_ hostID: HostID) -> String { "managed-server-" + hostID.rawValue.uuidString }
+    func pairManagedServer(_ code: String, hostID: HostID) throws {
+        let pairing = try ManagedPairingEnvelope.decode(code).open(using: Self.managedClientKey())
+        Self.revokeManagedAgents(hostID: hostID)
+        try SecureStore.set(JSONEncoder().encode(pairing), for: Self.managedPairingAccount(hostID))
+        statusMessage = "Crow server paired."
+    }
+    func openManagedAgent(_ provider: AgentProvider, workspaceID: WorkspaceID, localRoot: String, commands: Bool) throws {
+        guard let state = states.first(where: { $0.id == workspaceID }), let hostID = state.snapshot.workspace.hostID,
+              let ssh = state.systemSSH, state.remote?.isConnected == true else { throw CommandError("Connect a macOS SSH host first.") }
+        let account = Self.managedPairingAccount(hostID)
+        guard let data = try SecureStore.data(for: account) else { throw CommandError("Pair this host in Settings → Crow Server first.") }
+        _ = try JSONDecoder().decode(ManagedPairing.self, from: data).validated()
+        _ = try ManagedLocalAccess(root: localRoot, commandsAllowed: commands)
+        activateWorkspace(state.id, reconnect: false)
+        var agent = AgentTerminal(provider: provider, directory: state.contextRootPath)
+        agent.isManagedReverse = true; agent.name = "Reverse · " + provider.title
+        state.snapshot.agentTerminals.append(agent)
+        let launch = ManagedClientLaunch(account: account, sshArguments: ssh.multiplexArguments,
+            request: ManagedStart(provider: provider, directory: state.contextRootPath), localRoot: localRoot, commands: commands)
+        // Install the protected local transport before the terminal view can mount.
+        let terminal = terminal(agent.id, in: state)
+        terminal.managedLaunch = try JSONEncoder().encode(launch).base64EncodedString()
+        terminal.requiresManagedAgent = true
+        Self.registerManagedAgent(terminal, hostID: hostID)
+        openCommandTerminal(id: agent.id)
+        schedulePersist()
+    }
+}
+
+@MainActor @Observable final class ManagedServerSettings {
+    static let shared = ManagedServerSettings()
+    var busy = false
+    var message: String?
+    var pairingCode = ""
+    var clientPublicKey = ""
+    var clientFingerprintConfirmed = false
+    var clientKeyData: Data? { Data(base64Encoded: clientPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.count == 32 ? $0 : nil } }
+    var pairingFingerprint: String? { (try? ManagedPairingEnvelope.decode(pairingCode))?.fingerprint }
+    var installed: Bool { FileManager.default.fileExists(atPath: ManagedSystem.launchPlist) }
+
+    func administer(_ operation: String, provider: AgentProvider? = nil, source: String? = nil) {
+        guard !busy else { return }
+        busy = true; message = nil
+        Task {
+            defer { busy = false }
+            do {
+                let command: String
+                let quote = TerminalCommand.quote
+                switch operation {
+                case "install":
+                    let source = Bundle.main.bundlePath
+                    guard source.hasSuffix(".app"), Bundle.main.executableURL != nil else { throw CommandError("Run the built Crow app to install server mode.") }
+                    var ownCode: SecCode?
+                    guard SecCodeCopySelf([], &ownCode) == errSecSuccess, let ownCode else { throw CommandError("A signed Crow build is required for server installation.") }
+                    var staticCode: SecStaticCode?
+                    guard SecCodeCopyStaticCode(ownCode, [], &staticCode) == errSecSuccess, let staticCode else { throw CommandError("Could not verify the running Crow build.") }
+                    var information: CFDictionary?
+                    guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+                          let hash = (information as? [String: Any])?[kSecCodeInfoUnique as String] as? Data else {
+                        throw CommandError("A signed Crow build is required for server installation.")
+                    }
+                    let requirement = "cdhash " + hash.map { String(format: "%02x", $0) }.joined()
+                    if !clientPublicKey.isEmpty, clientKeyData == nil || !clientFingerprintConfirmed {
+                        throw CommandError("Compare the public-key fingerprint with the client Mac, then confirm it before installing.")
+                    }
+                    guard installed || clientKeyData != nil else { throw CommandError("Paste the client Mac's public key before installing.") }
+                    command = Self.installCommand(source: source, requirement: requirement, clientKey: clientKeyData?.base64EncodedString())
+                case "pair": command = quote(ManagedSystem.program) + " --crow-server-pair"
+                case "reset": command = "set -e; " + quote(ManagedSystem.program) + " --crow-server-reset-pairing; /bin/launchctl kickstart -k system/" + ManagedSystem.label
+                case "stop": command = "/bin/launchctl bootout system/" + ManagedSystem.label
+                case "start": command = "/bin/launchctl bootstrap system " + quote(ManagedSystem.launchPlist)
+                case "agent":
+                    guard let provider, let source else { throw CommandError("Choose an agent executable.") }
+                    command = quote(ManagedSystem.program) + " --crow-server-install-agent " + quote(provider.rawValue) + " " + quote(source)
+                default: throw CommandError("Unknown server operation.")
+                }
+                // Administrator authorization happens on this Mac, never in SSH or agent stdin.
+                let appleScript = "do shell script " + Self.appleQuote(command) + " with administrator privileges"
+                let output = try await Task.detached {
+                    let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); task.arguments = ["-e", appleScript]
+                    let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
+                    try task.run(); let data = pipe.fileHandleForReading.readDataToEndOfFile(); task.waitUntilExit()
+                    guard task.terminationStatus == 0 else { throw CommandError("Server operation failed or was cancelled. Check administrator authorization and the selected native executable.") }
+                    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                }.value
+                if ["install", "pair", "reset"].contains(operation) {
+                    pairingCode = try ManagedPairingEnvelope.decode(output).code
+                    message = "Copy the encrypted code to the client Mac and compare the server fingerprint before pairing."
+                } else { message = operation == "stop" ? "Server stopped. Agent access revoked." : "Server updated." }
+            } catch { message = error.localizedDescription }
+        }
+    }
+    static func installCommand(source: String, requirement: String, clientKey: String?) -> String {
+        let quote = TerminalCommand.quote
+        // Stage and authenticate a complete app before stopping the installed service.
+        // Parent directories are root-only for writes; no user-controlled path is executed as root.
+        return """
+        set -e
+        for crow_dir in '/Library/Application Support/Crow' '/Library/Application Support/Crow/Server'; do
+          test ! -L "$crow_dir"
+          /bin/mkdir -p "$crow_dir"
+          /usr/sbin/chown root:wheel "$crow_dir"
+          /bin/chmod -N "$crow_dir"
+          /bin/chmod 755 "$crow_dir"
+        done
+        crow_stage=$(/usr/bin/mktemp -d '/Library/Application Support/Crow/Server/install.XXXXXX')
+        trap '/bin/rm -rf "$crow_stage"' EXIT
+        /usr/bin/ditto \(quote(source)) "$crow_stage/Crow.app"
+        /usr/bin/codesign --verify --deep --strict -R \(quote(requirement)) "$crow_stage/Crow.app"
+        /usr/sbin/chown -R root:wheel "$crow_stage"
+        /bin/chmod -RN "$crow_stage"
+        /bin/chmod -R go-w "$crow_stage"
+        /bin/launchctl bootout system/\(ManagedSystem.label) 2>/dev/null || true
+        /bin/rm -rf \(quote(ManagedSystem.app))
+        /bin/mv "$crow_stage/Crow.app" \(quote(ManagedSystem.app))
+        \(quote(ManagedSystem.program)) --crow-server-setup \(clientKey.map(quote) ?? "")
+        /bin/launchctl bootstrap system \(quote(ManagedSystem.launchPlist))
+        """
+    }
+    private static func appleQuote(_ text: String) -> String {
+        "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }
 #endif
