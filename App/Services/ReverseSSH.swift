@@ -193,7 +193,9 @@ enum ReverseSSHCommand {
             defer { try? stdin.close() }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
-            process.environment = environment
+            // Assigning nil clears the child environment on macOS, including HOME
+            // and PATH needed to locate user-installed CLIs.
+            process.environment = environment ?? ProcessInfo.processInfo.environment
             process.standardInput = stdin; process.standardOutput = output; process.standardError = errors
             try Task.checkCancellation()
             try process.run()

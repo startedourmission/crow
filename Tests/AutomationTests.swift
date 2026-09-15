@@ -27,6 +27,16 @@ import SwiftUI
     }
 
     #if os(macOS)
+    func testLocalAutomationIdentifiesDeviceAndHome() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-automation-device-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let snapshot = try await AutomationService(state: model.current).load()
+        XCTAssertEqual(snapshot.os, "Darwin")
+        XCTAssertEqual(snapshot.uid, String(getuid()))
+        XCTAssertEqual(snapshot.home, ProcessInfo.processInfo.environment["HOME"])
+    }
+
     func testAutomationControlsAreExcludedFromWindowDragging() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-automation-click-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

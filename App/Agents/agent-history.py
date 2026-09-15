@@ -342,7 +342,7 @@ def provider_usage(provider):
     except urllib.error.HTTPError as error:
         result["error"] = "Usage temporarily rate-limited. Try again later." if error.code == 429 else "Usage request failed (HTTP %s). Check the CLI's login." % error.code
     except FileNotFoundError:
-        result["error"] = "CLI or saved login not found on this host."
+        result["error"] = "Codex CLI was not found in this host's PATH." if provider == "codex" else "Saved CLI login not found on this host."
     except Exception as error:
         # Network exceptions and CLI diagnostics can contain account details. Never return credentials.
         result["error"] = str(error)[:250] if isinstance(error, ValueError) else "Could not read account usage. Check the CLI login and connection."

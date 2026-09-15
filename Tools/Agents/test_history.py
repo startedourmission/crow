@@ -88,6 +88,12 @@ class HistoryTests(unittest.TestCase):
             value = history.provider_usage("codex")
         self.assertEqual(value["windows"], [{"label": "5 hours", "used": 42, "resets": 123}])
 
+    def test_missing_codex_executable_is_not_reported_as_a_login_failure(self):
+        with patch.object(history.subprocess, "Popen", side_effect=FileNotFoundError):
+            value = history.provider_usage("codex")
+        self.assertEqual(value["windows"], [])
+        self.assertEqual(value["error"], "Codex CLI was not found in this host's PATH.")
+
     def test_codex_rpc_initializes_and_uses_native_deletion(self):
         executable = self.root / "codex"
         executable.write_text("#!" + os.sys.executable + "\nimport sys,json\nfor line in sys.stdin:\n request=json.loads(line)\n if 'id' not in request: continue\n result={} if request['method']=='initialize' else {'method':request['method'],'thread':request['params'].get('threadId')}\n print(json.dumps({'id':request['id'],'result':result}),flush=True)\n")

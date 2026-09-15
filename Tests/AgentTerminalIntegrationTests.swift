@@ -7,6 +7,17 @@ import SwiftUI
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testCommandRunnerInheritsEnvironmentUnlessExplicitlyOverridden() async throws {
+        let inheritedHome = try XCTUnwrap(ProcessInfo.processInfo.environment["HOME"])
+        let inheritedPath = try XCTUnwrap(ProcessInfo.processInfo.environment["PATH"])
+        let arguments = ["-c", "printf '%s\\n%s' \"$HOME\" \"$PATH\""]
+        let output = try await ReverseSSHCommand.run("/bin/sh", arguments)
+        XCTAssertEqual(output, inheritedHome + "\n" + inheritedPath)
+        let overridden = try await ReverseSSHCommand.run("/bin/sh", arguments,
+            environment: ["HOME": "/tmp/crow-command-fixture", "PATH": "/usr/bin:/bin"])
+        XCTAssertEqual(overridden, "/tmp/crow-command-fixture\n/usr/bin:/bin")
+    }
+
     @MainActor func testReverseSSHUsesConnectedProjectInsteadOfFirstHostWorkspace() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-route-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
