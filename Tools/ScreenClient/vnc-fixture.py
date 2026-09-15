@@ -5,6 +5,10 @@ This is a protocol test double, not a VNC server. It verifies the password "fixt
 """
 import argparse
 import hmac
+import hashlib
+import getpass
+import secrets
+import subprocess
 import json
 import socket
 import struct
@@ -15,6 +19,7 @@ from pathlib import Path
 def serve(port_file, events_file):
     lock = threading.Lock()
     Path(events_file).write_text("")
+    Path(events_file + ".auth").write_text("both")
 
     def record(**event):
         with lock, open(events_file, "a") as output:
@@ -48,19 +53,50 @@ def serve(port_file, events_file):
                     pass
                 return
             assert greeting == b"RFB 003.008\n"
-            # Mac-style ordering: account authentication first, then VNC password.
-            send(b"\x02\x1e\x02")
-            assert read(1) == b"\x02"
-            send(bytes(range(16)))
-            # Independent DES-ECB vector: challenge 00..0f, password "fixture",
-            # padded to 8 bytes and with each key byte's bits reversed (RFB 3.8).
-            expected = bytes.fromhex("b6cdfeac10a6a456b5d53a1644a7a475")
-            if not hmac.compare_digest(read(16), expected):
+            # Prefer the shared password on the server, so the client must explicitly
+            # choose account authentication for a workspace account.
+            mode_file = Path(events_file + ".auth")
+            mode = mode_file.read_text().strip() if mode_file.exists() else "both"
+            types = {"both": [2, 30], "account": [30], "vnc": [2], "unsupported-apple": [2, 33]}[mode]
+            send(bytes([len(types), *types]))
+            method = read(1)[0]
+            record(type="security", method=method)
+            username = None
+            if method == 30:
+                # Independent ARD type-30 server: DH, MD5, AES-128-ECB credentials.
+                prime = int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E08"
+                    "8A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B"
+                    "302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E"
+                    "9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1"
+                    "FE649286651ECE65381FFFFFFFFFFFFFFFF", 16)
+                width = 128
+                private = secrets.randbits(256)
+                send(struct.pack(">HH", 2, width) + prime.to_bytes(width, "big")
+                     + pow(2, private, prime).to_bytes(width, "big"))
+                encrypted = read(128)
+                public = int.from_bytes(read(width), "big")
+                assert 1 < public < prime - 1
+                shared = pow(public, private, prime).to_bytes(width, "big")
+                key = hashlib.md5(shared).hexdigest()
+                # This process only handles disposable fixture credentials.
+                plain = subprocess.run(["/usr/bin/openssl", "enc", "-aes-128-ecb", "-d",
+                    "-nopad", "-K", key], input=encrypted, capture_output=True, check=True).stdout
+                username = plain[:64].split(b"\0", 1)[0].decode("utf-8")
+                password = plain[64:].split(b"\0", 1)[0]
+                accepted = username in (getpass.getuser(), "crow-screen-other") and hmac.compare_digest(password, b"fixture")
+            elif method == 2:
+                send(bytes(range(16)))
+                # Independent DES-ECB vector for challenge 00..0f and "fixture".
+                expected = bytes.fromhex("b6cdfeac10a6a456b5d53a1644a7a475")
+                accepted = hmac.compare_digest(read(16), expected)
+            else:
+                raise ValueError(f"Unexpected authentication: {method}")
+            if not accepted:
                 reason = b"Authentication or authorization failure"
                 send(struct.pack(">II", 1, len(reason)) + reason)
                 record(type="authentication-rejected")
                 return
-            record(type="authentication")
+            record(type="authentication", username=username)
             send(bytes(4))
             record(type="shared", value=read(1)[0])
             pixel_format = struct.pack(">BBBBHHHBBB3x", 32, 24, 0, 1, 255, 255, 255, 16, 8, 0)

@@ -117,8 +117,9 @@ import UIKit
         viewer.connect(in: state, port: port)
         try await wait("Request screen credentials") { !viewer.credentialTypes.isEmpty }
         XCTAssertFalse(viewer.connected)
-        XCTAssertEqual(viewer.credentialTypes, ["password"])
-        viewer.authenticate(username: "", password: "incorrect")
+        XCTAssertTrue(viewer.workspaceAccountRequired)
+        XCTAssertEqual(viewer.credentialTypes, ["username", "password"])
+        viewer.authenticate(username: viewer.requestedUsername, password: "incorrect")
         for _ in 0..<200 where viewer.error == nil {
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -126,10 +127,14 @@ import UIKit
         XCTAssertFalse(viewer.connected)
         viewer.connect(in: state, port: port)
         try await wait("Retry VNC password after rejected credentials") { !viewer.credentialTypes.isEmpty }
-        XCTAssertEqual(viewer.credentialTypes, ["password"], "Prefer configured VNC password over Apple account authentication")
-        viewer.authenticate(username: "", password: "fixture")
+        XCTAssertEqual(viewer.credentialTypes, ["username", "password"], "Workspace accounts must use Mac account authentication")
+        viewer.authenticate(username: viewer.requestedUsername, password: "fixture")
         try await wait("Complete RFB negotiation") { viewer.connected }
         XCTAssertEqual(viewer.name, "Crow Screen Fixture")
+        XCTAssertTrue(viewer.accountAuthenticated)
+        XCTAssertFalse(viewer.requestedUsername.isEmpty)
+        let authenticationLog = try await recorded()
+        XCTAssertTrue(authenticationLog.contains("\"username\": \"" + viewer.requestedUsername + "\""))
         try await wait("Render fragmented framebuffer") {
             try await js("const c = document.querySelector('canvas'); return c ? Array.from(c.getContext('2d').getImageData(0,0,1,1).data).join(',') : '';") == "255,0,0,255"
         }
@@ -312,7 +317,7 @@ import UIKit
         // A failing image side channel must not swallow ordinary VNC paste.
         let savedSSH = state.systemSSH
         defer { state.systemSSH = savedSSH }
-        state.systemSSH = SystemSSHSpec(host: SSHHost(name: "Unavailable clipboard helper", hostname: "127.0.0.1", username: "fixture"),
+        state.systemSSH = SystemSSHSpec(host: SSHHost(name: "Unavailable clipboard helper", hostname: "127.0.0.1", username: viewer.requestedUsername),
             socket: "/tmp/crow-missing-socket-" + UUID().uuidString, arguments: [], directory: "/tmp")
         viewer.includeClipboardImages = false; viewer.includeClipboardImages = true
         let beforeFallbackPaste = try await recorded().count
@@ -334,6 +339,72 @@ import UIKit
         state.systemSSH = savedSSH
         viewer.clipboardSync = false
         #endif
+        let authModePath = events + ".auth"
+        let fixtureFiles = try XCTUnwrap(state.remote)
+        viewer.stop()
+        try await fixtureFiles.write("account", path: authModePath, expected: nil, overwrite: true)
+        viewer.connect(in: state, port: port)
+        try await wait("Account-only server") { !viewer.credentialTypes.isEmpty }
+        XCTAssertEqual(viewer.credentialTypes, ["username", "password"])
+        viewer.authenticate(username: viewer.requestedUsername, password: "fixture")
+        try await wait("Account-only authentication completes") { viewer.connected }
+        viewer.stop()
+        try await fixtureFiles.write("vnc", path: authModePath, expected: nil, overwrite: true)
+        viewer.connect(in: state, port: port)
+        try await wait("Ordinary VNC server retains password authentication") { !viewer.credentialTypes.isEmpty }
+        XCTAssertEqual(viewer.credentialTypes, ["password"])
+        XCTAssertFalse(viewer.workspaceAccountRequired)
+        viewer.authenticate(username: viewer.requestedUsername, password: "fixture")
+        try await wait("Ordinary VNC authentication completes") { viewer.connected }
+        XCTAssertFalse(viewer.accountAuthenticated)
+        viewer.stop()
+        try await fixtureFiles.write("unsupported-apple", path: authModePath, expected: nil, overwrite: true)
+        viewer.connect(in: state, port: port)
+        for _ in 0..<200 where viewer.error == nil { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertFalse(viewer.connected)
+        XCTAssertTrue(viewer.credentialTypes.isEmpty, "Unsupported Mac account authentication must not ask for the shared password")
+        XCTAssertTrue(viewer.error?.contains("No shared desktop was opened") == true)
+        try await fixtureFiles.write("both", path: authModePath, expected: nil, overwrite: true)
+        // A deliberately shared desktop uses only VNC clipboard transport.
+        viewer.stop()
+        viewer.connect(in: state, port: port, loginMode: .sharedDesktop)
+        try await wait("Explicit shared desktop credentials") { !viewer.credentialTypes.isEmpty }
+        XCTAssertEqual(viewer.credentialTypes, ["password"])
+        XCTAssertFalse(viewer.workspaceAccountRequired)
+        viewer.authenticate(username: viewer.requestedUsername, password: "fixture")
+        try await wait("Connect shared desktop") { viewer.connected }
+        XCTAssertFalse(viewer.accountAuthenticated)
+        #if os(macOS)
+        XCTAssertFalse(viewer.nativeClipboardAvailable)
+        #endif
+        viewer.stop()
+        viewer.connect(in: state, port: port, username: "crow-screen-other")
+        try await wait("Request other screen account") { !viewer.credentialTypes.isEmpty }
+        viewer.authenticate(username: "crow-screen-other", password: "fixture")
+        try await wait("Connect other screen account") { viewer.connected }
+        XCTAssertTrue(viewer.accountAuthenticated)
+        #if os(macOS)
+        XCTAssertFalse(viewer.nativeClipboardAvailable, "Different screen and SSH accounts must not share the SSH pasteboard")
+        viewer.clipboardSync = true
+        remoteBoard.clearContents(); remoteBoard.setString("SSH account clipboard", forType: .string)
+        pasteboard.clearContents(); pasteboard.setString("other account text", forType: .string)
+        await viewer.syncClipboardIfNeeded()
+        try await wait("Different accounts use VNC text") {
+            try await recorded().contains("\"text\": \"other account text\"")
+        }
+        XCTAssertEqual(remoteBoard.string(forType: .string), "SSH account clipboard")
+        viewer.clipboardSync = false
+        #endif
+        viewer.stop()
+        viewer.connect(in: state, port: port)
+        try await wait("Workspace account cannot be replaced by another login") { !viewer.credentialTypes.isEmpty }
+        viewer.authenticate(username: "crow-screen-other", password: "fixture")
+        XCTAssertFalse(viewer.active)
+        XCTAssertTrue(viewer.error?.contains("selected workspace account") == true)
+        viewer.connect(in: state, port: port)
+        try await wait("Restore account after rejected override") { !viewer.credentialTypes.isEmpty }
+        viewer.authenticate(username: viewer.requestedUsername, password: "fixture")
+        try await wait("Restore screen connection") { viewer.connected }
         let closedBefore = try await closedCount()
         viewer.stop()
         try await wait("Close only the screen channel") { try await closedCount() > closedBefore }

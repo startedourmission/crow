@@ -92,21 +92,27 @@ window.crowScreen = {
         document.body.classList.toggle('desktop', desktop);
         applyOptions();
     },
-    start(id) {
+    start(id, accountMode = true) {
         rfb?.disconnect();
         resetTyping();
         sessionID = id;
         const report = (action, extra) => post(action, extra, id);
         channel = new SSHChannel(id);
         rfb = new CrowRFB(document.getElementById('display'), channel, {shared: true});
+        rfb._crowAccountMode = accountMode;
         rfb.resizeSession = false;
         rfb.showDotCursor = true;
         applyOptions();
         rfb.compressionLevel = 6; rfb.qualityLevel = 6;
-        rfb.addEventListener('connect', () => { report('connected', {appleServer: !!rfb._crowAppleServer}); rfb.focus(); });
+        rfb.addEventListener('connect', () => {
+            report('connected', {appleServer: !!rfb._crowAppleServer, accountAuthentication: rfb._rfbAuthScheme === 30});
+            rfb.focus();
+        });
         rfb.addEventListener('disconnect', e => report('disconnected', {clean: e.detail.clean}));
         rfb.addEventListener('securityfailure', e => report('error', {message: e.detail.reason || 'Screen authentication failed.'}));
-        rfb.addEventListener('credentialsrequired', e => report('credentials', {types: e.detail.types}));
+        rfb.addEventListener('credentialsrequired', e => report('credentials', {
+            types: e.detail.types, accountAuthentication: rfb._rfbAuthScheme === 30
+        }));
         rfb.addEventListener('desktopname', e => report('name', {name: e.detail.name}));
         rfb.addEventListener('clipboard', e => {
             if (vncClipboardEnabled && !viewOnly && e.detail.text.length <= 1_000_000) report('clipboard', {text: e.detail.text});

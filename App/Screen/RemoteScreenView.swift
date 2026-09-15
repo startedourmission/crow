@@ -33,9 +33,13 @@ struct RemoteScreenView: View {
     @State private var screen = RemoteScreenSession()
     @State private var port = "5900"
     @State private var connectionOptions = false
+    @State private var loginMode = ScreenLoginMode.workspaceAccount
     @State private var username = ""
     @State private var password = ""
     private var workspace: WorkspaceState? { model.states.first { $0.id == workspaceID } }
+    private var host: SSHHost? {
+        workspace?.snapshot.workspace.hostID.flatMap { id in model.hosts.first { $0.id == id } }
+    }
 
     var body: some View {
         NavigationStack {
@@ -61,7 +65,7 @@ struct RemoteScreenView: View {
                         }
                     }
             }
-            .navigationTitle(screen.name)
+            .navigationTitle(host?.userAtHost ?? screen.name)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -78,32 +82,44 @@ struct RemoteScreenView: View {
                     #endif
                 Button("Connect") {
                     guard let workspace, let value = Int(port), (1...65535).contains(value) else { return }
-                    screen.connect(in: workspace, port: value)
+                    screen.connect(in: workspace, port: value, loginMode: loginMode, username: host?.username)
                 }.disabled(!(1...65535).contains(Int(port) ?? 0))
                 Button("Cancel", role: .cancel) { }
-            } message: { Text("VNC port on the SSH server (usually 5900).") }
+            } message: {
+                Text(loginMode == .workspaceAccount
+                    ? "Connect through \(host?.userAtHost ?? "this SSH workspace"). On a Mac, sign in with this account’s Mac login password."
+                    : "Open the server’s shared desktop using its VNC password. This does not select the SSH account’s desktop.")
+            }
             .alert(screen.credentialTypes.contains("username") ? "Screen Sharing Account" : "VNC Password",
                    isPresented: Binding(get: { !screen.credentialTypes.isEmpty }, set: { _ in })) {
-                if screen.credentialTypes.contains("username") {
-                    TextField("Server account name", text: $username)
+                if screen.credentialTypes.contains("username") && !screen.workspaceAccountRequired {
+                    TextField("Screen account name", text: $username)
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         #endif
                 }
                 SecureField(screen.credentialTypes.contains("username") ? "Account password" : "VNC password", text: $password)
-                Button("Connect") { let value = password; password = ""; screen.authenticate(username: username, password: value) }
+                Button("Connect") {
+                    let value = password; password = ""
+                    screen.authenticate(username: screen.workspaceAccountRequired ? screen.requestedUsername : username, password: value)
+                }
                 Button("Cancel", role: .cancel) { password = ""; screen.stop() }
             } message: {
-                Text(screen.credentialTypes.contains("username")
-                    ? "Use an account allowed to share the server’s screen. On a Mac, enter the short account name and its login password."
-                    : "Enter the VNC password configured on the server. On a Mac, this is set under Screen Sharing → VNC viewers may control screen with password.")
+                Text(screen.workspaceAccountRequired
+                    ? "Enter the Mac login password for \(screen.requestedUsername). The selected workspace determines the account."
+                    : screen.credentialTypes.contains("username")
+                        ? "Enter the account and password configured on this screen-sharing server."
+                        : "Enter the VNC password configured on the server. On a Mac, this is set under Screen Sharing → VNC viewers may control screen with password.")
             }
         }
         #if os(macOS)
         .frame(minWidth: 640, idealWidth: 1100, minHeight: 400, idealHeight: 760)
         #endif
         .onDisappear { password = ""; screen.stop() }
+        .onChange(of: screen.credentialTypes) { _, types in
+            if types.contains("username") { username = screen.requestedUsername }
+        }
         .onChange(of: scenePhase) { _, phase in if phase == .background { screen.stop() } }
         .onChange(of: workspace?.snapshot.workspace.connection) { _, connection in
             if connection != .connected { screen.stop() }
@@ -127,6 +143,10 @@ struct RemoteScreenView: View {
 
     private var screenMenu: some View {
         Menu {
+            Picker("Screen Login", selection: $loginMode) {
+                ForEach(ScreenLoginMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
+            }.disabled(screen.active)
+            Divider()
             Toggle("Fit to Window", isOn: Bindable(screen).fitToWindow)
             Toggle("View Only", isOn: Bindable(screen).viewOnly)
             #if os(macOS)
@@ -134,7 +154,10 @@ struct RemoteScreenView: View {
             Toggle("Sync Clipboard", isOn: Bindable(screen).clipboardSync)
                 .disabled(screen.viewOnly)
             Toggle("Include Images (Mac Server)", isOn: Bindable(screen).includeClipboardImages)
-                .disabled(screen.viewOnly || !screen.clipboardSync)
+                .disabled(screen.viewOnly || !screen.clipboardSync || !screen.nativeClipboardAvailable)
+            if screen.connected && !screen.nativeClipboardAvailable {
+                Text("Text clipboard uses screen sharing. Images require the same SSH and Mac screen account.")
+            }
             if let error = screen.clipboardError {
                 Text(error)
                 Button("Retry Clipboard Sync", systemImage: "arrow.clockwise") { screen.retryClipboard() }

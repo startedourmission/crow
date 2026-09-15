@@ -121,10 +121,14 @@ private final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unc
 @MainActor
 final class RemoteConnection {
     private(set) var client: SSHClient?
+    private(set) var username: String?
     private var sftp: SFTPClient?
     #if os(macOS)
     private var system: SystemSFTP?
-    func attach(_ spec: SystemSSHSpec) throws { system = try SystemSFTP(spec: spec) }
+    func attach(_ spec: SystemSSHSpec) throws {
+        system = try SystemSFTP(spec: spec)
+        username = spec.host.username
+    }
     #endif
     var isConnected: Bool {
         #if os(macOS)
@@ -154,7 +158,7 @@ final class RemoteConnection {
         var settings = SSHClientSettings(host: host.hostname, port: host.port,
             authenticationMethod: authentication, hostKeyValidator: .custom(check))
         settings.connectTimeout = .seconds(20)
-        do { client = try await SSHClient.connect(to: settings) }
+        do { client = try await SSHClient.connect(to: settings); username = host.username }
         catch { if let challenge = check.challenge { throw challenge }; throw error }
     }
 
@@ -164,6 +168,7 @@ final class RemoteConnection {
         #endif
         let old = client
         client = nil
+        username = nil
         sftp = nil
         try? await old?.close()
     }

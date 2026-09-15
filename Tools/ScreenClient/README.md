@@ -26,34 +26,40 @@ View Only controls. On iOS, Keyboard opens a live input field; committed text
 is sent immediately, including IME composition, and Done dismisses it. Special
 keys scroll independently so Keyboard and View Only remain visible. Touch gestures
 and hardware keys use noVNC's canvas handlers, with native WebKit touch handling
-enabled and browser panning disabled only over the remote screen. The
-The native screen toolbar contains a single controls menu. On Mac, Sync Clipboard
-and Include Images are enabled by default and can be changed there. Local clipboard changes
-are sent while the viewer is active, and incoming text updates the Mac clipboard
-without echoing it back. Sync is off by default and pauses in View Only mode.
-Servers advertising Apple authentication use the SSH/AppKit clipboard bridge
-for text as well as images, including with Include Images off. Other servers use
-VNC text clipboard support (Unicode requires extended clipboard support).
-Include Images enables PNG/TIFF transfer over the same SSH bridge. When a
-clipboard offers both text and an image, both representations are preserved.
-It accesses the SSH account's own desktop pasteboard, installs no
-remote files or services, and bounds images to 20 MB / 40 megapixels. Files are
-not transferred. Console ownership is not used as an access check: a locked or
-inactive console may belong to root while the user's desktop session still exists.
-If the image helper fails, VNC text synchronization and paste shortcuts continue
-to work, with the actual helper error displayed and a Retry action available.
+enabled and browser panning disabled only over the remote screen.
+The native screen toolbar shows Connect/Disconnect beside its controls menu.
+The title identifies the SSH account and host rather than replacing them with the
+server's computer name. Screen Login defaults to Workspace account: on Apple
+servers Crow chooses ARD account authentication and fixes the login name to the
+selected workspace's SSH account. Enter that account's Mac login password;
+SSH keys cannot substitute for a screen-sharing account password.
+Shared desktop (VNC password) is an explicit alternative in the controls menu.
+It authenticates the shared desktop, not the selected account. Ordinary non-Apple
+VNC servers continue using their supported authentication methods.
+
+On Mac, Sync Clipboard and Include Images are enabled by default. Sync pauses in
+View Only mode. Local clipboard changes are sent while the viewer is active, and
+incoming text updates the Mac clipboard without echoing it back.
+The SSH/AppKit clipboard bridge is used only after Mac account authentication
+with the same username as the current SSH connection. It transfers text and
+PNG/TIFF images (20 MB / 40 megapixels), preserves both representations, and
+installs no remote files or services. Shared-desktop connections and different
+screen/SSH accounts use VNC text clipboard support; they never access the SSH
+account's pasteboard. Unicode requires extended VNC clipboard support.
+If the native helper fails, VNC text synchronization continues and the helper error
+is shown with a Retry action. Image-only paste is suppressed when image transfer
+is unavailable, so it cannot paste unrelated server clipboard contents.
 Command/Ctrl-V synchronizes the client clipboard before issuing
 remote Paste; Copy copies the remote selection and retrieves the result. Apple
 servers retain Command/Option mappings instead of noVNC's PC-oriented mapping.
 Empty server cursors use noVNC's visible dot cursor fallback.
 
-The build applies one checked patch to upstream `core/rfb.js`: when the server
-offers both Apple account authentication and VNC password authentication, Crow
-prefers the configured VNC password. Other security-type combinations retain
-their original ordering, including account-only servers. The patch also records
-Apple authentication support for keyboard mapping. This policy is only
-used inside Crow's authenticated SSH tunnel. `build.mjs` contains the full patch
-and rejects builds if its source anchor changes. The original source is available from the tag linked above
+The build applies one checked patch to upstream `core/rfb.js`: Apple account
+authentication is preferred in workspace-account mode, while the shared VNC
+password is selected only in explicit shared-desktop mode. Unsupported Apple
+account methods fail without falling back to a shared desktop. Apple server
+capabilities are also retained for keyboard mapping. `build.mjs` checks its source
+anchor before applying the patch. The original source is available from the tag linked above
 and from the `@novnc/novnc` npm archive pinned with integrity in
 `package-lock.json`. The library is MPL-2.0, with BSD/MIT components; its license
 texts and author list are included as `App/Screen/noVNC-*.txt` and copied into
@@ -61,9 +67,15 @@ the app bundle. The Crow HTML and bridge are separate from upstream sources.
 
 `vnc-fixture.py` is a loopback-only protocol test double. It fragments a raw red
 framebuffer, requests credentials, records keyboard/pointer events, and allows
-reconnection. It advertises Apple account authentication before VNC password
-authentication and checks the DES response for the fixed test password `fixture`.
-The checks reject a wrong password before retrying with the correct one.
+reconnection. It offers VNC password before ARD account authentication and verifies
+the chosen method. ARD credentials are independently decrypted using DH/MD5/AES;
+only the fixture's two test accounts and the password `fixture` are accepted.
+Additional modes exercise account-only, plain VNC, and unsupported Apple account
+servers. Checks reject incorrect passwords and cross-account login overrides,
+verify explicit shared-desktop mode, and ensure a mismatched screen account does
+not touch the SSH account's named test pasteboard.
+These protocol fixtures do not establish how a particular macOS server chooses a
+GUI session when other users are logged in; that requires a real multiuser Mac check.
 It is never included in the app or used as a real screen server. The integration
 checks exercise the actual WKWebView and SSH transport on macOS (Citadel and
 OpenSSH) and iOS (Citadel), including synthetic DOM touch gestures, hardware key

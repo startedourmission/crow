@@ -1,6 +1,16 @@
 import CrowCore
 import SwiftUI
 import WebKit
+
+enum ScreenLoginMode: String, CaseIterable {
+    case workspaceAccount, sharedDesktop
+    var title: String {
+        switch self {
+        case .workspaceAccount: "Workspace account"
+        case .sharedDesktop: "Shared desktop (VNC password)"
+        }
+    }
+}
 #if os(macOS)
 import AppKit
 
@@ -36,6 +46,11 @@ private final class ScreenBrowserView: WKWebView {
     private(set) var name = "Server Screen"
     private(set) var error: String?
     private(set) var credentialTypes: [String] = []
+    private(set) var requestedUsername = ""
+    private(set) var loginMode = ScreenLoginMode.workspaceAccount
+    private(set) var accountAuthenticated = false
+    private(set) var workspaceAccountRequired = false
+    private var sshUsername: String?
     var viewOnly = false { didSet { configureViewer() } }
     var fitToWindow = true { didSet { configureViewer() } }
     #if os(macOS)
@@ -47,7 +62,13 @@ private final class ScreenBrowserView: WKWebView {
     var pasteboard: NSPasteboard = .general
     var remotePasteboardName: String?
     var serverIsMac = false { didSet { resetClipboard(); configureViewer() } }
-    private var usesNativeClipboard: Bool { serverIsMac || includeClipboardImages }
+    var nativeClipboardAvailable: Bool {
+        guard let state = clipboardWorkspace else { return false }
+        let currentUsername = state.systemSSH?.host.username ?? state.remote?.username
+        return accountAuthenticated && !requestedUsername.isEmpty
+            && requestedUsername == sshUsername && requestedUsername == currentUsername
+    }
+    private var usesNativeClipboard: Bool { nativeClipboardAvailable && (serverIsMac || includeClipboardImages) }
     private var clipboardChangeCount: Int?
     private var clipboardEpoch = UUID()
     private var clipboardTask: Task<Void, Never>?
@@ -91,9 +112,15 @@ private final class ScreenBrowserView: WKWebView {
         webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     }
 
-    func connect(in state: WorkspaceState, port: Int) {
+    func connect(in state: WorkspaceState, port: Int, loginMode: ScreenLoginMode = .workspaceAccount, username: String? = nil) {
         guard ready else { return }
         stop()
+        self.loginMode = loginMode
+        sshUsername = state.remote?.username
+        #if os(macOS)
+        if let spec = state.systemSSH { sshUsername = spec.host.username }
+        #endif
+        requestedUsername = username ?? sshUsername ?? ""
         identifier = UUID().uuidString
         let id = identifier, stream = ScreenTransport()
         transport = stream; active = true; error = nil; name = state.snapshot.workspace.name
@@ -106,7 +133,8 @@ private final class ScreenBrowserView: WKWebView {
             do {
                 let inbound = try await stream.open(in: state, port: port)
                 try Task.checkCancellation()
-                try await javascript("window.crowScreen.start(id)", ["id": id])
+                try await javascript("window.crowScreen.start(id, accountMode)",
+                    ["id": id, "accountMode": loginMode == .workspaceAccount])
                 for try await data in inbound {
                     try Task.checkCancellation()
                     guard identifier == id else { return }
@@ -122,6 +150,12 @@ private final class ScreenBrowserView: WKWebView {
     }
 
     func authenticate(username: String, password: String) {
+        if workspaceAccountRequired {
+            guard !requestedUsername.isEmpty, username == requestedUsername else {
+                fail("Sign in with the selected workspace account: " + requestedUsername)
+                return
+            }
+        }
         let id = identifier
         credentialTypes = []; setDeadline(id)
         Task { [weak self] in
@@ -138,6 +172,8 @@ private final class ScreenBrowserView: WKWebView {
         writing?.cancel(); writing = nil; pendingBytes = 0
         transport?.close(); transport = nil
         active = false; connected = false; credentialTypes = []
+        accountAuthenticated = false
+        workspaceAccountRequired = false
         #if os(macOS)
         clipboardTask?.cancel(); clipboardTask = nil; clipboardChangeCount = nil
         clipboardWorkspace = nil; resetClipboard()
@@ -278,7 +314,9 @@ private final class ScreenBrowserView: WKWebView {
             await syncClipboardIfNeeded()
             guard identifier == id, connected, clipboardSync, !viewOnly else { return }
             // Do not paste unrelated server contents when an image could not be delivered.
-            if clipboardError != nil, pasteboard.availableType(from: [.png, .tiff]) != nil { return }
+            if (!usesNativeClipboard || clipboardError != nil),
+               pasteboard.availableType(from: [.png, .tiff]) != nil,
+               pasteboard.string(forType: .string) == nil { return }
             do { try await javascript("window.crowScreen.finishPaste(modifiers, id)", ["modifiers": modifiers, "id": id]) }
             catch { if identifier == id { fail(error.localizedDescription) } }
         }
@@ -316,6 +354,7 @@ private final class ScreenBrowserView: WKWebView {
         guard active, body["session"] as? String == identifier else { return }
         switch action {
         case "connected":
+            accountAuthenticated = loginMode == .workspaceAccount && body["accountAuthentication"] as? Bool == true
             connected = true; deadline?.cancel(); deadline = nil
             #if os(macOS)
             serverIsMac = body["appleServer"] as? Bool ?? false
@@ -341,6 +380,7 @@ private final class ScreenBrowserView: WKWebView {
             #endif
         case "name": name = String((body["name"] as? String ?? name).prefix(200))
         case "credentials":
+            workspaceAccountRequired = loginMode == .workspaceAccount && body["accountAuthentication"] as? Bool == true
             credentialTypes = body["types"] as? [String] ?? ["password"]
             guard !credentialTypes.isEmpty, credentialTypes.allSatisfy({ ["username", "password"].contains($0) }) else {
                 fail("This server requires an unsupported screen sharing login method."); return
