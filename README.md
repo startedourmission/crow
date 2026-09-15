@@ -43,6 +43,10 @@ brew install --cask crow
 새 버전은 앱에서 안내합니다. **Crow → Check for Updates…** 메뉴로 직접 확인할 수도 있습니다.
 자동 업데이트에는 Sparkle의 서명 검증을 사용합니다.
 
+> **0.1.0 또는 0.1.1을 사용 중인가요?**  해당 버전은 업데이트 설정 오류로
+> **Check for Updates…**가 동작하지 않습니다. 위의 DMG를 다시 내려받아 Applications의
+> Crow.app을 한 번 교체해 주세요. 0.1.2부터는 앱 안에서 정상적으로 업데이트할 수 있습니다.
+
 Homebrew로 수동 업데이트하려면:
 
 ```sh
