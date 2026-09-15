@@ -102,7 +102,7 @@ struct SidebarView: View {
             guard !Task.isCancelled else { return }
             searchFocused = explorer.searchVisible
         }
-        .task(id: model.selectedWorkspaceID.rawValue.uuidString + model.sidebarPane.rawValue + model.current.snapshot.rootPath) {
+        .task(id: model.selectedWorkspaceID.rawValue.uuidString + model.sidebarPane.rawValue + model.current.contextRootPath) {
             guard model.sidebarPane == .files else { return }
             let tree = explorer
             model.refreshFiles()

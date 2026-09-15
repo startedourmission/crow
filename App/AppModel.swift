@@ -30,6 +30,9 @@ final class AppModel {
     var collapsedWorkspaceIDs: Set<WorkspaceID> = []
     var collapsedWorkspaceHosts: Set<String> = []
     var tmuxExpansionStates: [String: TmuxExpansionState] = [:]
+    var workspaceSearchVisible = false
+    var workspaceSearch = ""
+    var workspaceTmuxVisible = true
     var settings = EditorSettings() { didSet { schedulePersist() } }
     var sidebarPane: SidebarPane = .files
     var inspectorVisible = true
@@ -495,9 +498,9 @@ final class AppModel {
 
     func refreshFiles() {
         guard hasWorkspace else { return }
-        let state = current, path = current.snapshot.directoryPath
+        let state = current, path = current.contextDirectoryPath
         state.explorer.showHiddenFiles = showHiddenFiles
-        state.explorer.configure(rootPath: state.snapshot.rootPath) { [weak self, weak state] path in
+        state.explorer.configure(rootPath: state.contextRootPath) { [weak self, weak state] path in
             guard let self, let state else { throw CancellationError() }
             if state.snapshot.workspace.isRemote {
                 let remote = try self.fileConnection(in: state)
@@ -801,7 +804,7 @@ final class AppModel {
         return Task {
             do {
                 try TextFiles.validateName(name)
-                let path = ((parentPath ?? state.snapshot.directoryPath) as NSString).appendingPathComponent(name)
+                let path = ((parentPath ?? state.contextDirectoryPath) as NSString).appendingPathComponent(name)
                 if state.snapshot.workspace.isRemote {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
                     try await remote.create(path, directory: directory)
@@ -842,7 +845,7 @@ final class AppModel {
     }
     func canMoveFile(_ drag: ExplorerFileDrag, to folder: String) -> Bool {
         guard drag.workspaceID == selectedWorkspaceID, hasWorkspace else { return false }
-        let root = current.snapshot.rootPath
+        let root = current.contextRootPath
         func within(_ path: String) -> Bool { path == root || path.hasPrefix(root == "/" ? "/" : root + "/") }
         guard within(drag.path), within(folder), drag.path != root,
               (drag.path as NSString).deletingLastPathComponent != folder,
@@ -874,6 +877,7 @@ final class AppModel {
 
     private func performFileMove(_ drag: ExplorerFileDrag, to folder: String, in state: WorkspaceState) async throws {
         let connection = state.remote
+        let contextRoot = state.contextRootPath
         let affected = state.snapshot.buffers.filter { $0.path == drag.path || $0.path.hasPrefix(drag.path + "/") }
         guard !affected.contains(where: { saving.contains($0.id) }),
               !state.movingPaths.contains(where: { drag.path == $0 || drag.path.hasPrefix($0 + "/") || $0.hasPrefix(drag.path + "/") }) else {
@@ -884,11 +888,11 @@ final class AppModel {
         let source: String, parent: String, root: String
         if state.snapshot.workspace.isRemote {
             guard let remote = connection else { throw FileFailure.disconnected }
-            root = try await remote.realPath(state.snapshot.rootPath)
+            root = try await remote.realPath(contextRoot)
             parent = try await remote.realPath(folder)
             source = (try await remote.realPath((drag.path as NSString).deletingLastPathComponent) as NSString).appendingPathComponent(drag.name)
         } else {
-            root = URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
+            root = URL(fileURLWithPath: contextRoot).resolvingSymlinksInPath().path
             parent = URL(fileURLWithPath: folder).resolvingSymlinksInPath().path
             source = URL(fileURLWithPath: drag.path).deletingLastPathComponent().resolvingSymlinksInPath()
                 .appendingPathComponent(drag.name).path
@@ -938,7 +942,7 @@ final class AppModel {
 
     func fileMoveFolders(workspaceID: WorkspaceID, at path: String) async throws -> (path: String, root: String, folders: [FileEntry]) {
         guard let state = states.first(where: { $0.id == workspaceID }) else { throw CommandError("This workspace was removed.") }
-        let root = state.snapshot.rootPath
+        let root = state.contextRootPath
         let resolved: String, canonicalRoot: String
         let folders: [FileEntry]
         if state.snapshot.workspace.isRemote {
@@ -996,16 +1000,17 @@ final class AppModel {
             report(CommandError("This workspace was removed.")); return Task {}
         }
         let destination = settings.effectiveFileDeletionDestination
+        let contextRoot = state.contextRootPath
         return Task {
             do {
                 let root: String, path: String
                 if state.snapshot.workspace.isRemote {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
-                    root = try await remote.realPath(state.snapshot.rootPath)
+                    root = try await remote.realPath(contextRoot)
                     path = (try await remote.realPath((entry.path as NSString).deletingLastPathComponent) as NSString).appendingPathComponent(entry.name)
                     guard state.remote === remote else { throw FileFailure.disconnected }
                 } else {
-                    root = URL(fileURLWithPath: state.snapshot.rootPath).resolvingSymlinksInPath().path
+                    root = URL(fileURLWithPath: contextRoot).resolvingSymlinksInPath().path
                     path = URL(fileURLWithPath: entry.path).deletingLastPathComponent().resolvingSymlinksInPath()
                         .appendingPathComponent(entry.name).path
                 }
@@ -1035,9 +1040,9 @@ final class AppModel {
                     }
                 } else if state.snapshot.workspace.isRemote {
                     guard let remote = state.remote else { throw FileFailure.disconnected }
-                    recovery = try await remote.trash(entry, rootPath: state.snapshot.rootPath)
+                    recovery = try await remote.trash(entry, rootPath: contextRoot)
                 } else {
-                    let root = URL(fileURLWithPath: state.snapshot.rootPath)
+                    let root = URL(fileURLWithPath: contextRoot)
                     let storage = root.appendingPathComponent(".crow", isDirectory: true)
                     let folder = storage.appendingPathComponent("recovery", isDirectory: true)
                     guard !folder.path.hasPrefix(entry.path + "/") else { throw FileFailure.invalidName }
@@ -1431,7 +1436,7 @@ final class AppModel {
         #if os(macOS)
         useSystemSSH = state.systemSSH != nil
         #endif
-        let directory = state.snapshot.rootPath
+        let directory = state.contextRootPath
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: directory,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
         if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {

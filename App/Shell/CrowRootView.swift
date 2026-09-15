@@ -34,6 +34,7 @@ struct CrowRootView: View {
         #endif
         .tint(CrowTheme.accent)
         .modifier(FolderPickerPresentation())
+        .task(id: model.tmuxContextTrackingID) { await model.followTmuxContext() }
         .sheet(isPresented: Bindable(model).hostEditorVisible, onDismiss: {
             model.finishHostEditorDismissal()
         }) { HostEditorView(host: model.editingHost).environment(model) }

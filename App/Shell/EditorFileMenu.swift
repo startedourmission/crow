@@ -111,7 +111,7 @@ struct FileMovePicker: View {
         if let bufferID { return model.locate(bufferID)?.0.id }
         return nil
     }
-    private var root: String { model.states.first { $0.id == workspaceID }?.snapshot.rootPath ?? "" }
+    private var root: String { model.states.first { $0.id == workspaceID }?.contextRootPath ?? "" }
     private var source: String? {
         if let entry { return entry.path }
         guard let bufferID, let (state, index) = model.locate(bufferID) else { return nil }

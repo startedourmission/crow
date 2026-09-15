@@ -229,7 +229,8 @@ struct AgentTerminalRoute: Hashable {
 struct AgentWorkspaceBrowser: View {
     @Environment(AppModel.self) private var model
     var onOpen: (() -> Void)?
-    @State private var search = ""
+    @FocusState private var searchFocused: Bool
+    private var search: String { model.workspaceSearchVisible ? model.workspaceSearch : "" }
     private var collapsed: Set<WorkspaceID> {
         get { model.collapsedWorkspaceIDs }
         nonmutating set { model.collapsedWorkspaceIDs = newValue }
@@ -258,6 +259,7 @@ struct AgentWorkspaceBrowser: View {
     }
 
     var body: some View {
+        @Bindable var model = model
         VStack(spacing: 0) {
             HStack {
                 Button {
@@ -271,7 +273,23 @@ struct AgentWorkspaceBrowser: View {
                     .help(allHostsCollapsed ? "Expand All" : "Collapse All")
                     .accessibilityLabel(allHostsCollapsed ? "Expand All" : "Collapse All")
                     .accessibilityIdentifier("crow.workspaces.toggle-all")
+                Button { model.workspaceTmuxVisible.toggle() } label: {
+                    Image(systemName: "rectangle.split.2x2").frame(width: 24, height: 24).contentShape(Rectangle())
+                        .foregroundStyle(model.workspaceTmuxVisible ? CrowTheme.accent : CrowTheme.textDim)
+                }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                    .help(model.workspaceTmuxVisible ? "Hide tmux" : "Show tmux")
+                    .accessibilityLabel(model.workspaceTmuxVisible ? "Hide tmux" : "Show tmux")
+                    .accessibilityIdentifier("crow.workspaces.toggle-tmux")
                 Spacer()
+                Button {
+                    model.workspaceSearchVisible.toggle()
+                    searchFocused = model.workspaceSearchVisible
+                } label: {
+                    Image(systemName: "magnifyingglass").frame(width: 24, height: 24).contentShape(Rectangle())
+                        .foregroundStyle(model.workspaceSearchVisible ? CrowTheme.accent : CrowTheme.textDim)
+                }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                    .help("Search hosts and workspaces").accessibilityLabel("Toggle workspace search")
+                    .accessibilityIdentifier("crow.workspaces.toggle-search")
                 Button { model.sshKeysVisible = true } label: {
                     Image(systemName: "key").frame(width: 24, height: 24).contentShape(Rectangle())
                 }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
@@ -279,10 +297,13 @@ struct AgentWorkspaceBrowser: View {
                     .accessibilityIdentifier("crow.keys.open")
                 addWorkspaceMenu
             }.foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12).frame(height: 40)
-            TextField("Search hosts and workspaces", text: $search).textFieldStyle(.plain).font(.system(size: 12))
+            if model.workspaceSearchVisible {
+                TextField("Search hosts and workspaces", text: $model.workspaceSearch).focused($searchFocused).textFieldStyle(.plain).font(.system(size: 12))
                 .padding(8).background(CrowTheme.bg0, in: RoundedRectangle(cornerRadius: 5))
                 .padding(.horizontal, 10).padding(.bottom, 10)
                 .accessibilityIdentifier("crow.agents.search")
+                .onAppear { searchFocused = true }
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if matchesHost(nil, id: nil) { hostGroup(nil, id: nil) }
@@ -417,15 +438,17 @@ struct AgentWorkspaceBrowser: View {
                     Text(search.isEmpty ? "No workspaces. Open a folder from the host menu." : "No matching workspaces")
                         .font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).padding(.leading, 34).padding(.trailing, 10).padding(.vertical, 6)
                 }
-                if let state = model.tmuxWorkspace(on: id) {
-                    TmuxPanel(workspace: state, onAttach: onOpen).padding(.leading, 24)
-                } else if id != nil {
-                    HStack(spacing: 7) {
-                        Image(systemName: "chevron.right").font(.system(size: 9))
-                        Label("tmux", systemImage: "rectangle.split.2x2")
-                    }.font(.system(size: 11)).foregroundStyle(CrowTheme.textDim)
-                        .padding(.leading, 34).padding(.vertical, 8)
-                        .help("Connect this host to manage tmux")
+                if model.workspaceTmuxVisible {
+                    if let state = model.tmuxWorkspace(on: id) {
+                        TmuxPanel(workspace: state, onAttach: onOpen).padding(.leading, 24)
+                    } else if id != nil {
+                        HStack(spacing: 7) {
+                            Image(systemName: "chevron.right").font(.system(size: 9))
+                            Label("tmux", systemImage: "rectangle.split.2x2")
+                        }.font(.system(size: 11)).foregroundStyle(CrowTheme.textDim)
+                            .padding(.leading, 34).padding(.vertical, 8)
+                            .help("Connect this host to manage tmux")
+                    }
                 }
             }
         }.buttonStyle(.plain).windowDragExcluded()

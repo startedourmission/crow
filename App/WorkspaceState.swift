@@ -12,6 +12,10 @@ final class WorkspaceState: Identifiable {
     let id: WorkspaceID
     @ObservationIgnored var remote: RemoteConnection?
     var terminalGeneration = 0
+    var tmuxContextDirectory: String?
+    var contextRootPath: String { tmuxContextDirectory ?? snapshot.rootPath }
+    var contextDirectoryPath: String { tmuxContextDirectory ?? snapshot.directoryPath }
+    @ObservationIgnored var tmuxFocusGeneration = UUID()
     @ObservationIgnored var terminals: [UUID: TerminalSession] = [:]
     @ObservationIgnored var browsers: [UUID: BrowserSession] = [:]
     @ObservationIgnored var accessURL: URL?

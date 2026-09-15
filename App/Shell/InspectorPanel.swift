@@ -16,11 +16,11 @@ struct InspectorPanel: View {
     @State private var discoveryGeneration = UUID()
     @State private var refreshID = UUID()
 
-    private var gitScopeID: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.rootPath)" }
+    private var gitScopeID: String { "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)" }
     private var activeProject: String? { projectScope == gitScopeID ? selectedProject : nil }
 
     private var gitTaskID: String {
-        "\(model.selectedWorkspaceID)-\(model.current.snapshot.rootPath)-\(model.selectedWorkspace.connection)-\(tab)-\(refreshID)"
+        "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)-\(model.selectedWorkspace.connection)-\(tab)-\(refreshID)"
     }
 
     private var buffer: OpenBuffer? { model.inspectedBuffer }
@@ -72,7 +72,7 @@ struct InspectorPanel: View {
             }
             projectError = nil; projectWarning = nil; discovering = false
             guard tab == "Git", model.hasWorkspace else { return }
-            let state = model.current, path = state.snapshot.rootPath
+            let state = model.current, path = state.contextRootPath
             #if os(iOS)
             guard state.snapshot.workspace.isRemote else {
                 projectError = "Open an SSH workspace to view Git projects on iPad and iPhone."; return
@@ -222,7 +222,7 @@ struct InspectorPanel: View {
     }
 
     private func projectLocation(_ path: String) -> String {
-        let root = model.current.snapshot.rootPath
+        let root = model.current.contextRootPath
         if path == root { return "This folder" }
         let prefix = root.hasSuffix("/") ? root : root + "/"
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path

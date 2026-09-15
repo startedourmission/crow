@@ -97,7 +97,7 @@ extension AppModel {
         guard !current.snapshot.workspace.isRemote || current.remote?.isConnected == true else {
             report(CommandError("Connect this workspace’s SSH host before starting an agent.")); return nil
         }
-        let agent = AgentTerminal(provider: provider, directory: current.snapshot.rootPath)
+        let agent = AgentTerminal(provider: provider, directory: current.contextRootPath)
         current.snapshot.agentTerminals.append(agent)
         openCommandTerminal(id: agent.id, in: paneID)
         return agent.id

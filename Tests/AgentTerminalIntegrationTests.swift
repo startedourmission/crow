@@ -116,6 +116,32 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertFalse(model.current.snapshot.layout?.allTabs.contains(.terminal(agent.id)) ?? true)
     }
 
+    @MainActor func testTmuxFocusUpdatesFolderWithoutChangingSavedWorkspace() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-context-" + UUID().uuidString)
+        let folder = root.appendingPathComponent("pane-project")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let state = model.current, original = state.snapshot.rootPath
+        model.newTerminal()
+        let id = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let session = model.terminal(id, in: state)
+        session.running = true; session.tmuxLocation = .init(sessionID: "$3")
+        let focus = TmuxFocus(location: .init(sessionID: "$3", windowID: "@2", paneID: "%9"), directory: folder.path)
+        model.applyTmuxFocus(focus, in: state, terminalID: id)
+        XCTAssertEqual(state.contextRootPath, folder.path)
+        XCTAssertEqual(state.explorer.rootPath, folder.path)
+        XCTAssertEqual(state.snapshot.rootPath, original)
+        XCTAssertEqual(session.tmuxLocation, focus.location)
+        let agentID = try XCTUnwrap(model.newAgentTerminal(.codex))
+        XCTAssertEqual(state.snapshot.agentTerminals.first { $0.id == agentID }?.directory, folder.path)
+        model.applyTmuxFocus(.init(location: focus.location, directory: "/stale"), in: state, terminalID: id)
+        XCTAssertEqual(state.contextRootPath, folder.path, "Ignore a result for a terminal that lost focus")
+        model.clearTmuxContext(in: state)
+        XCTAssertEqual(state.contextRootPath, original)
+        XCTAssertEqual(state.explorer.rootPath, original)
+    }
+
     @MainActor func testTmuxPanelDoesNotInterceptClicksForWindowDragging() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-hit-test-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

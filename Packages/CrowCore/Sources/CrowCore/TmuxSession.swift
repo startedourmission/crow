@@ -32,6 +32,14 @@ public struct TmuxLocation: Equatable, Sendable {
     }
 }
 
+public struct TmuxFocus: Equatable, Sendable {
+    public let location: TmuxLocation
+    public let directory: String
+    public init(location: TmuxLocation, directory: String) {
+        self.location = location; self.directory = directory
+    }
+}
+
 public enum TmuxCommand {
     public struct Failure: LocalizedError {
         public let errorDescription: String?
@@ -144,6 +152,20 @@ public enum TmuxCommand {
     public static func select(_ location: TmuxLocation) throws -> String {
         let commands = try ["tmux has-session -t " + target(location.sessionID)] + selectionCommands(location)
         return prefix + commands.joined(separator: " && ")
+    }
+    public static func focus(sessionID: String) throws -> String {
+        prefix + "tmux -u display-message -p -t " + (try target(sessionID))
+            + " -F " + TerminalCommand.quote("CROW_TMUX_FOCUS|#{session_id}|#{window_id}|#{pane_id}|#{pane_current_path}")
+    }
+    public static func parseFocus(_ output: String, sessionID: String) throws -> TmuxFocus {
+        let records = output.components(separatedBy: .newlines).filter { $0.hasPrefix("CROW_TMUX_FOCUS|") }
+        guard records.count == 1 else { throw Failure("Could not read the active tmux pane's folder.") }
+        let fields = records[0].split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
+        guard fields.count == 5, fields[1] == sessionID, validID(fields[1]),
+              validID(fields[2], prefix: "@"), validID(fields[3], prefix: "%"), fields[4].hasPrefix("/") else {
+            throw Failure("Could not read the active tmux pane's folder.")
+        }
+        return .init(location: .init(sessionID: fields[1], windowID: fields[2], paneID: fields[3]), directory: fields[4])
     }
     private static func selectionCommands(_ location: TmuxLocation) throws -> [String] {
         _ = try target(location.sessionID)

@@ -95,6 +95,19 @@ final class AgentTerminalTests: XCTestCase {
         XCTAssertTrue(command.contains("cd '/tmp/#{literal};' && tmux -u new-session"))
         XCTAssertFalse(command.contains(" -c "))
     }
+    func testTmuxFocusPreservesDirectoryAndRejectsUnrelatedSessions() throws {
+        let output = "Welcome\r\nCROW_TMUX_FOCUS|$3|@2|%9|/tmp/한글 | project\r\n"
+        let focus = try TmuxCommand.parseFocus(output, sessionID: "$3")
+        XCTAssertEqual(focus.location, .init(sessionID: "$3", windowID: "@2", paneID: "%9"))
+        XCTAssertEqual(focus.directory, "/tmp/한글 | project")
+        XCTAssertThrowsError(try TmuxCommand.parseFocus(output, sessionID: "$4"))
+        for malformed in ["", "CROW_TMUX_FOCUS|$3|@2|%9|relative", "CROW_TMUX_FOCUS|$3|@2|bad|/tmp", output + output] {
+            XCTAssertThrowsError(try TmuxCommand.parseFocus(malformed, sessionID: "$3"))
+        }
+        XCTAssertThrowsError(try TmuxCommand.focus(sessionID: "$3; kill-server"))
+        XCTAssertTrue(try TmuxCommand.focus(sessionID: "$3").contains("display-message -p -t '$3'"))
+    }
+
     func testTmuxHierarchyKeepsLinkedWindowsUnderTheirSession() throws {
         let sessions = try TmuxCommand.parse("""
         CROW_TMUX_BEGIN

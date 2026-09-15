@@ -46,12 +46,12 @@ struct AgentHistoryResult: Decodable {
         #endif
         return Data(output.utf8)
     }
-    static func list(in state: WorkspaceState) async throws -> AgentHistoryResult {
-        try JSONDecoder().decode(AgentHistoryResult.self, from: await run(["workspace": state.snapshot.rootPath], in: state))
+    static func list(in state: WorkspaceState, workspacePath: String? = nil) async throws -> AgentHistoryResult {
+        try JSONDecoder().decode(AgentHistoryResult.self, from: await run(["workspace": workspacePath ?? state.contextRootPath], in: state))
     }
-    static func delete(_ entry: AgentHistoryEntry, in state: WorkspaceState) async throws {
+    static func delete(_ entry: AgentHistoryEntry, in state: WorkspaceState, workspacePath: String? = nil) async throws {
         let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry))
-        _ = try await run(["workspace": state.snapshot.rootPath, "action": "delete", "session": value], in: state)
+        _ = try await run(["workspace": workspacePath ?? state.contextRootPath, "action": "delete", "session": value], in: state)
     }
 }
 
@@ -67,15 +67,18 @@ struct AgentHistoryPanel: View {
     @State private var refreshID = 0
     @State private var deletion: AgentHistoryEntry?
     @State private var loadedState: WorkspaceState?
-    private var scope: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.rootPath)-\(model.current.remote?.isConnected == true)-\(refreshID)" }
+    @State private var loadedPath: String?
+    private var scope: String { "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)-\(model.current.remote?.isConnected == true)-\(refreshID)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(model.workspaceFolderName(model.current.snapshot.rootPath)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(model.workspaceFolderName(model.current.contextRootPath)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Spacer()
                 if loading || deleting { ProgressView().controlSize(.small) }
-                Button { refreshID += 1 } label: { Image(systemName: "arrow.clockwise") }
+                Button { refreshID += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
+                    .buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                    .accessibilityLabel("Refresh agent sessions")
                     .help("Refresh agent sessions").disabled(loading || deleting)
                     .accessibilityIdentifier("crow.history.refresh")
             }.padding(.horizontal, 12).padding(.top, 12)
@@ -93,13 +96,14 @@ struct AgentHistoryPanel: View {
                 }.padding(.horizontal, 10).padding(.bottom, 12)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .windowDragExcluded()
             .accessibilityIdentifier("crow.history.panel")
             .task(id: scope) {
-                let state = model.current
-                loadedState = state; entries = []; error = nil; warnings = []; expanded = []; deletion = nil; loading = true
+                let state = model.current, path = model.current.contextRootPath
+                loadedPath = path; loadedState = state; entries = []; error = nil; warnings = []; expanded = []; deletion = nil; loading = true
                 while !Task.isCancelled {
                     do {
-                        let result = try await AgentHistoryService.list(in: state); try Task.checkCancellation()
+                        let result = try await AgentHistoryService.list(in: state, workspacePath: path); try Task.checkCancellation()
                         entries = result.sessions; warnings = result.warnings; error = nil
                     } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
                     if !Task.isCancelled { loading = false }
@@ -155,7 +159,7 @@ struct AgentHistoryPanel: View {
         }.padding(.leading, 12).padding(.vertical, 4)
     }
     private func resume(_ entry: AgentHistoryEntry, fork: Bool) {
-        guard let state = loadedState, state === model.current else { return }
+        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.contextRootPath else { return }
         if !fork, let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.sessionID == entry.id && $0.forkSession != true }), state.terminals[agent.id]?.running == true {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
@@ -168,7 +172,7 @@ struct AgentHistoryPanel: View {
         model.schedulePersist()
     }
     private func delete(_ entry: AgentHistoryEntry) {
-        guard let state = loadedState, state === model.current else { return }
+        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.contextRootPath else { return }
         guard !state.snapshot.agentTerminals.contains(where: { $0.provider == entry.provider && $0.sessionID == entry.id && state.terminals[$0.id]?.running == true }) else {
             error = "Close this session's terminal before deleting its history."; return
         }
@@ -176,9 +180,9 @@ struct AgentHistoryPanel: View {
         Task {
             defer { deleting = false }
             do {
-                try await AgentHistoryService.delete(entry, in: state)
-                if state === loadedState { entries.removeAll { $0.key == entry.key }; refreshID += 1 }
-            } catch { if state === loadedState { self.error = error.localizedDescription } }
+                try await AgentHistoryService.delete(entry, in: state, workspacePath: path)
+                if state === loadedState, loadedPath == path { entries.removeAll { $0.key == entry.key }; refreshID += 1 }
+            } catch { if state === loadedState, loadedPath == path { self.error = error.localizedDescription } }
         }
     }
 }

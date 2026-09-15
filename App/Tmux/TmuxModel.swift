@@ -8,6 +8,51 @@ struct TmuxExpansionState {
 }
 
 extension AppModel {
+    var tmuxContextTrackingID: String {
+        let state = current
+        let session = state.snapshot.selectedTerminalID.flatMap { state.terminals[$0] }
+        return "\(state.id)-\(state.terminalGeneration)-\(session?.id.uuidString ?? "")-\(session?.tmuxLocation?.sessionID ?? "")-\(session?.running == true)"
+    }
+
+    func followTmuxContext() async {
+        let state = current
+        guard let id = state.snapshot.selectedTerminalID, let session = state.terminals[id],
+              session.tmuxLocation != nil, session.running else {
+            clearTmuxContext(in: state); return
+        }
+        while !Task.isCancelled {
+            do { try await refreshTmuxContext(in: state, terminalID: id) }
+            catch is CancellationError { return }
+            catch { /* Keep the last confirmed folder during a transient SSH failure. */ }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        }
+    }
+
+    func refreshTmuxContext(in state: WorkspaceState, terminalID: UUID) async throws {
+        guard let session = state.terminals[terminalID], let location = session.tmuxLocation, session.running else { return }
+        let generation = UUID(); state.tmuxFocusGeneration = generation
+        let output = try await runTmux(TmuxCommand.focus(sessionID: location.sessionID), in: state)
+        try Task.checkCancellation()
+        guard state.tmuxFocusGeneration == generation else { return }
+        applyTmuxFocus(try TmuxCommand.parseFocus(output, sessionID: location.sessionID), in: state, terminalID: terminalID)
+    }
+
+    func applyTmuxFocus(_ focus: TmuxFocus, in state: WorkspaceState, terminalID: UUID) {
+        guard states.contains(where: { $0 === state }), selectedWorkspaceID == state.id,
+              state.snapshot.selectedTerminalID == terminalID, let session = state.terminals[terminalID],
+              session.running, session.tmuxLocation?.sessionID == focus.location.sessionID else { return }
+        session.tmuxLocation = focus.location
+        guard state.tmuxContextDirectory != focus.directory else { return }
+        state.tmuxContextDirectory = focus.directory
+        refreshFiles()
+    }
+
+    func clearTmuxContext(in state: WorkspaceState) {
+        state.tmuxFocusGeneration = UUID()
+        guard state.tmuxContextDirectory != nil else { return }
+        state.tmuxContextDirectory = nil
+        if state === current { refreshFiles() }
+    }
     /// A host owns one tmux tree even when it has several folder workspaces.
     func tmuxWorkspace(on hostID: HostID?) -> WorkspaceState? {
         #if os(iOS)
@@ -53,6 +98,7 @@ extension AppModel {
             if session.running {
                 session.tmuxLocation = location
                 openAgentTerminal(session.id, workspaceID: state.id)
+                try? await refreshTmuxContext(in: state, terminalID: session.id)
                 #if os(macOS)
                 session.view.window?.makeFirstResponder(session.view)
                 #else
@@ -66,6 +112,7 @@ extension AppModel {
         let session = terminal(id, in: state)
         session.tmuxLocation = location
         session.start()
+        try? await refreshTmuxContext(in: state, terminalID: id)
     }
 
     func runTmux(_ command: String, in state: WorkspaceState) async throws -> String {
