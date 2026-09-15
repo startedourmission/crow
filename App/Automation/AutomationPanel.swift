@@ -35,10 +35,11 @@ struct AutomationPanel: View {
                 }
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
-                Button { revision += 1 } label: { Image(systemName: "arrow.clockwise") }
+                Button { revision += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
                     .help("Refresh automations").disabled(loading)
+                    .windowDragExcluded().accessibilityIdentifier("crow.automation.refresh")
             }.padding(12)
-            TextField("Search automations", text: $search).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 10)
+            TextField("Search automations", text: $search).textFieldStyle(.roundedBorder).windowDragExcluded().padding(.horizontal, 12).padding(.bottom, 10)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if let error { Text(error).foregroundStyle(.orange).font(.caption).textSelection(.enabled) }
@@ -47,10 +48,12 @@ struct AutomationPanel: View {
                         HStack {
                             Text("CRON").font(.system(size: 11, weight: .semibold)).foregroundStyle(CrowTheme.textDim)
                             Spacer()
-                            Button { editing = edit(snapshot, cron: .init(id: 0, schedule: "0 9 * * *", command: "", enabled: true), isNew: true) } label: { Image(systemName: "plus") }
+                            Button { editing = edit(snapshot, cron: .init(id: 0, schedule: "0 9 * * *", command: "", enabled: true), isNew: true) } label: { PanelActionIcon(symbol: "plus") }
                                 .help("New cron job").disabled(!snapshot.cronAvailable)
-                            Button { editing = edit(snapshot) } label: { Image(systemName: "curlybraces") }
+                                .windowDragExcluded().accessibilityIdentifier("crow.automation.new-cron")
+                            Button { editing = edit(snapshot) } label: { PanelActionIcon(symbol: "curlybraces") }
                                 .help("Edit full crontab").disabled(!snapshot.cronAvailable)
+                                .windowDragExcluded().accessibilityIdentifier("crow.automation.edit-cron")
                         }.padding(.top, 4)
                         let jobs = CronJob.parse(snapshot.cron)
                         if jobs.isEmpty && snapshot.cronAvailable { Text("No cron jobs for this user.").font(.caption).foregroundStyle(CrowTheme.textDim) }
@@ -64,13 +67,14 @@ struct AutomationPanel: View {
                                     }
                                     Spacer(minLength: 0)
                                 }.padding(8).frame(maxWidth: .infinity, alignment: .leading).background(CrowTheme.bg2, in: RoundedRectangle(cornerRadius: 5))
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.plain).windowDragExcluded()
                         }
                         if snapshot.os == "Darwin" {
                             HStack {
                                 Text("LAUNCHD").font(.system(size: 11, weight: .semibold)).foregroundStyle(CrowTheme.textDim)
                                 Spacer()
                                 Toggle("System", isOn: $showSystem).toggleStyle(.switch).controlSize(.mini).font(.caption)
+                                    .windowDragExcluded().accessibilityIdentifier("crow.automation.system")
                             }.padding(.top, 16)
                             ForEach(snapshot.launchJobs.filter { (showSystem || !$0.system) && (search.isEmpty || $0.label.localizedCaseInsensitiveContains(search)) }.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }) { job in
                                 launchRow(job, snapshot: snapshot)
@@ -81,6 +85,7 @@ struct AutomationPanel: View {
                 }.padding(12)
             }
         }.background(CrowTheme.bg1).foregroundStyle(CrowTheme.text)
+            .windowDragExcluded()
             .accessibilityIdentifier("crow.automation.panel")
             .task(id: loadID) {
                 let state = model.current
@@ -109,7 +114,7 @@ struct AutomationPanel: View {
                 Spacer(minLength: 0)
                 if !job.writable { Image(systemName: "lock").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim) }
             }.padding(8).frame(maxWidth: .infinity, alignment: .leading).background(CrowTheme.bg2, in: RoundedRectangle(cornerRadius: 5))
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plain).windowDragExcluded()
     }
 }
 

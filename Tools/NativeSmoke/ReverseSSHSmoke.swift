@@ -148,6 +148,7 @@ import AppKit
         UsePAM no
         AllowUsers \(NSUserName())
         AllowTcpForwarding yes
+        MaxSessions 1
         GatewayPorts no
         Subsystem sftp /usr/libexec/sftp-server
         LogLevel ERROR

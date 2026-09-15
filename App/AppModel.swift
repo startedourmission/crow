@@ -1377,24 +1377,32 @@ final class AppModel {
             self?.copyReverseSSHCommand(for: host)
         }) { [weak self] in
             guard let self else { throw CancellationError() }
-            @MainActor func state() -> WorkspaceState? {
-                self.states.first { if case .remote(let id, _) = $0.snapshot.workspace.kind { return id == host.id }; return false }
-            }
-            if let existing = state(), existing.remote?.isConnected == true, let spec = existing.systemSSH { return spec }
+            if let spec = connectedSystemSSH(for: host.id) { return spec }
             guard let arguments = host.commandArguments else {
                 throw CommandError("Connect this host with an SSH command once to enable Reverse SSH.")
             }
             try await connectCommand("ssh " + arguments.map(SystemSSHBridge.quote).joined(separator: " "), preserveReverseSSH: true)
             for _ in 0..<480 {
                 try Task.checkCancellation()
-                if let workspace = state() {
-                    if case .failed(let error) = workspace.snapshot.workspace.connection { throw CommandError(error) }
-                    if workspace.snapshot.workspace.connection == .connected, let spec = workspace.systemSSH { return spec }
+                if let spec = connectedSystemSSH(for: host.id) { return spec }
+                let workspaces = states.filter { $0.snapshot.workspace.hostID == host.id }
+                if !workspaces.contains(where: { $0.snapshot.workspace.connection == .connecting }),
+                   let workspace = preferredRemoteWorkspace(hostID: host.id),
+                   case .failed(let error) = workspace.snapshot.workspace.connection {
+                    throw CommandError(error)
                 }
                 try await Task.sleep(for: .milliseconds(250))
             }
             throw CommandError("Finish SSH authentication in the terminal, then enable Reverse SSH again.")
         }
+    }
+
+    /// Reverse SSH belongs to a host, not whichever project appears first in its list.
+    func connectedSystemSSH(for hostID: HostID) -> SystemSSHSpec? {
+        states.first {
+            $0.snapshot.workspace.hostID == hostID && $0.systemSSH != nil &&
+                $0.snapshot.workspace.connection == .connected
+        }?.systemSSH
     }
     #endif
     private func disconnect(_ state: WorkspaceState, stopReverseSSH: Bool = true) {

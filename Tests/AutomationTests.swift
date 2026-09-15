@@ -1,5 +1,6 @@
 import XCTest
 import CrowCore
+import SwiftUI
 @testable import Crow
 
 @MainActor final class AutomationTests: XCTestCase {
@@ -26,6 +27,21 @@ import CrowCore
     }
 
     #if os(macOS)
+    func testAutomationControlsAreExcludedFromWindowDragging() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-automation-click-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        let hosting = NSHostingView(rootView: AutomationPanel().environment(model).windowDragBackground())
+        let window = NSWindow(contentRect: .init(x: 200, y: 200, width: 320, height: 600),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        try await Task.sleep(for: .milliseconds(300))
+        hosting.layoutSubtreeIfNeeded()
+        let surface = try XCTUnwrap(hosting.superview?.subviews.compactMap { $0 as? WindowMoveSurface }.first)
+        for point in [NSPoint(x: 290, y: 30), NSPoint(x: 160, y: 120), NSPoint(x: 160, y: 300)] {
+            XCTAssertFalse(surface.containsRegion(hosting.convert(point, to: surface)), "Automation controls must receive mouse clicks instead of dragging the window")
+        }
+    }
     func testCronSaveUsesOwningRunnerAndRefusesExternalChanges() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-cron-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

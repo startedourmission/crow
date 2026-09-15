@@ -7,6 +7,26 @@ import SwiftUI
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testReverseSSHUsesConnectedProjectInsteadOfFirstHostWorkspace() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-route-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let host = SSHHost(name: "Server", hostname: "192.0.2.39", username: "fixture")
+        let other = SSHHost(name: "Other", hostname: "192.0.2.40", username: "fixture")
+        func state(_ host: SSHHost, _ path: String, _ connection: ConnectionState, _ socket: String) -> WorkspaceState {
+            let value = WorkspaceState(.init(workspace: Workspace(name: path, kind: .remote(hostID: host.id, path: path), connection: connection), rootPath: path))
+            value.systemSSH = SystemSSHSpec(host: host, socket: socket, arguments: [], directory: root.path)
+            return value
+        }
+        let stale = state(host, "/home/fixture", .disconnected, "/tmp/crow-stale-test.socket")
+        let live = state(host, "/home/fixture/project", .connected, "/tmp/crow-live-test.socket")
+        model.states.append(contentsOf: [state(other, "/home/other", .connected, "/tmp/crow-other-test.socket"), stale, live])
+        XCTAssertEqual(model.connectedSystemSSH(for: host.id)?.socket, live.systemSSH?.socket)
+        stale.snapshot.workspace.connection = .failed("Old connection failed")
+        XCTAssertEqual(model.connectedSystemSSH(for: host.id)?.socket, live.systemSSH?.socket)
+        live.snapshot.workspace.connection = .disconnected
+        XCTAssertNil(model.connectedSystemSSH(for: host.id), "Never fall back to a stale socket or another host")
+    }
     @MainActor func testBundledHistoryReaderStaysInRequestedWorkspace() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-empty-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

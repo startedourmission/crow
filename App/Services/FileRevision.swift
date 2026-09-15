@@ -1,4 +1,13 @@
 import Foundation
+import CrowCore
+
+struct RemoteFileListing: Sendable {
+    var entry: FileEntry
+    var size: UInt64?
+    var modified: Date?
+    var permissions: UInt32?
+    var created: Date? = nil
+}
 
 struct FileRevision: Equatable, Sendable {
     var size: UInt64?

@@ -386,6 +386,9 @@ enum ReverseSSHConnector {
             let command = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .direct, passwordRequired: passwordRequired)
             try await files.installReverseSSHBundle(at: path, identity: server.privateKey,
                 knownHosts: "[127.0.0.1]:\(port) \(try server.hostPublicKey)", command: command, probeIdentity: server.probePrivateKey)
+            // Installation and verification each need one SSH session channel.
+            // Do not reserve an idle SFTP channel for the lifetime of the toggle.
+            files.close(); self.files = nil
             try Task.checkCancellation()
             connectCommand = SystemSSHBridge.quote(path + "/connect")
             progress("Verifying server → Mac access…")
@@ -398,7 +401,9 @@ enum ReverseSSHConnector {
                 do {
                     _ = try await ReverseSSHCommand.remote(spec, command: "command -v powershell.exe >/dev/null")
                     let bridged = ReverseSSHConnector.script(path: path, port: port, username: server.username, route: .windowsLoopback, passwordRequired: passwordRequired)
-                    try await files.write(bridged, path: path + "/connect", expected: command, overwrite: false)
+                    let updateFiles = try SystemSFTP(spec: spec); self.files = updateFiles
+                    try await updateFiles.write(bridged, path: path + "/connect", expected: command, overwrite: false)
+                    updateFiles.close(); self.files = nil
                     try Task.checkCancellation()
                     try await verify()
                 } catch {
@@ -428,8 +433,10 @@ enum ReverseSSHConnector {
                     // Mux cancellation matches the original request, not its allocated port.
                     _ = try? await ReverseSSHCommand.run("/usr/bin/ssh", ["-O", "cancel", "-R", "127.0.0.1:0:127.0.0.1:\(localPort)"] + spec.multiplexArguments)
                 }
-                if let files, let path { try? await files.removeReverseSSHBundle(at: path) }
-                files?.close()
+                if let path, let spec {
+                    let cleanupFiles = files ?? (try? SystemSFTP(spec: spec))
+                    if let cleanupFiles { try? await cleanupFiles.removeReverseSSHBundle(at: path); cleanupFiles.close() }
+                } else { files?.close() }
             }.value
             server = nil; self.files = nil
         }
