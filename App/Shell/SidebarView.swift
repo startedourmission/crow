@@ -438,7 +438,8 @@ struct ReverseSSHHostButton: View {
     private var enabled: Bool { session?.isEnabled == true }
     private var preparing: Bool { enabled && session?.connectCommand == nil }
     private var helpText: String {
-        "Reverse SSH (macOS only) · " + (session?.status ?? "Off") + " — "
+        if !ReverseSSHAccessPolicy.isolatedAgentsAvailable { return ReverseSSHAccessPolicy.unavailableMessage }
+        return "Reverse SSH (macOS only) · " + (session?.status ?? "Off") + " — "
             + (enabled ? "click to turn off" : "turn on and copy access command")
     }
 
@@ -447,6 +448,7 @@ struct ReverseSSHHostButton: View {
             if supportsReverseSSH != false || enabled { toggle }
         }.task(id: connection?.socket) {
             supportsReverseSSH = nil
+            guard ReverseSSHAccessPolicy.isolatedAgentsAvailable else { return }
             guard let spec = connection else { return }
             do {
                 let output = try await ReverseSSHCommand.remote(spec, command: ReverseSSHConnector.supportedHostCommand)
@@ -468,9 +470,10 @@ struct ReverseSSHHostButton: View {
                 }
             }.frame(width: 32, height: 32).contentShape(Rectangle())
         }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+            .disabled(!ReverseSSHAccessPolicy.isolatedAgentsAvailable)
             .help(helpText)
             .accessibilityLabel((enabled ? "Disable Reverse SSH for " : "Enable Reverse SSH and copy command for ") + host.userAtHost)
-            .accessibilityValue(session?.status ?? "Off")
+            .accessibilityValue(ReverseSSHAccessPolicy.isolatedAgentsAvailable ? (session?.status ?? "Off") : "Unavailable")
             .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
     }
 }

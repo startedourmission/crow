@@ -4,6 +4,17 @@ import Observation
 import Darwin
 import CrowCore
 
+/// Shared-key reverse access cannot identify an isolated agent execution.
+/// Keep every legacy entry point closed until the managed server path exists.
+enum ReverseSSHAccessPolicy {
+    static let isolatedAgentsAvailable = false
+    static let unavailableMessage = "Reverse SSH is unavailable until Crow server mode and isolated agent access are implemented. Shared-key terminal access is disabled."
+
+    static func requireIsolatedAgentAccess() throws {
+        guard isolatedAgentsAvailable else { throw CommandError(unavailableMessage) }
+    }
+}
+
 /// A separate, temporary SSH identity for one server's access to this Mac.
 /// The listener and accepted sockets belong to Crow, so Off revokes live sessions too.
 @MainActor final class ReverseSSHServer {
@@ -21,6 +32,7 @@ import CrowCore
     }
 
     static func create(password: String? = nil) async throws -> ReverseSSHServer {
+        try ReverseSSHAccessPolicy.requireIsolatedAgentAccess()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-client-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let server = ReverseSSHServer(directory: root)
@@ -247,6 +259,9 @@ enum ReverseSSHConnector {
             exec \(options) -o BatchMode=yes -T -i \(quote(path + "/probe"))\(destination)
         fi
         """ : ""
+        guard ReverseSSHAccessPolicy.isolatedAgentsAvailable else {
+            return "#!/bin/sh\nprintf '%s\\n' " + quote(ReverseSSHAccessPolicy.unavailableMessage) + " >&2\nexit 1\n"
+        }
         return """
         #!/bin/sh
         [ "$(uname -s)" = Darwin ] && [ -x /usr/bin/sw_vers ] || {
@@ -280,6 +295,11 @@ enum ReverseSSHConnector {
     static func revokeAll() { sessions.allObjects.forEach { $0.stop() } }
 
     func start(password: String? = nil, onReady: (@MainActor (String) -> Void)? = nil, connection: @escaping @MainActor () async throws -> SystemSSHSpec) {
+        guard ReverseSSHAccessPolicy.isolatedAgentsAvailable else {
+            stop()
+            status = ReverseSSHAccessPolicy.unavailableMessage
+            return
+        }
         guard !isEnabled else { return }
         isEnabled = true; status = "Connecting…"; connectCommand = nil
         let operation = Operation(), bundleBasePath = bundleBasePath

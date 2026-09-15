@@ -60,46 +60,14 @@ moving the desktop pointer), compare rendered pixels for plain/filled/disabled
 buttons, and require a clearly visible color change for explorer toolbar actions,
 sidebar toggles, and summary headings. They also check that file/tab hover regions
 do not intercept native input and the collapsed sidebar's reopen button is on the left.
-Reverse SSH app checks use a private test pasteboard to verify automatic command
-copying on enable, without replacing the user's clipboard. Password checks reject
-missing and incorrect passwords, require a prompt on new connections, and verify
-that the restricted health key cannot execute arbitrary commands.
 
 Both fixtures override `performDrag(with:)` to record the request without entering
 Window Server pointer tracking. They verify routing and that OS window movement is
 enabled, not end-to-end physical dragging, snapping, or macOS keyboard shortcuts.
 Those require a separate manual check; these tests never take over the user's cursor.
 
-Reverse SSH supports macOS hosts only; Linux/WSL and Windows loopback relays are not supported.
-`zsh Tools/run-reverse-ssh-smoke.sh` checks authenticated reverse execution, file edits,
-rejected unrelated keys, live revocation, actual listener removal, reverse-path health
-failure while the SSH master is still alive, cleanup, and reconnect. Passing the built
-DerivedData directory also checks the production app's toggle workflow.
-It also verifies that ordinary SSH startup/completion, selecting an already
-connected host, and reverse-SSH startup/reconnect preserve the current sidebar
-selection rather than automatically opening Files or Hosts.
-
-The loopback test opens two independent SSH transports to the same server account
-and enables both reverse endpoints. It checks simultaneous execution, explicit
-client commands invoked from another SSH transport or with missing/stale
-`SSH_CONNECTION` (agent/tmux environments), and independent Off. Each command
-pins its endpoint's host key and uses a unique temporary client identity; unrelated
-keys are rejected. Off removes that endpoint's entire private bundle directory.
-
-An **explicitly opt-in** live check can use an existing authenticated control socket:
-
-```sh
-zsh Tools/run-reverse-ssh-smoke.sh --existing-connection /path/to/control-socket user host 22
-```
-
-This creates a separate temporary reverse listener and private connection bundle on
-that macOS server, exercises the production reverse connection and UTF-8
-stdin/output/EOF, then removes its bundle and forward. It preserves the original SSH
-master and does not change server configuration or activate the user's Crow.
-
-`zsh Tools/run-reverse-ssh-smoke.sh` exercises a real loopback OpenSSH master,
-Crow's private per-connection SSH server, generated client credentials, command execution,
-file edits, rejection of unrelated keys, immediate live-session revocation, server-file cleanup,
-rapid toggle cancellation, and master disconnection. Pass the built app's DerivedData directory
-to also exercise the app's host-list toggle through automatic connection and reconnection.
-It uses disposable keys, known-hosts files and directories; system Remote Login is not enabled.
+The shared-key Reverse SSH transport is retired until managed server mode and isolated
+agent access exist. `zsh Tools/run-reverse-ssh-smoke.sh` checks that neither a saved
+password nor a direct low-level call can open a listener or issue a connection command.
+Passing the built app's DerivedData directory checks the same policy in production code.
+Live connection arguments are no longer supported. The fixture does not contact a server.

@@ -1361,6 +1361,11 @@ final class AppModel {
     func disconnectCurrent() { disconnect(current) }
     #if os(macOS)
     func copyReverseSSHCommand(for host: SSHHost) {
+        guard ReverseSSHAccessPolicy.isolatedAgentsAvailable else {
+            reverseSSHConnections[host.id]?.stop()
+            statusMessage = ReverseSSHAccessPolicy.unavailableMessage
+            return
+        }
         guard let command = reverseSSHConnections[host.id]?.connectCommand else { return }
         reverseSSHPasteboard.clearContents()
         if reverseSSHPasteboard.setString(command, forType: .string) {
@@ -1370,6 +1375,11 @@ final class AppModel {
 
     func setReverseSSH(_ enabled: Bool, for host: SSHHost) {
         if !enabled { reverseSSHConnections[host.id]?.stop(); return }
+        guard ReverseSSHAccessPolicy.isolatedAgentsAvailable else {
+            reverseSSHConnections[host.id]?.stop()
+            statusMessage = ReverseSSHAccessPolicy.unavailableMessage
+            return
+        }
         let password: String
         do {
             guard let saved = try reverseSSHAccess.password() else {

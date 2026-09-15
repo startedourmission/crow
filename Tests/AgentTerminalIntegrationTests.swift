@@ -225,7 +225,7 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(imported.count, 1, "The same live terminal must only be imported once")
     }
 
-    @MainActor func testReverseSSHRejectsUnsupportedHostsBeforeRunningConnector() async throws {
+    @MainActor func testLegacyReverseConnectorCannotRunOnAnyHost() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-platform-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -239,17 +239,12 @@ final class AgentTerminalIntegrationTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: uname.path)
             let output = try await ReverseSSHCommand.run("/bin/sh", ["-c", ReverseSSHConnector.supportedHostCommand], environment: environment)
             XCTAssertEqual(ReverseSSHConnector.supportsHost(output), system == "Darwin")
-            if system == "Darwin" {
-                let connected = try await ReverseSSHCommand.run("/bin/sh", ["-c", script], environment: environment)
-                XCTAssertEqual(connected, "CROW_TEST_SSH_STARTED")
-            } else {
-                do {
-                    _ = try await ReverseSSHCommand.run("/bin/sh", ["-c", script], environment: environment)
-                    XCTFail("Unsupported hosts must not execute ssh")
-                } catch {
-                    XCTAssertTrue(error.localizedDescription.contains("only between macOS devices"))
-                    XCTAssertFalse(error.localizedDescription.contains("CROW_TEST_SSH_STARTED"))
-                }
+            do {
+                _ = try await ReverseSSHCommand.run("/bin/sh", ["-c", script], environment: environment)
+                XCTFail("Legacy connectors must not execute ssh on any OS")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("Shared-key terminal access is disabled"))
+                XCTAssertFalse(error.localizedDescription.contains("CROW_TEST_SSH_STARTED"))
             }
         }
         XCTAssertTrue(ReverseSSHConnector.supportsHost("Welcome\r\nCROW_REVERSE_MACOS\r\n"))
@@ -258,30 +253,51 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         }
     }
 
-    @MainActor func testReversePasswordPersistsAndRevokesAllSessionsOnChange() async throws {
+    @MainActor func testLegacyReverseAccessCannotStartEvenWithSavedPassword() async throws {
         let account = "reverse-password-test-" + UUID().uuidString
         defer { try? SecureStore.remove(account) }
         let access = ReverseSSHAccessSettings(account: account)
-        XCTAssertNil(try access.password())
-        try access.save("initial password")
-        XCTAssertEqual(try ReverseSSHAccessSettings(account: account).password(), "initial password")
-        let first = ReverseSSHSession(), second = ReverseSSHSession()
-        defer { first.stop(); second.stop() }
-        for session in [first, second] {
-            session.start(password: "initial password") {
-                try await Task.sleep(for: .seconds(10))
-                throw CancellationError()
+        try access.save("previous access password")
+        let password = try XCTUnwrap(access.password())
+        let session = ReverseSSHSession()
+        defer { session.stop() }
+        var requestedConnection = false, copiedCommand = false
+        session.start(password: password, onReady: { _ in copiedCommand = true }) {
+            requestedConnection = true
+            throw CommandError("Must not connect")
+        }
+        await Task.yield()
+        XCTAssertFalse(requestedConnection)
+        XCTAssertFalse(copiedCommand)
+        XCTAssertFalse(session.isEnabled)
+        XCTAssertNil(session.connectCommand)
+        XCTAssertEqual(session.status, ReverseSSHAccessPolicy.unavailableMessage)
+        for credential in [nil, Optional(password)] {
+            do {
+                let server = try await ReverseSSHServer.create(password: credential)
+                server.stop()
+                XCTFail("Must not open a reverse SSH listener")
+            } catch {
+                XCTAssertEqual(error.localizedDescription, ReverseSSHAccessPolicy.unavailableMessage)
             }
         }
-        XCTAssertThrowsError(try access.save("short"))
-        XCTAssertThrowsError(try access.save("line one\nline two"))
-        XCTAssertTrue(first.isEnabled)
-        XCTAssertEqual(try access.password(), "initial password")
-        try access.save("changed password")
-        XCTAssertFalse(first.isEnabled)
-        XCTAssertFalse(second.isEnabled)
-        XCTAssertEqual(try access.password(), "changed password")
-        await first.stopAndWait(); await second.stopAndWait()
+    }
+
+    @MainActor func testLegacyReverseHostActionsCannotIssueAccessCommands() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-disabled-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { model.shutdown(); pasteboard.releaseGlobally(); try? FileManager.default.removeItem(at: root) }
+        model.reverseSSHPasteboard = pasteboard
+        pasteboard.setString("existing clipboard", forType: .string)
+        let host = SSHHost(name: "Fixture", hostname: "192.0.2.1", username: "fixture")
+        model.hosts = [host]
+        model.setReverseSSH(true, for: host)
+        XCTAssertTrue(model.reverseSSHConnections.isEmpty)
+        XCTAssertFalse(model.settingsVisible)
+        XCTAssertEqual(model.statusMessage, ReverseSSHAccessPolicy.unavailableMessage)
+        model.copyReverseSSHCommand(for: host)
+        XCTAssertEqual(pasteboard.string(forType: .string), "existing clipboard")
     }
 
     @MainActor func testWorkspaceListSortsHostsByConnectionAndProjectsByName() throws {
