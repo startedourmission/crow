@@ -40,7 +40,7 @@ struct TmuxPanel: View {
                     HStack(spacing: 7) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9))
                         Image(systemName: "rectangle.split.2x2")
-                        Text("tmux").font(.system(size: 11, weight: .medium))
+                        Text("tmux").font(.system(size: 11))
                         Spacer(minLength: 0)
                     }.contentShape(Rectangle())
                 }.accessibilityLabel(expanded ? "Collapse tmux" : "Expand tmux")
@@ -129,7 +129,7 @@ struct TmuxPanel: View {
                 Circle().fill(session.clients > 0 ? Color.green : CrowTheme.textDim).frame(width: 7, height: 7)
                 Button { attach(location) } label: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(session.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Text(session.name).font(.system(size: 12)).lineLimit(1)
                         Text("\(session.windows) windows · \(session.clients) clients")
                             .font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())

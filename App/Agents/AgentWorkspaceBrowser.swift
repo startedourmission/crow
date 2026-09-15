@@ -129,7 +129,7 @@ struct AgentWorkspaceBrowser: View {
                     HStack(spacing: 6) {
                         Image(systemName: id == nil ? "laptopcomputer" : "server.rack")
                         Text(host?.userAtHost ?? (id == nil ? "Local" : "SSH (not saved)"))
-                            .font(.system(size: host == nil ? 12 : 11, weight: .semibold))
+                            .font(.system(size: host == nil ? 12 : 11, weight: model.selectedWorkspace.hostID == id ? .bold : .regular))
                             .lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 0)
                     }.contentShape(Rectangle())
@@ -198,7 +198,7 @@ struct AgentWorkspaceBrowser: View {
 
     private func sectionLabel(_ title: String, count: Int, symbol: String) -> some View {
         HStack(spacing: 5) { Image(systemName: symbol); Text(title); Text("\(count)").foregroundStyle(CrowTheme.textDim) }
-            .font(.system(size: 10, weight: .medium)).padding(.leading, 34).padding(.trailing, 10)
+            .font(.system(size: 10)).padding(.leading, 34).padding(.trailing, 10)
     }
 
     private func workspaceRow(_ state: WorkspaceState) -> some View {
@@ -213,7 +213,7 @@ struct AgentWorkspaceBrowser: View {
                 Button { model.activateWorkspace(state.id); onOpen?() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "folder")
-                        Text(state.snapshot.workspace.name).fontWeight(.semibold).lineLimit(1)
+                        Text(state.snapshot.workspace.name).lineLimit(1)
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
                 }.accessibilityIdentifier("crow.workspaces.select." + state.id.rawValue.uuidString)
