@@ -60,42 +60,48 @@ moving the desktop pointer), compare rendered pixels for plain/filled/disabled
 buttons, and require a clearly visible color change for explorer toolbar actions,
 sidebar toggles, and summary headings. They also check that file/tab hover regions
 do not intercept native input and the collapsed sidebar's reopen button is on the left.
+Reverse SSH app checks use a private test pasteboard to verify automatic command
+copying on enable, without replacing the user's clipboard, and reverse execution
+without extra password entry or server enrollment. Unrelated SSH keys are rejected.
 
 Both fixtures override `performDrag(with:)` to record the request without entering
 Window Server pointer tracking. They verify routing and that OS window movement is
 enabled, not end-to-end physical dragging, snapping, or macOS keyboard shortcuts.
 Those require a separate manual check; these tests never take over the user's cursor.
 
-The shared-key Reverse SSH transport is permanently disabled. Managed agents use a
-separate paired TLS channel and an OS identity per execution. `zsh Tools/run-reverse-ssh-smoke.sh` checks that neither a saved
-password nor a direct low-level call can open a listener or issue a connection command.
-Passing the built app's DerivedData directory checks the same policy in production code.
-Live connection arguments are no longer supported. The fixture does not contact a server.
+Reverse SSH supports macOS hosts only; Linux/WSL and Windows loopback relays are not supported.
+`zsh Tools/run-reverse-ssh-smoke.sh` checks authenticated reverse execution, file edits,
+rejected unrelated keys, live revocation, actual listener removal, reverse-path health
+failure while the SSH master is still alive, cleanup, and reconnect. Passing the built
+DerivedData directory also checks the production app's toggle workflow.
+The standalone fixture limits the SSH master to one session channel to check that
+reverse setup releases SFTP before verification. The app fixture allows ten channels
+for its persistent terminal/file connections and concurrent host tasks.
+It also verifies that ordinary SSH startup/completion, selecting an already
+connected host, and reverse-SSH startup/reconnect preserve the current sidebar
+selection rather than automatically opening Files or Hosts.
 
-Managed-agent security tests are in `AgentTerminalIntegrationTests`: real TLS-PSK
-handshake and wrong-key rejection, client-only enrollment decryption and tamper rejection,
-kernel Unix-socket identity checks, file scope
-and link rejection, ACL grant/revoke, command timeout, and restored-tab rejection.
-They run without administrator privileges.
+The loopback test opens two independent SSH transports to the same server account
+and enables both reverse endpoints. It checks simultaneous execution, explicit
+client commands invoked from another SSH transport or with missing/stale
+`SSH_CONNECTION` (agent/tmux environments), and independent Off. Each command
+pins its endpoint's host key and uses a unique temporary client identity; unrelated
+keys are rejected. Off removes that endpoint's entire private bundle directory.
 
-Before releasing server mode, complete the privileged two-Mac check:
+An **explicitly opt-in** live check can use an existing authenticated control socket:
 
-1. On the server Mac, install the signed Crow server from Settings and register a
-   self-contained native CLI. Register the client Mac's public key after comparing its
-   fingerprint, then pair the client with the encrypted code after comparing the server
-   fingerprint. Neither clipboard may contain a private key or the TLS secret.
-2. Open a reverse agent in a disposable user-owned project under `/Users`. Select
-   a disposable local folder. Check interactive input, resize, and `crow-reverse`
-   list/read/write from the agent's command tool.
-3. From another ordinary SSH login to the same account, invoke the helper with the
-   agent's socket path: it must fail. Changing argv or copying the wrapper cannot
-   change the kernel's peer UID. Do not test this rejection as root.
-4. Confirm local `exec` is rejected when off and available only when explicitly on.
-5. Close the tab and interrupt the SSH connection separately. Verify the job's
-   `_crow_…` account, processes, socket, and project ACL entries are removed.
-6. Stop/restart the daemon and reset pairing. Old clients must fail authentication,
-   and stale job leases must be cleaned before accepting new jobs.
+```sh
+zsh Tools/run-reverse-ssh-smoke.sh --existing-connection /path/to/control-socket user host 22
+```
 
-These privileged installation/lifecycle checks are not covered by the unprivileged
-suite. Project code and server administrators remain trusted; process identity
-isolation does not prevent an agent from executing malicious code in its own project.
+This creates a separate temporary reverse listener and private connection bundle on
+that macOS server, exercises the production reverse connection and UTF-8
+stdin/output/EOF, then removes its bundle and forward. It preserves the original SSH
+master and does not change server configuration or activate the user's Crow.
+
+`zsh Tools/run-reverse-ssh-smoke.sh` exercises a real loopback OpenSSH master,
+Crow's private per-connection SSH server, generated client credentials, command execution,
+file edits, rejection of unrelated keys, immediate live-session revocation, server-file cleanup,
+rapid toggle cancellation, and master disconnection. Pass the built app's DerivedData directory
+to also exercise the app's host-list toggle through automatic connection and reconnection.
+It uses disposable keys, known-hosts files and directories; system Remote Login is not enabled.

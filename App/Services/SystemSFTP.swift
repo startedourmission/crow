@@ -171,16 +171,15 @@ final class SystemSFTP: @unchecked Sendable {
     }
 
     /// Never place a client access key in a world-readable directory or follow an existing file.
-    func installReverseSSHBundle(at path: String, identity: String, knownHosts: String, command: String, probeIdentity: String? = nil) async throws {
+    func installReverseSSHBundle(at path: String, identity: String, knownHosts: String, command: String) async throws {
         try await run { wire in
             _ = try wire.request(14, .string(path) + .u32(4) + .u32(0o700))
             guard let mode = try wire.stat(path).permissions, mode & 0o777 == 0o700 else {
                 throw CommandError("The server must support private directory permissions for Reverse SSH.")
             }
-            var entries: [(String, String, UInt32)] = [
+            let entries: [(String, String, UInt32)] = [
                 ("identity", identity, 0o600), ("known_hosts", knownHosts, 0o600), ("connect", command, 0o700),
             ]
-            if let probeIdentity { entries.append(("probe", probeIdentity, 0o600)) }
             for (name, text, mode) in entries {
                 let file = path + "/" + name
                 let handle = try wire.open(file, flags: 2 | 8 | 32, permissions: mode)

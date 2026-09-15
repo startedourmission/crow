@@ -434,21 +434,17 @@ struct ReverseSSHHostButton: View {
     let host: SSHHost
     @State private var supportsReverseSSH: Bool?
     private var connection: SystemSSHSpec? { model.connectedSystemSSH(for: host.id) }
+    private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }
+    private var enabled: Bool { session?.isEnabled == true }
+    private var preparing: Bool { enabled && session?.connectCommand == nil }
+    private var helpText: String {
+        "Reverse SSH (macOS only) · " + (session?.status ?? "Off") + " — "
+            + (enabled ? "click to turn off" : "turn on and copy access command")
+    }
+
     var body: some View {
         Group {
-            if supportsReverseSSH != false {
-                Button {
-                    if let workspace = model.tmuxWorkspace(on: host.id) { model.managedAgentRequest = workspace.id }
-                } label: {
-                    Image(systemName: "arrow.uturn.backward.circle")
-                        .font(.system(size: 15, weight: .medium)).foregroundStyle(CrowTheme.textDim)
-                        .frame(width: 32, height: 32).contentShape(Rectangle())
-                }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
-                    .disabled(connection == nil)
-                    .help("Open an isolated reverse agent · pair this Mac in Crow Server settings first")
-                    .accessibilityLabel("Open reverse agent on " + host.userAtHost)
-                    .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
-            }
+            if supportsReverseSSH != false || enabled { toggle }
         }.task(id: connection?.socket) {
             supportsReverseSSH = nil
             guard let spec = connection else { return }
@@ -457,8 +453,25 @@ struct ReverseSSHHostButton: View {
                 try Task.checkCancellation()
                 guard connection?.socket == spec.socket else { return }
                 supportsReverseSSH = ReverseSSHConnector.supportsHost(output)
-            } catch { /* Server authentication and installation are checked again at launch. */ }
+            } catch { /* Startup checks again before creating a tunnel if detection was unavailable. */ }
         }
+    }
+
+    private var toggle: some View {
+        Button { model.setReverseSSH(!enabled, for: host) } label: {
+            Group {
+                if preparing { ProgressView().controlSize(.small) }
+                else {
+                    Image(systemName: enabled ? "arrow.uturn.backward.circle.fill" : "arrow.uturn.backward.circle")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(enabled ? CrowTheme.ok : CrowTheme.textDim)
+                }
+            }.frame(width: 32, height: 32).contentShape(Rectangle())
+        }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+            .help(helpText)
+            .accessibilityLabel((enabled ? "Disable Reverse SSH for " : "Enable Reverse SSH and copy command for ") + host.userAtHost)
+            .accessibilityValue(session?.status ?? "Off")
+            .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
     }
 }
 

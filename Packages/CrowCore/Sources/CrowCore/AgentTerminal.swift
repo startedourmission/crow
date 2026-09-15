@@ -28,6 +28,7 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
     public var isPinned = false
     public var sessionID: String?
     public var forkSession: Bool?
+    /// Legacy isolated-agent tabs must be reopened explicitly as ordinary agents.
     public var isManagedReverse: Bool?
     public var command: String {
         guard let sessionID else { return provider.command(directory: directory) }

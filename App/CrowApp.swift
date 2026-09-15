@@ -2,16 +2,6 @@ import SwiftUI
 import CrowCore
 
 @main
-struct CrowEntryPoint {
-    @MainActor static func main() {
-        #if os(macOS)
-        if ManagedEntry.handle() { return }
-        if ManagedClientEntry.handle() { return }
-        #endif
-        CrowApp.main()
-    }
-}
-
 struct CrowApp: App {
     #if os(macOS)
     @State private var windows = WorkspaceWindowStore()

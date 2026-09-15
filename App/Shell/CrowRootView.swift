@@ -34,11 +34,6 @@ struct CrowRootView: View {
         #endif
         .tint(CrowTheme.accent)
         .modifier(FolderPickerPresentation())
-        #if os(macOS)
-        .sheet(isPresented: Binding(get: { model.managedAgentRequest != nil }, set: { if !$0 { model.managedAgentRequest = nil } })) {
-            if let id = model.managedAgentRequest { ManagedAgentSheet(workspaceID: id).environment(model) }
-        }
-        #endif
         .task(id: model.tmuxContextTrackingID) { await model.followTmuxContext() }
         .sheet(isPresented: Bindable(model).hostEditorVisible, onDismiss: {
             model.finishHostEditorDismissal()

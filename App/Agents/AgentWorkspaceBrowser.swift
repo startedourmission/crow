@@ -402,13 +402,13 @@ struct AgentWorkspaceBrowser: View {
                             Button("Open Folder…") {
                                 folderSource = model.tmuxWorkspace(on: id)?.id
                             }
-                            #if os(macOS)
-                            if let source = model.tmuxWorkspace(on: id) {
-                                Button("Open Reverse Agent…") { model.managedAgentRequest = source.id }
-                            }
-                            #endif
                             Button("Disconnect") { model.disconnect(host) }
                         }
+                        #if os(macOS)
+                        if model.reverseSSHConnections[host.id]?.connectCommand != nil {
+                            Button("Copy Reverse SSH Command") { model.copyReverseSSHCommand(for: host) }
+                        }
+                        #endif
                         Button("Edit Host…") { model.editHost(host) }
                         Button("Remove Host…", role: .destructive) { removeHost = host }
                     } else if id == nil {
@@ -523,12 +523,6 @@ struct AgentWorkspaceBrowser: View {
                     if model.newAgentTerminal(provider) != nil { onOpen?() }
                 }
             }
-            #if os(macOS)
-            if state.snapshot.workspace.isRemote {
-                Divider()
-                Button("Open Reverse Agent…") { model.managedAgentRequest = state.id }
-            }
-            #endif
         } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .disabled(state.snapshot.workspace.isRemote && state.remote?.isConnected != true)
