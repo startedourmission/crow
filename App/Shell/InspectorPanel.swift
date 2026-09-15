@@ -32,9 +32,14 @@ struct InspectorPanel: View {
                 ForEach(tabs, id: \.self) { item in
                     Button { tab = item } label: {
                         Label(item, systemImage: item == "Summary" ? "list.bullet.indent" : item == "Agents" ? "bubble.left.and.bubble.right" : "point.3.connected.trianglepath.dotted")
+                            .labelStyle(.iconOnly)
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
                             .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }.windowDragExcluded()
+                        .help(item)
+                        .accessibilityLabel(item)
                         .accessibilityIdentifier("crow.inspector-" + item.lowercased())
                 }
                 Spacer(minLength: 0)
