@@ -176,11 +176,11 @@ final class RemoteConnection {
         try GitRepository.parseProjects(await gitData(query: GitRepository.projectsQuery(path: path)))
     }
 
-    func workspaceCommand(_ command: String, operation: String = "tmux") async throws -> String {
-        String(decoding: try await gitData(query: command, operation: operation), as: UTF8.self)
+    func workspaceCommand(_ command: String, operation: String = "tmux", timeout: TimeInterval = 12) async throws -> String {
+        String(decoding: try await gitData(query: command, operation: operation, timeout: timeout), as: UTF8.self)
     }
 
-    private func gitData(query: String, operation: String = "Git") async throws -> Data {
+    private func gitData(query: String, operation: String = "Git", timeout: TimeInterval = 12) async throws -> Data {
         guard let client, client.isConnected else { throw FileFailure.disconnected }
         let command = "sh -c " + GitRepository.quote(query)
         let data = try await withThrowingTaskGroup(of: Data.self) { group in
@@ -215,7 +215,7 @@ final class RemoteConnection {
                 return output
             }
             group.addTask {
-                try await Task.sleep(for: .seconds(12))
+                try await Task.sleep(for: .seconds(timeout))
                 throw CommandError("\(operation) request timed out. The terminal connection was left open.")
             }
             defer { group.cancelAll() }

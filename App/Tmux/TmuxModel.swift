@@ -1,6 +1,12 @@
 import CrowCore
 import Foundation
 
+struct TmuxExpansionState {
+    var expanded = false
+    var collapsedSessions: Set<String> = []
+    var collapsedWindows: Set<String> = []
+}
+
 extension AppModel {
     /// A host owns one tmux tree even when it has several folder workspaces.
     func tmuxWorkspace(on hostID: HostID?) -> WorkspaceState? {

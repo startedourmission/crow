@@ -5,7 +5,11 @@ struct TmuxPanel: View {
     @Environment(AppModel.self) private var model
     var workspace: WorkspaceState?
     var onAttach: (() -> Void)?
-    @State private var expanded = false
+    private var expansionKey: String { target.snapshot.workspace.hostID?.rawValue.uuidString ?? "local" }
+    private var expanded: Bool {
+        get { model.tmuxExpansionStates[expansionKey]?.expanded ?? false }
+        nonmutating set { model.tmuxExpansionStates[expansionKey, default: .init()].expanded = newValue }
+    }
     @State private var sessions: [TmuxSession] = []
     @State private var busy = false
     @State private var error: String?
@@ -13,8 +17,14 @@ struct TmuxPanel: View {
     @State private var renaming: TmuxSession?
     @State private var name = ""
     @State private var closing: CloseTarget?
-    @State private var collapsedSessions: Set<String> = []
-    @State private var collapsedWindows: Set<String> = []
+    private var collapsedSessions: Set<String> {
+        get { model.tmuxExpansionStates[expansionKey]?.collapsedSessions ?? [] }
+        nonmutating set { model.tmuxExpansionStates[expansionKey, default: .init()].collapsedSessions = newValue }
+    }
+    private var collapsedWindows: Set<String> {
+        get { model.tmuxExpansionStates[expansionKey]?.collapsedWindows ?? [] }
+        nonmutating set { model.tmuxExpansionStates[expansionKey, default: .init()].collapsedWindows = newValue }
+    }
 
     private struct CloseTarget {
         let location: TmuxLocation

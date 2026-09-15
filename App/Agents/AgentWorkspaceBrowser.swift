@@ -1,6 +1,227 @@
 import CrowCore
 import SwiftUI
 
+struct GitCloneSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var host: String
+    @State private var source = ""
+    @State private var parent = "~"
+    @State private var folder = ""
+    @State private var suggestions: [String] = []
+    @State private var useSavedCredential = true
+    @State private var working = false
+    @State private var error: String?
+    @State private var task: Task<Void, Never>?
+    @State private var completedPath: String?
+    #if os(macOS)
+    @State private var folderPanel: NSOpenPanel?
+    #endif
+
+    init(initialHost: String) { _host = State(initialValue: initialHost) }
+    private var remoteState: WorkspaceState? {
+        guard let id = model.workspaceHostIDs.first(where: { $0.rawValue.uuidString == host }) else { return nil }
+        return model.tmuxWorkspace(on: id)
+    }
+    private var connectedHosts: [SSHHost] {
+        model.hosts.filter { model.tmuxWorkspace(on: $0.id) != nil }
+    }
+    private var request: GitCloneRequest? { try? GitCloneRequest(source: source, parent: parent, folder: folder) }
+    private var validationError: String? {
+        guard !source.isEmpty, !parent.isEmpty, !folder.isEmpty else { return nil }
+        do { _ = try GitCloneRequest(source: source, parent: parent, folder: folder); return nil }
+        catch { return error.localizedDescription }
+    }
+    private var canUseSavedCredential: Bool {
+        #if os(macOS)
+        return host == "local" && request?.supportsSavedCredential == true && model.gitAccounts.account != nil
+        #else
+        return false
+        #endif
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Clone Git Repository").font(.title3.weight(.semibold))
+            Text("Clone a project and open it as a workspace.").font(.callout).foregroundStyle(CrowTheme.textDim)
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    caption("Device")
+                    Picker("Device", selection: $host) {
+                        #if os(macOS)
+                        Text("Local").tag("local")
+                        #endif
+                        ForEach(connectedHosts) { item in Text(item.userAtHost).tag(item.id.rawValue.uuidString) }
+                    }.labelsHidden().pickerStyle(.menu).accessibilityIdentifier("crow.clone.device")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    caption("Repository URL")
+                    TextField("https://github.com/owner/project.git", text: $source)
+                        .crowSettingsInput().accessibilityIdentifier("crow.clone.source")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    caption("Parent folder")
+                    HStack {
+                        TextField("~/Projects", text: $parent).crowSettingsInput().accessibilityIdentifier("crow.clone.parent")
+                        #if os(macOS)
+                        if host == "local" {
+                            Button { chooseFolder() } label: { Image(systemName: "folder") }
+                                .help("Choose parent folder").accessibilityLabel("Choose parent folder")
+                        }
+                        #endif
+                    }
+                    ForEach(suggestions, id: \.self) { path in
+                        Button { parent = path; suggestions = [] } label: {
+                            Label(path, systemImage: "folder").font(.caption).lineLimit(1).truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    caption("New folder name")
+                    TextField("project", text: $folder).crowSettingsInput().accessibilityIdentifier("crow.clone.folder")
+                }
+                if canUseSavedCredential {
+                    Toggle("Use saved GitHub credentials (\(model.gitAccounts.account?.login ?? ""))", isOn: $useSavedCredential)
+                        .font(.callout).accessibilityIdentifier("crow.clone.credentials")
+                } else {
+                    Text("Uses Git credentials and SSH keys configured on the selected device.")
+                        .font(.caption).foregroundStyle(CrowTheme.textDim)
+                }
+            }.disabled(working || completedPath != nil)
+            if let error = error ?? validationError { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled).lineLimit(6) }
+            if working {
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Cloning repository…").font(.callout) }
+            }
+            HStack {
+                Button(working ? "Stop" : "Cancel") {
+                    if working { task?.cancel() } else { dismiss() }
+                }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(completedPath == nil ? "Clone & Open" : "Open Workspace") { clone() }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(working || request == nil || (host != "local" && remoteState == nil))
+                    .accessibilityIdentifier("crow.clone.submit")
+            }
+        }.padding(24).frame(minWidth: 420, idealWidth: 520, maxWidth: 600)
+            .background(CrowTheme.bg0).foregroundStyle(CrowTheme.text)
+            .autocorrectionDisabled().windowDragExcluded()
+            #if os(iOS)
+            .textInputAutocapitalization(.never)
+            #endif
+            .interactiveDismissDisabled(working)
+            .onAppear {
+                model.gitAccounts.reload()
+                #if os(iOS)
+                if remoteState == nil, let first = connectedHosts.first { host = first.id.rawValue.uuidString }
+                #endif
+                resetParent()
+            }
+            .onChange(of: source) { old, new in
+                if folder.isEmpty || folder == GitCloneRequest.suggestedFolder(old) { folder = GitCloneRequest.suggestedFolder(new) }
+            }
+            .onChange(of: host) { _, _ in resetParent(); error = nil; completedPath = nil }
+            .task(id: host + "\n" + parent) { await completeParent() }
+            .onDisappear {
+                task?.cancel()
+                #if os(macOS)
+                folderPanel?.cancel(nil)
+                #endif
+            }
+    }
+
+    private func caption(_ title: String) -> some View {
+        Text(title).font(.caption).foregroundStyle(CrowTheme.textDim)
+    }
+    private func resetParent() {
+        if host == "local" {
+            #if os(macOS)
+            parent = model.selectedWorkspace.isRemote ? "~" : model.current.snapshot.rootPath
+            #endif
+        } else { parent = remoteState?.snapshot.rootPath ?? "~" }
+        suggestions = []
+    }
+    private func completeParent() async {
+        let value = parent, device = host
+        do {
+            try await Task.sleep(for: .milliseconds(180))
+            let matches: [String]
+            if device == "local" {
+                #if os(macOS)
+                matches = try await Task.detached { try FolderPathCompletion.suggestions(for: value) }.value
+                #else
+                matches = []
+                #endif
+            } else if let state = remoteState {
+                let browsing = value.hasSuffix("/") || value == "~"
+                let base = browsing ? value : (value as NSString).deletingLastPathComponent
+                let prefix = browsing ? "" : (value as NSString).lastPathComponent
+                let result = try await model.remoteDirectory(in: state.id, at: base.isEmpty ? "~" : base)
+                matches = result.folders.filter { $0.name.lowercased().hasPrefix(prefix.lowercased()) }
+                    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.prefix(4).map { $0.path + "/" }
+            } else { matches = [] }
+            try Task.checkCancellation()
+            if host == device, parent == value { suggestions = matches }
+        } catch { if !Task.isCancelled { suggestions = [] } }
+    }
+    #if os(macOS)
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false; panel.prompt = "Choose"
+        let completion = FolderPathCompletion(panel: panel, initialDirectory: (parent as NSString).expandingTildeInPath)
+        let accessory = NSHostingView(rootView: FolderPathAccessory(completion: completion))
+        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 164)
+        panel.accessoryView = accessory; panel.isAccessoryViewDisclosed = true; folderPanel = panel
+        panel.begin { result in
+            if result == .OK, let url = panel.url { parent = url.path }
+            folderPanel = nil
+        }
+    }
+    #endif
+    private func clone() {
+        guard let request else { return }
+        let state = remoteState, device = host
+        let saved = canUseSavedCredential && useSavedCredential
+        working = true; error = nil
+        task = Task {
+            defer { working = false }
+            do {
+                let path: String
+                if let completedPath { path = completedPath }
+                else {
+                    #if os(macOS)
+                    let credential = saved ? try model.gitAccounts.credential() : nil
+                    if device == "local" { path = try await GitRepository.clone(request, credential: credential) }
+                    else if let spec = state?.systemSSH, state?.remote?.isConnected == true {
+                        path = try await GitRepository.clone(request, remote: spec)
+                    } else {
+                        guard let remote = state?.remote, remote.isConnected else { throw FileFailure.disconnected }
+                        path = try GitCloneRequest.completedPath(await remote.workspaceCommand(request.command(), operation: "Git clone", timeout: 1800))
+                    }
+                    #else
+                    guard let remote = state?.remote, remote.isConnected else { throw FileFailure.disconnected }
+                    path = try GitCloneRequest.completedPath(await remote.workspaceCommand(request.command(), operation: "Git clone", timeout: 1800))
+                    #endif
+                    completedPath = path
+                }
+                try Task.checkCancellation()
+                if let state {
+                    guard model.states.contains(where: { $0 === state }) else { throw CommandError("Cloned to \(path), but the source workspace was removed.") }
+                    try await model.openRemoteWorkspace(path, from: state.id)
+                } else if device == "local" { model.openFolder(URL(fileURLWithPath: path)) }
+                else { throw FileFailure.disconnected }
+                model.sidebarPane = .workspaces; model.sidebarVisible = true
+                model.collapsedWorkspaceHosts.remove(device)
+                model.collapsedWorkspaceIDs.remove(model.selectedWorkspaceID)
+                dismiss()
+            } catch is CancellationError {
+                error = "Clone stopped. A partial folder may remain at the destination."
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+
 struct AgentTerminalRoute: Hashable {
     let workspaceID: WorkspaceID
     let terminalID: UUID
@@ -11,12 +232,19 @@ struct AgentWorkspaceBrowser: View {
     @Environment(AppModel.self) private var model
     var onOpen: (() -> Void)?
     @State private var search = ""
-    @State private var collapsed: Set<WorkspaceID> = []
-    @State private var collapsedHosts: Set<String> = []
+    private var collapsed: Set<WorkspaceID> {
+        get { model.collapsedWorkspaceIDs }
+        nonmutating set { model.collapsedWorkspaceIDs = newValue }
+    }
+    private var collapsedHosts: Set<String> {
+        get { model.collapsedWorkspaceHosts }
+        nonmutating set { model.collapsedWorkspaceHosts = newValue }
+    }
     @State private var removeHost: SSHHost?
     @State private var renaming: AgentTerminalRoute?
     @State private var name = ""
     @State private var folderSource: WorkspaceID?
+    @State private var cloneHost: String?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
         model.alphabetizedWorkspaces(on: hostID).filter { state in
@@ -68,6 +296,9 @@ struct AgentWorkspaceBrowser: View {
             }
         }.background(CrowTheme.bg1).foregroundStyle(CrowTheme.text)
             .accessibilityIdentifier("crow.agents.browser")
+            .sheet(isPresented: Binding(get: { cloneHost != nil }, set: { if !$0 { cloneHost = nil } })) {
+                if let cloneHost { GitCloneSheet(initialHost: cloneHost).environment(model) }
+            }
             .sheet(isPresented: Binding(get: { folderSource != nil }, set: { if !$0 { folderSource = nil } })) {
                 if let id = folderSource, let state = model.states.first(where: { $0.id == id }) {
                     RemoteProjectFolderPicker(workspaceID: id, initialPath: state.snapshot.rootPath)
@@ -94,6 +325,9 @@ struct AgentWorkspaceBrowser: View {
 
     private var addWorkspaceMenu: some View {
         Menu {
+            Button("Clone Git Repository…", systemImage: "arrow.down.to.line") {
+                cloneHost = model.current.snapshot.workspace.hostID?.rawValue.uuidString ?? "local"
+            }.accessibilityIdentifier("crow.workspaces.clone")
             Button("Open Local Folder…", systemImage: "folder.badge.plus") { model.folderImporterVisible = true }
             ForEach(model.hosts) { host in
                 if let source = model.states.first(where: { $0.snapshot.workspace.hostID == host.id && $0.remote?.isConnected == true }) {
@@ -145,6 +379,7 @@ struct AgentWorkspaceBrowser: View {
                     if let host {
                         Button("Connect") { model.connect(host) }
                         if model.connectionState(for: host) == .connected {
+                            Button("Clone Git Repository…") { cloneHost = key }
                             Button("Open Folder…") {
                                 folderSource = model.tmuxWorkspace(on: id)?.id
                             }
@@ -159,6 +394,9 @@ struct AgentWorkspaceBrowser: View {
                         Button("Remove Host…", role: .destructive) { removeHost = host }
                     } else if id == nil {
                         Button("Open Local Folder…") { model.folderImporterVisible = true }
+                        #if os(macOS)
+                        Button("Clone Git Repository…") { cloneHost = "local" }
+                        #endif
                     } else {
                         Button("Add SSH Host…") { model.sshCommandVisible = true }
                     }

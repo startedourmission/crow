@@ -27,6 +27,9 @@ final class AppModel {
     var hosts: [SSHHost] = []
     var states: [WorkspaceState] = []
     var selectedWorkspaceID: WorkspaceID
+    var collapsedWorkspaceIDs: Set<WorkspaceID> = []
+    var collapsedWorkspaceHosts: Set<String> = []
+    var tmuxExpansionStates: [String: TmuxExpansionState] = [:]
     var settings = EditorSettings() { didSet { schedulePersist() } }
     var sidebarPane: SidebarPane = .files
     var inspectorVisible = true
