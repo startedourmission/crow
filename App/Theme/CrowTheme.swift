@@ -53,6 +53,61 @@ struct PanelActionIcon: View {
     }
 }
 
+/// Shared layout for action popovers, with room for status and inline controls.
+struct CrowPopupPanel<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(CrowTheme.textDim)
+                .lineLimit(1).truncationMode(.middle).padding(.horizontal, 10).padding(.vertical, 8)
+            content
+        }.padding(8).frame(width: 280).background(CrowTheme.bg0)
+            .foregroundStyle(CrowTheme.text).clipShape(RoundedRectangle(cornerRadius: 12))
+            .windowDragExcluded().presentationCompactAdaptation(.popover)
+    }
+}
+
+struct CrowPopupAction: View {
+    let title: String
+    let symbol: String
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: role, action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).frame(width: 20).foregroundStyle(role == .destructive ? CrowTheme.danger : CrowTheme.textDim)
+                Text(title)
+                Spacer(minLength: 0)
+            }
+        }.buttonStyle(CrowPopupButtonStyle())
+    }
+}
+
+struct CrowPopupButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PopupButtonBody(configuration: configuration)
+    }
+
+    private struct PopupButtonBody: View {
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovered = false
+        let configuration: ButtonStyleConfiguration
+
+        var body: some View {
+            configuration.label.font(.system(size: 13))
+                .foregroundStyle(configuration.role == .destructive ? CrowTheme.danger : CrowTheme.text)
+                .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
+                .background(enabled && (hovered || configuration.isPressed) ? CrowTheme.bg2 : .clear,
+                            in: RoundedRectangle(cornerRadius: 6))
+                .opacity(enabled ? 1 : 0.4).contentShape(Rectangle())
+                .onHover { hovered = $0 }
+        }
+    }
+}
+
 private struct CrowControlHoveredKey: EnvironmentKey {
     static let defaultValue = false
 }

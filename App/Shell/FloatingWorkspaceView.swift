@@ -20,7 +20,7 @@ struct FloatingWorkspaceView: View {
             .padding(.horizontal, 8).frame(height: 36).background(CrowTheme.bg1).windowDragBackground()
             CrowDivider()
             ZStack {
-                if model.compactSurface == .files || model.compactSurface == .hosts { SidebarView() }
+                if model.compactSurface == .files || model.compactSurface == .hosts { SidebarView(filesOnly: model.compactSurface == .files && model.sidebarPane != .automation) }
                 if model.hasWorkspace {
                     EditorAreaView()
                         .opacity(model.compactSurface == .editor ? 1 : 0)

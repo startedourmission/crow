@@ -82,7 +82,7 @@ struct CrowApp: App {
                     if let model { model.terminalVisible.toggle() }
                 }
                 .keyboardShortcut("`", modifiers: .control)
-                Button("New Terminal") { model?.newTerminal() }.keyboardShortcut("t", modifiers: [.command, .shift])
+                Button("New Terminal") { model?.newTerminal() }.keyboardShortcut("t", modifiers: .command)
                 Button("Split Right") {
                     if let pane = model?.current.snapshot.layout?.activePane, let tab = pane.selected {
                         model?.splitTab(tab, in: pane.id, placement: .right)

@@ -34,8 +34,9 @@ final class AppModel {
     var workspaceSearch = ""
     var workspaceTmuxVisible = true
     var settings = EditorSettings() { didSet { schedulePersist() } }
-    var sidebarPane: SidebarPane = .files
+    var sidebarPane: SidebarPane = .workspaces
     var inspectorVisible = true
+    var inspectorTab = "Files"
     var editorLocationBufferID: BufferID?
     var editorLocationRequest: EditorLocationRequest?
     var documentFindRequest = 0
@@ -46,9 +47,16 @@ final class AppModel {
     }
     var fileSearchFocusRequest = 0
 
+    func showFileExplorer() {
+        inspectorTab = "Files"; inspectorVisible = true
+        #if os(iOS)
+        compactSurface = .files
+        #endif
+    }
+
     func focusFileSearch() {
         guard hasWorkspace else { return }
-        sidebarPane = .files; sidebarVisible = true
+        showFileExplorer()
         current.explorer.searchVisible = true
         fileSearchFocusRequest += 1
     }
@@ -70,7 +78,7 @@ final class AppModel {
     var compactSurface: CompactSurface = .editor {
         didSet {
             if compactSurface == .hosts { sidebarPane = .workspaces }
-            if compactSurface == .files { sidebarPane = .files }
+            if compactSurface == .files { sidebarPane = .workspaces; inspectorTab = "Files" }
         }
     }
     var statusMessage = "Ready"
@@ -276,8 +284,7 @@ final class AppModel {
         selectedWorkspaceID = id
         current.snapshot.lastOpenedAt = Date()
         if showFiles {
-            sidebarPane = .files
-            if compactSurface == .hosts { compactSurface = .files }
+            showFileExplorer()
         }
         ensureLayout(current); refreshFiles()
         statusMessage = workspaceTitle; schedulePersist()
@@ -438,13 +445,13 @@ final class AppModel {
                     previousAccess?.stopAccessingSecurityScopedResource()
                 }
                 if existing.snapshot.bookmark != nil || path != vaultURL.path { existing.snapshot.bookmark = bookmark }
-                sidebarPane = .files; sidebarVisible = true
+                showFileExplorer()
                 selectWorkspace(existing.id); return
             }
             let state = WorkspaceState(.init(workspace: Workspace(name: url.lastPathComponent, kind: .local, connection: .local),
                 rootPath: path, bookmark: bookmark))
             if accessed { state.accessURL = url; retainedAccess = true }
-            states.append(state); sidebarPane = .files; sidebarVisible = true
+            states.append(state); showFileExplorer()
             selectWorkspace(state.id)
         } catch { report(error) }
     }

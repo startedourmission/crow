@@ -250,6 +250,43 @@ struct CrowEditorView: View {
 }
 
 
+struct NewTabPopover: View {
+    @Environment(AppModel.self) private var model
+    let paneID: UUID
+    let dismiss: () -> Void
+    private var connected: Bool { !model.selectedWorkspace.isRemote || model.current.remote?.isConnected == true }
+
+    var body: some View {
+        CrowPopupPanel(title: "New Tab") {
+            CrowPopupAction(title: "Terminal", symbol: "terminal") {
+                dismiss(); model.activatePane(paneID); model.newTerminal()
+            }
+            ForEach(AgentProvider.allCases) { provider in
+                Button {
+                    dismiss(); model.newAgentTerminal(provider, in: paneID)
+                } label: {
+                    HStack(spacing: 10) {
+                        AgentProviderIcon(provider: provider, size: 16).frame(width: 20)
+                        Text(provider.title)
+                        Spacer(minLength: 0)
+                    }
+                }.buttonStyle(CrowPopupButtonStyle()).disabled(!connected)
+                    .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
+            }
+            CrowDivider().padding(.vertical, 5)
+            CrowPopupAction(title: "Web Browser", symbol: "globe") {
+                dismiss(); model.newBrowser(in: paneID)
+            }
+            CrowPopupAction(title: "Browse Files", symbol: "folder") {
+                dismiss(); model.activatePane(paneID); model.showFileExplorer()
+            }
+            CrowPopupAction(title: "SSH Hosts", symbol: "network") {
+                dismiss(); model.activatePane(paneID); model.showHosts()
+            }
+        }.accessibilityIdentifier("crow.new-tab-popover")
+    }
+}
+
 struct NewTabPage: View {
     @Environment(AppModel.self) private var model
     let paneID: UUID
@@ -281,7 +318,7 @@ struct NewTabPage: View {
                     }
                     action("Browse Files", symbol: "folder") {
                         model.activatePane(paneID)
-                        model.sidebarPane = .files; model.sidebarVisible = true
+                        model.showFileExplorer()
                     }
                     action("Web Browser", symbol: "globe") { model.newBrowser(in: paneID) }
                     action("SSH Hosts", symbol: "network") {
@@ -531,6 +568,7 @@ private struct WorkspacePaneView: View {
     let isTopLeading: Bool
     let isTopTrailing: Bool
     @State private var dropPlacement: PanePlacement?
+    @State private var showingNewTab = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -580,13 +618,16 @@ private struct WorkspacePaneView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         ForEach(pane.tabs, id: \.self) { tab in tabView(tab).id(tab.key) }
-                        Button { model.newTab(in: pane.id) } label: { PanelActionIcon(symbol: "plus") }
+                        Button { showingNewTab.toggle() } label: { PanelActionIcon(symbol: "plus") }
                             .buttonStyle(CrowButtonStyle())
                             .frame(width: 32, height: 36)
                             .help("New Tab").accessibilityLabel("New Tab")
                             .accessibilityIdentifier("crow.pane.new-tab")
                             .windowDragExcluded()
                             .id("add-tab")
+                            .popover(isPresented: $showingNewTab, arrowEdge: .bottom) {
+                                NewTabPopover(paneID: pane.id) { showingNewTab = false }.environment(model)
+                            }
                     }
                 }
                 #if os(macOS)
@@ -598,7 +639,7 @@ private struct WorkspacePaneView: View {
                 }
             }
             Menu {
-                Button("New Tab") { model.newTab(in: pane.id) }
+                Button("New Tab") { showingNewTab = true }
                 Button("New Terminal Tab") { model.activatePane(pane.id); model.newTerminal() }
                 Button("SSH Command…") { model.sshCommandVisible = true }
                 if let tab = pane.selected {

@@ -28,6 +28,102 @@ struct FileDownload: FileDocument {
     }
 }
 
+#if os(macOS)
+/// Launch Services supplies the installed handlers and the user's default app.
+struct OpenWithMenu: View {
+    @Environment(AppModel.self) private var model
+    let path: String
+    let workspaceID: WorkspaceID
+    private var isRemote: Bool { model.states.first { $0.id == workspaceID }?.snapshot.workspace.isRemote == true }
+
+    var body: some View {
+        Menu {
+            let file = URL(fileURLWithPath: path)
+            let type = UTType(filenameExtension: file.pathExtension) ?? .data
+            let preferred = isRemote ? NSWorkspace.shared.urlForApplication(toOpen: type) : NSWorkspace.shared.urlForApplication(toOpen: file)
+            let handlers = isRemote ? NSWorkspace.shared.urlsForApplications(toOpen: type) : NSWorkspace.shared.urlsForApplications(toOpen: file)
+            let applications = Array(Set(handlers + (preferred.map { [$0] } ?? []))).sorted {
+                if $0 == preferred { return true }
+                if $1 == preferred { return false }
+                return applicationName($0).localizedStandardCompare(applicationName($1)) == .orderedAscending
+            }
+            ForEach(applications, id: \.self) { application in
+                Button { model.openFileExternally(path, workspaceID: workspaceID, application: application) } label: {
+                    Label {
+                        Text(applicationName(application) + (application == preferred ? " (Default)" : ""))
+                    } icon: {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: application.path)).resizable().frame(width: 16, height: 16)
+                    }
+                }
+            }
+            if !applications.isEmpty { Divider() }
+            Button("Other…") { model.chooseApplication(for: path, workspaceID: workspaceID) }
+            if isRemote {
+                Divider()
+                Text("Opens a local copy. Changes are not uploaded.")
+            }
+        } label: {
+            Label(isRemote ? "Open Downloaded Copy With" : "Open With", systemImage: "arrow.up.forward.app")
+        }.accessibilityIdentifier("crow.file.open-with")
+    }
+
+    private func applicationName(_ url: URL) -> String {
+        (FileManager.default.displayName(atPath: url.path) as NSString).deletingPathExtension
+    }
+}
+
+extension AppModel {
+    func chooseApplication(for path: String, workspaceID: WorkspaceID) {
+        let panel = NSOpenPanel()
+        panel.title = "Open With"; panel.prompt = "Open"
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.begin { [weak self] response in
+            guard response == .OK, let application = panel.url else { return }
+            self?.openFileExternally(path, workspaceID: workspaceID, application: application)
+        }
+    }
+
+    func openFileExternally(_ path: String, workspaceID: WorkspaceID, application: URL) {
+        guard let state = states.first(where: { $0.id == workspaceID }) else { return }
+        guard !state.movingPaths.contains(path) else { report(CommandError("Wait for the file move to finish.")); return }
+        let remote = state.snapshot.workspace.isRemote, connection = state.remote
+        Task { @MainActor in
+            var copyDirectory: URL?
+            do {
+                let file: URL
+                if remote {
+                    guard let connection, connection.isConnected else { throw FileFailure.disconnected }
+                    let data: Data
+                    if let buffer = state.snapshot.buffers.first(where: { $0.path == path }) {
+                        data = try await downloadOpenFile(buffer.id)
+                    } else { data = try await connection.readData(path, maximumSize: FileDownload.sizeLimit) }
+                    guard states.contains(where: { $0 === state }), state.remote === connection,
+                          !state.movingPaths.contains(path) else { throw CommandError("The remote file changed location. Try again.") }
+                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Crow-OpenWith-" + UUID().uuidString, isDirectory: true)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                    copyDirectory = directory
+                    file = directory.appendingPathComponent((path as NSString).lastPathComponent)
+                    try data.write(to: file, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                } else {
+                    if state.snapshot.buffers.contains(where: { $0.path == path && $0.isDirty }) {
+                        throw CommandError("Save your changes in Crow before opening this file in another app.")
+                    }
+                    file = URL(fileURLWithPath: path)
+                }
+                _ = try await NSWorkspace.shared.open([file], withApplicationAt: application, configuration: .init())
+                statusMessage = remote ? "Opened a local copy — changes are not uploaded to the host." : "Opened " + file.lastPathComponent
+            } catch {
+                if let copyDirectory { try? FileManager.default.removeItem(at: copyDirectory) }
+                report(error)
+            }
+        }
+    }
+}
+#endif
+
 struct EditorFileMenu: View {
     @Environment(AppModel.self) private var model
     let buffer: OpenBuffer
@@ -41,6 +137,12 @@ struct EditorFileMenu: View {
 
     var body: some View {
         Menu {
+            #if os(macOS)
+            if let state = model.locate(buffer.id)?.0 {
+                OpenWithMenu(path: buffer.path, workspaceID: state.id)
+                Divider()
+            }
+            #endif
             Button("Move File…", systemImage: "folder") { moving = true }
                 .accessibilityIdentifier("crow.file-move")
             Button("Download File…", systemImage: "arrow.down.to.line") { prepareDownload() }

@@ -244,6 +244,7 @@ struct AgentWorkspaceBrowser: View {
     @State private var name = ""
     @State private var folderSource: WorkspaceID?
     @State private var cloneHost: String?
+    @State private var hostMenu: String?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
         model.alphabetizedWorkspaces(on: hostID).filter { state in
@@ -372,6 +373,14 @@ struct AgentWorkspaceBrowser: View {
                     Image(systemName: collapsedHosts.contains(key) ? "chevron.right" : "chevron.down")
                         .font(.system(size: 9)).frame(width: 14, height: 28).contentShape(Rectangle())
                 }.accessibilityLabel("Toggle folders for " + (host?.userAtHost ?? "Local"))
+                if let host {
+                    HostConnectionButton(host: host)
+                } else {
+                    Image(systemName: id == nil ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(id == nil ? CrowTheme.ok : CrowTheme.textDim)
+                        .frame(width: 24, height: 28)
+                        .accessibilityLabel(id == nil ? "Local device" : "Disconnected")
+                }
                 Button {
                     collapsedHosts.remove(key)
                     if let host { model.connect(host); onOpen?() }
@@ -380,7 +389,6 @@ struct AgentWorkspaceBrowser: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: id == nil ? "laptopcomputer" : "server.rack")
                         Text(host?.userAtHost ?? (id == nil ? "Local" : "SSH (not saved)"))
                             .font(.system(size: host == nil ? 12 : 11, weight: model.selectedWorkspace.hostID == id ? .bold : .regular))
                             .lineLimit(1).truncationMode(.middle)
@@ -388,40 +396,13 @@ struct AgentWorkspaceBrowser: View {
                     }.contentShape(Rectangle())
                 }.accessibilityLabel(host.map { "Connect to " + $0.userAtHost } ?? "Open Local workspaces")
                     .accessibilityIdentifier("crow.workspaces.connect." + key)
-                if let host {
-                    HostConnectionButton(host: host)
-                    #if os(macOS)
-                    ReverseSSHHostButton(host: host)
-                    #endif
-                }
-                Menu {
-                    if let host {
-                        Button("Connect") { model.connect(host) }
-                        if model.connectionState(for: host) == .connected {
-                            Button("Clone Git Repository…") { cloneHost = key }
-                            Button("Open Folder…") {
-                                folderSource = model.tmuxWorkspace(on: id)?.id
-                            }
-                            Button("Disconnect") { model.disconnect(host) }
-                        }
-                        #if os(macOS)
-                        if model.reverseSSHConnections[host.id]?.connectCommand != nil {
-                            Button("Copy Reverse SSH Command") { model.copyReverseSSHCommand(for: host) }
-                        }
-                        #endif
-                        Button("Edit Host…") { model.editHost(host) }
-                        Button("Remove Host…", role: .destructive) { removeHost = host }
-                    } else if id == nil {
-                        Button("Open Local Folder…") { model.folderImporterVisible = true }
-                        #if os(macOS)
-                        Button("Clone Git Repository…") { cloneHost = "local" }
-                        #endif
-                    } else {
-                        Button("Add SSH Host…") { model.sshCommandVisible = true }
+                Button { hostMenu = key } label: {
+                    Image(systemName: "ellipsis").frame(width: 26, height: 28).contentShape(Rectangle())
+                }.buttonStyle(CrowButtonStyle()).accessibilityLabel("Host options")
+                    .accessibilityIdentifier("crow.workspaces.host-options." + key)
+                    .popover(isPresented: Binding(get: { hostMenu == key }, set: { if !$0 { hostMenu = nil } }), arrowEdge: .trailing) {
+                        hostOptions(host, id: id)
                     }
-                } label: { Image(systemName: "ellipsis").frame(width: 26, height: 28).contentShape(Rectangle()) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .accessibilityLabel("Host options")
             }.font(.system(size: 12)).padding(.horizontal, 10).padding(.vertical, 6)
             if !collapsedHosts.contains(key) {
                 let pinned = rows.filter { $0.snapshot.isPinned }
@@ -455,6 +436,53 @@ struct AgentWorkspaceBrowser: View {
             .accessibilityIdentifier("crow.workspaces.host." + key)
     }
 
+    private func hostOptions(_ host: SSHHost?, id: HostID?) -> some View {
+        CrowPopupPanel(title: host?.userAtHost ?? (id == nil ? "Local" : "SSH Host")) {
+            if let host {
+                let connected = model.connectionState(for: host) == .connected
+                CrowPopupAction(title: connected ? "Disconnect" : "Connect", symbol: connected ? "power" : "arrow.right.circle") {
+                    hostMenu = nil
+                    if connected { model.disconnect(host) } else { model.connect(host) }
+                }.disabled(model.connectionState(for: host) == .connecting)
+                CrowPopupAction(title: "Open Folder…", symbol: "folder.badge.plus") {
+                    hostMenu = nil; folderSource = model.tmuxWorkspace(on: id)?.id
+                }.disabled(!connected)
+                CrowPopupAction(title: "Clone Git Repository…", symbol: "arrow.down.to.line") {
+                    hostMenu = nil; cloneHost = host.id.rawValue.uuidString
+                }.disabled(!connected)
+                #if os(macOS)
+                CrowDivider().padding(.vertical, 5)
+                ReverseSSHHostControl(host: host)
+                if model.reverseSSHConnections[host.id]?.connectCommand != nil {
+                    CrowPopupAction(title: "Copy Reverse SSH Command", symbol: "doc.on.doc") {
+                        model.copyReverseSSHCommand(for: host); hostMenu = nil
+                    }
+                }
+                #endif
+                CrowDivider().padding(.vertical, 5)
+                CrowPopupAction(title: "Edit Host…", symbol: "pencil") {
+                    hostMenu = nil; model.editHost(host)
+                }
+                CrowPopupAction(title: "Remove Host…", symbol: "trash", role: .destructive) {
+                    hostMenu = nil; removeHost = host
+                }
+            } else if id == nil {
+                CrowPopupAction(title: "Open Local Folder…", symbol: "folder.badge.plus") {
+                    hostMenu = nil; model.folderImporterVisible = true
+                }
+                #if os(macOS)
+                CrowPopupAction(title: "Clone Git Repository…", symbol: "arrow.down.to.line") {
+                    hostMenu = nil; cloneHost = "local"
+                }
+                #endif
+            } else {
+                CrowPopupAction(title: "Add SSH Host…", symbol: "plus") {
+                    hostMenu = nil; model.sshCommandVisible = true
+                }
+            }
+        }.accessibilityIdentifier("crow.workspaces.host-menu")
+    }
+
     private func sectionLabel(_ title: String, count: Int, symbol: String) -> some View {
         HStack(spacing: 5) { Image(systemName: symbol); Text(title); Text("\(count)").foregroundStyle(CrowTheme.textDim) }
             .font(.system(size: 10)).padding(.leading, 34).padding(.trailing, 10)
@@ -463,12 +491,14 @@ struct AgentWorkspaceBrowser: View {
     private func workspaceRow(_ state: WorkspaceState) -> some View {
         let _ = state.terminalGeneration
         let selected = model.selectedWorkspaceID == state.id
+        let agents = state.snapshot.agentTerminals.filter { state.snapshot.terminalIDs.contains($0.id) }
         return VStack(spacing: 3) {
             HStack(spacing: 4) {
                 Button {
                     if !collapsed.insert(state.id).inserted { collapsed.remove(state.id) }
                 } label: { Image(systemName: collapsed.contains(state.id) ? "chevron.right" : "chevron.down").font(.system(size: 9)).frame(width: 18, height: 30) }
-                    .accessibilityLabel("Toggle sessions")
+                    .accessibilityLabel("Toggle agent sessions")
+                    .disabled(agents.isEmpty).opacity(agents.isEmpty ? 0 : 1).accessibilityHidden(agents.isEmpty)
                 Button { model.activateWorkspace(state.id); onOpen?() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "folder")
@@ -493,9 +523,9 @@ struct AgentWorkspaceBrowser: View {
                     Button("Remove from List…", role: .destructive) { model.requestWorkspaceRemoval(state.id); onOpen?() }
                 }
             if !collapsed.contains(state.id) {
-                ForEach(state.snapshot.terminalIDs, id: \.self) { id in sessionRow(id, state: state) }
+                ForEach(agents) { agent in sessionRow(agent.id, state: state) }
             }
-        }.padding(.bottom, collapsed.contains(state.id) ? 0 : 4)
+        }.padding(.bottom, collapsed.contains(state.id) || agents.isEmpty ? 0 : 4)
             .background(selected ? CrowTheme.bg2 : .clear, in: RoundedRectangle(cornerRadius: 6))
             .buttonStyle(.plain).padding(.leading, 24).padding(.trailing, 5).windowDragExcluded()
     }

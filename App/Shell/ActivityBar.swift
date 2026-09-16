@@ -6,7 +6,6 @@ struct ActivityBar: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            paneButton(.files, symbol: "doc.text")
             paneButton(.workspaces, symbol: "square.stack.3d.up")
             paneButton(.automation, symbol: "clock")
             Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: {

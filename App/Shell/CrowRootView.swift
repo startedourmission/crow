@@ -263,7 +263,7 @@ struct CompactWorkspaceView: View {
             } else {
                 ZStack {
                     if model.compactSurface == .hosts || model.compactSurface == .files {
-                        SidebarView()
+                        SidebarView(filesOnly: model.compactSurface == .files && model.sidebarPane != .automation)
                     }
                     if model.hasWorkspace {
                         EditorAreaView()
@@ -513,7 +513,7 @@ private struct PhoneWorkspaceBar: View {
         Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             .accessibilityIdentifier("crow.phone.workspaces")
         Button("Automations", systemImage: "clock.arrow.2.circlepath") {
-            model.sidebarPane = .automation; model.sidebarVisible = true; model.compactSurface = .files
+            model.compactSurface = .files; model.sidebarPane = .automation; model.sidebarVisible = true
         }.accessibilityIdentifier("crow.phone.automation")
         if model.selectedWorkspace.isRemote {
             Button("Server Screen", systemImage: "desktopcomputer") { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) }

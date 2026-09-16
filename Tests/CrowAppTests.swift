@@ -235,11 +235,24 @@ final class CrowAppTests: XCTestCase {
         model.showHosts()
         XCTAssertEqual(model.sidebarPane, .workspaces)
         model.compactSurface = .files
-        XCTAssertEqual(model.sidebarPane, .files)
+        XCTAssertEqual(model.sidebarPane, .workspaces)
+        XCTAssertEqual(model.inspectorTab, "Files")
         model.showHosts()
         model.selectWorkspace(model.selectedWorkspaceID)
+        #if os(iOS)
         XCTAssertEqual(model.compactSurface, .files)
-        XCTAssertEqual(model.sidebarPane, .files)
+        #endif
+        XCTAssertEqual(model.sidebarPane, .workspaces)
+        XCTAssertEqual(model.inspectorTab, "Files")
+        model.sidebarPane = .automation
+        model.inspectorVisible = false; model.inspectorTab = "Agents"
+        model.focusFileSearch()
+        XCTAssertTrue(model.inspectorVisible)
+        XCTAssertEqual(model.inspectorTab, "Files")
+        XCTAssertTrue(model.current.explorer.searchVisible)
+        #if os(macOS)
+        XCTAssertEqual(model.sidebarPane, .automation, "File search opens on the right without replacing the left panel")
+        #endif
     }
 
     #if os(iOS)
@@ -605,8 +618,10 @@ final class CrowAppTests: XCTestCase {
         restored.openFolder(directory)
         XCTAssertEqual(restored.workspaces.count, count)
         XCTAssertEqual(restored.selectedWorkspaceID, workspaceID)
-        XCTAssertEqual(restored.sidebarPane, .files)
-        XCTAssertTrue(restored.sidebarVisible)
+        XCTAssertEqual(restored.sidebarPane, .workspaces)
+        XCTAssertFalse(restored.sidebarVisible)
+        XCTAssertEqual(restored.inspectorTab, "Files")
+        XCTAssertTrue(restored.inspectorVisible)
     }
 
     @MainActor func testOpeningMissingFolderDoesNotCreateBrokenWorkspace() {

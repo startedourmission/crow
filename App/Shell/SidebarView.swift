@@ -64,6 +64,7 @@ struct SidebarTopBar: View {
 }
 
 struct SidebarView: View {
+    var filesOnly = false
     @Environment(AppModel.self) private var model
     @Environment(\.crowPhoneLayout) private var phoneLayout
     @State private var naming = false
@@ -79,13 +80,13 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.sidebarPane == .files { sidebarHeader }
+            if filesOnly { sidebarHeader }
             #if !os(macOS)
             CrowDivider()
             #endif
-            if model.sidebarPane == .workspaces {
+            if !filesOnly && model.sidebarPane == .workspaces {
                 AgentWorkspaceBrowser()
-            } else if model.sidebarPane == .automation {
+            } else if !filesOnly && model.sidebarPane == .automation {
                 AutomationPanel()
             } else if model.hasWorkspace {
                 filesList
@@ -100,10 +101,10 @@ struct SidebarView: View {
         .task(id: "\(model.selectedWorkspaceID)-\(explorer.searchVisible)-\(model.fileSearchFocusRequest)") {
             await Task.yield()
             guard !Task.isCancelled else { return }
-            searchFocused = explorer.searchVisible
+            searchFocused = filesOnly && explorer.searchVisible
         }
-        .task(id: model.selectedWorkspaceID.rawValue.uuidString + model.sidebarPane.rawValue + model.current.contextRootPath) {
-            guard model.sidebarPane == .files else { return }
+        .task(id: model.selectedWorkspaceID.rawValue.uuidString + String(filesOnly) + model.current.contextRootPath) {
+            guard filesOnly else { return }
             let tree = explorer
             model.refreshFiles()
             defer { tree.stop() }
@@ -262,6 +263,13 @@ struct SidebarView: View {
             .accessibilityAddTraits((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? .isSelected : [])
             .accessibilityValue(entry.isDirectory ? (explorer.expanded.contains(entry.path) ? "Expanded" : "Collapsed") : "File")
             .contextMenu {
+                if !entry.isDirectory {
+                    Button("Open", systemImage: "arrow.up.forward.square") { model.openFile(entry) }
+                    #if os(macOS)
+                    OpenWithMenu(path: entry.path, workspaceID: model.selectedWorkspaceID)
+                    #endif
+                    Divider()
+                }
                 if entry.isDirectory {
                     Button("New File…") { beginCreate(directory: false, parent: entry.path) }
                     Button("New Folder…") { beginCreate(directory: true, parent: entry.path) }
@@ -415,7 +423,7 @@ struct HostConnectionButton: View {
             #if os(iOS)
             .frame(width: 44, height: 44)
             #else
-            .frame(width: 32, height: 32)
+            .frame(width: 24, height: 28)
             #endif
             .contentShape(Rectangle())
         }
@@ -429,7 +437,7 @@ struct HostConnectionButton: View {
 }
 
 #if os(macOS)
-struct ReverseSSHHostButton: View {
+struct ReverseSSHHostControl: View {
     @Environment(AppModel.self) private var model
     let host: SSHHost
     @State private var supportsReverseSSH: Bool?
@@ -444,9 +452,23 @@ struct ReverseSSHHostButton: View {
     }
 
     var body: some View {
-        Group {
-            if supportsReverseSSH != false || enabled { toggle }
-        }.task(id: connection?.socket ?? (nativeConnection == nil ? "disconnected" : "native")) {
+        VStack(alignment: .leading, spacing: 5) {
+            Toggle(isOn: Binding(get: { enabled }, set: { model.setReverseSSH($0, for: host) })) {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.uturn.backward").frame(width: 20).foregroundStyle(CrowTheme.textDim)
+                    Text("Reverse SSH").font(.system(size: 13))
+                    if preparing { ProgressView().controlSize(.mini) }
+                }
+            }.toggleStyle(.switch).controlSize(.small)
+                .disabled(!enabled && (supportsReverseSSH == false || model.connectionState(for: host) != .connected))
+                .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
+                .accessibilityValue(session?.status ?? "Off")
+            Text(supportsReverseSSH == false ? "Available on macOS hosts only."
+                 : enabled ? (session?.status ?? "On") : "Turn on to copy the connection command.")
+                .font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 30)
+        }.padding(.horizontal, 10).padding(.vertical, 7).help(helpText)
+        .task(id: connection?.socket ?? (nativeConnection == nil ? "disconnected" : "native")) {
             supportsReverseSSH = nil
             do {
                 let output: String
@@ -461,22 +483,6 @@ struct ReverseSSHHostButton: View {
         }
     }
 
-    private var toggle: some View {
-        Button { model.setReverseSSH(!enabled, for: host) } label: {
-            Group {
-                if preparing { ProgressView().controlSize(.small) }
-                else {
-                    Image(systemName: enabled ? "arrow.uturn.backward.circle.fill" : "arrow.uturn.backward.circle")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(enabled ? CrowTheme.ok : CrowTheme.textDim)
-                }
-            }.frame(width: 32, height: 32).contentShape(Rectangle())
-        }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
-            .help(helpText)
-            .accessibilityLabel((enabled ? "Disable Reverse SSH for " : "Enable Reverse SSH and copy command for ") + host.userAtHost)
-            .accessibilityValue(session?.status ?? "Off")
-            .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
-    }
 }
 
 #endif

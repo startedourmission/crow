@@ -3,7 +3,7 @@ import SwiftUI
 
 struct InspectorPanel: View {
     @Environment(AppModel.self) private var model
-    @State private var tab = "Summary"
+    private var tab: String { model.inspectorTab }
     @State private var outline: [OutlineItem] = []
     @State private var outlineBufferID: BufferID?
     @State private var outlineSource = ""
@@ -24,14 +24,14 @@ struct InspectorPanel: View {
     }
 
     private var buffer: OpenBuffer? { model.inspectedBuffer }
-    private let tabs = ["Summary", "Git", "Agents"]
+    private let tabs = ["Files", "Agents", "Summary", "Git"]
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 ForEach(tabs, id: \.self) { item in
-                    Button { tab = item } label: {
-                        Label(item, systemImage: item == "Summary" ? "list.bullet.indent" : item == "Agents" ? "bubble.left.and.bubble.right" : "point.3.connected.trianglepath.dotted")
+                    Button { model.inspectorTab = item } label: {
+                        Label(item, systemImage: item == "Files" ? "folder" : item == "Summary" ? "list.bullet.indent" : item == "Agents" ? "bubble.left.and.bubble.right" : "point.3.connected.trianglepath.dotted")
                             .labelStyle(.iconOnly)
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
                             .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
@@ -51,7 +51,10 @@ struct InspectorPanel: View {
             .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).frame(height: 36)
             .windowDragBackground()
             CrowDivider()
-            if tab == "Summary" { summary } else if tab == "Agents" { AgentHistoryPanel() } else { git }
+            if tab == "Files" { SidebarView(filesOnly: true) }
+            else if tab == "Agents" { AgentHistoryPanel() }
+            else if tab == "Summary" { summary }
+            else { git }
         }
         .background(CrowTheme.bg1)
         .crowForeground(CrowTheme.text)
