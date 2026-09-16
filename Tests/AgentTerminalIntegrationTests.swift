@@ -26,11 +26,18 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertNotNil(terminal.startupUnavailableMessage, "Restored tabs must never run the server agent locally")
         XCTAssertNil(terminal.launchCommand)
         XCTAssertThrowsError(try model.agentHistorySource(for: state), "A disconnected server must not fall back to local history")
+        XCTAssertEqual(model.aiUsageSource.hostID, host)
+        XCTAssertNil(model.aiUsageSource.state, "A missing reverse server must never show the client's account usage")
+        let remote = WorkspaceState(.init(workspace: Workspace(name: "Server", kind: .remote(hostID: host, path: "/server"), connection: .disconnected), rootPath: "/server"))
+        model.states.append(remote)
+        XCTAssertTrue(model.aiUsageSource.state === remote)
         let roundTrip = try JSONDecoder().decode(AgentTerminal.self, from: JSONEncoder().encode(agent))
         XCTAssertEqual(roundTrip.reverseHostID, host)
         XCTAssertEqual(roundTrip.reverseServerDirectory, "/server/crow/session")
         state.snapshot.selectedTerminalID = nil
         XCTAssertEqual(state.contextRootPath, state.snapshot.rootPath)
+        XCTAssertNil(model.aiUsageSource.hostID)
+        XCTAssertTrue(model.aiUsageSource.state === state)
     }
 
     @MainActor func testReverseClientToolsOverRealSSH() async throws {

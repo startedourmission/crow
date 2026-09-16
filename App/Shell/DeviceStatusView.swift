@@ -19,6 +19,28 @@ struct AIProviderUsage: Decodable, Identifiable {
 }
 private struct AIUsageResponse: Decodable { let providers: [AIProviderUsage] }
 
+struct AIUsageSource {
+    let hostID: HostID?
+    let state: WorkspaceState?
+    let label: String
+    var key: String { hostID?.rawValue.uuidString ?? "local" }
+}
+
+extension AppModel {
+    var aiUsageSource: AIUsageSource {
+        let selected = current.snapshot.selectedTerminalID
+        let agent = current.snapshot.agentTerminals.first { $0.id == selected }
+        let hostID = agent?.reverseHostID ?? current.snapshot.workspace.hostID
+        let state: WorkspaceState?
+        if let reverseHostID = agent?.reverseHostID {
+            state = states.first { $0.snapshot.workspace.hostID == reverseHostID && $0.remote?.isConnected == true }
+                ?? states.first { $0.snapshot.workspace.hostID == reverseHostID }
+        } else { state = current }
+        let label = hostID.map { id in hosts.first { $0.id == id }?.userAtHost ?? "SSH host" } ?? "Local"
+        return AIUsageSource(hostID: hostID, state: state, label: label)
+    }
+}
+
 @MainActor @Observable final class DeviceStatusState {
     static let shared = DeviceStatusState()
     var awake = false
@@ -57,8 +79,8 @@ private struct AIUsageResponse: Decodable { let providers: [AIProviderUsage] }
     }
     #endif
 
-    func refreshUsage(in state: WorkspaceState, providers enabled: [AgentProvider] = AgentProvider.allCases, force: Bool = false) async {
-        let host = (state.snapshot.workspace.hostID?.rawValue.uuidString ?? "local") + ":" + enabled.map(\.rawValue).joined(separator: ",")
+    func refreshUsage(from source: AIUsageSource, providers enabled: [AgentProvider] = AgentProvider.allCases, force: Bool = false, allowKeychainPrompt: Bool = false) async {
+        let host = source.key + ":" + enabled.map(\.rawValue).joined(separator: ",")
         if usageHost == host, !force, let usageDate, Date().timeIntervalSince(usageDate) < 300 { return }
         let generation = UUID(); usageGeneration = generation
         if usageHost != host { usage = []; usageDate = nil }
@@ -66,11 +88,12 @@ private struct AIUsageResponse: Decodable { let providers: [AIProviderUsage] }
         defer { if usageGeneration == generation { usageLoading = false } }
         guard !enabled.isEmpty else { usage = []; usageDate = nil; return }
         do {
+            guard let state = source.state else { throw CommandError("Connect the agent's SSH host to read its account usage.") }
             let data = try await AgentHistoryService.run(["workspace": state.snapshot.rootPath, "action": "usage", "providers": enabled.map(\.rawValue)], in: state)
             var providers = try JSONDecoder().decode(AIUsageResponse.self, from: data).providers
             #if os(macOS)
             if enabled.contains(.claude), !state.snapshot.workspace.isRemote, providers.first(where: { $0.provider == .claude })?.windows.isEmpty != false,
-               let claude = await claudeKeychainUsage(allowPrompt: force) {
+               let claude = await claudeKeychainUsage(allowPrompt: allowKeychainPrompt) {
                 providers.removeAll { $0.provider == .claude }; providers.insert(claude, at: 0)
             }
             #endif
@@ -141,7 +164,7 @@ struct DeviceStatusView: View {
     @Environment(AppModel.self) private var model
     @State private var status = DeviceStatusState.shared
     @State private var showingUsage = false
-    private var host: String { model.current.snapshot.workspace.hostID?.rawValue.uuidString ?? "local" }
+    private var source: AIUsageSource { model.aiUsageSource }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -184,10 +207,13 @@ struct DeviceStatusView: View {
                 }
                 #endif
             }
-            .task(id: host + "\(model.current.remote?.isConnected == true)-\(model.settings.enabledAgentProviders)") {
+            .task(id: source.key + "\(source.state?.remote?.isConnected == true)-\(model.settings.enabledAgentProviders)") {
+                let source = source
+                // Switching servers or reconnecting must not reuse a failed/stale result.
+                await status.refreshUsage(from: source, providers: model.settings.enabledAgentProviders, force: true)
                 while !Task.isCancelled {
-                    await status.refreshUsage(in: model.current, providers: model.settings.enabledAgentProviders)
                     do { try await Task.sleep(for: .seconds(300)) } catch { return }
+                    await status.refreshUsage(from: source, providers: model.settings.enabledAgentProviders)
                 }
             }
     }
@@ -196,9 +222,9 @@ struct DeviceStatusView: View {
             HStack {
                 Text("AI Account Usage").font(.headline)
                 Spacer()
-                Button { Task { await status.refreshUsage(in: model.current, providers: model.settings.enabledAgentProviders, force: true) } } label: { Image(systemName: "arrow.clockwise") }.disabled(status.usageLoading)
+                Button { Task { await status.refreshUsage(from: source, providers: model.settings.enabledAgentProviders, force: true, allowKeychainPrompt: true) } } label: { Image(systemName: "arrow.clockwise") }.disabled(status.usageLoading)
             }
-            Text(model.current.snapshot.workspace.isRemote ? "Accounts on the selected SSH host" : "Accounts signed in through the local CLIs")
+            Text(source.hostID != nil ? "Accounts on \(source.label)" : "Accounts signed in through the local CLIs")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)
             ForEach(model.settings.enabledAgentProviders) { provider in
                 VStack(alignment: .leading, spacing: 6) {
