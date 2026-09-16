@@ -315,7 +315,6 @@ struct ReverseAgentSheet: View {
     let request: ReverseAgentRequest
     @State private var hostID: HostID?
     @State private var provider: AgentProvider = .claude
-    @State private var directory = ""
     @State private var status: String?
     @State private var error: String?
     @State private var launchTask: Task<Void, Never>?
@@ -324,20 +323,8 @@ struct ReverseAgentSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Reverse Agent").font(.title3.weight(.semibold))
-            Text("Use the server’s agent login to work in a folder on this Mac.")
+            Text("Use the server’s agent login to work in the current local folder.")
                 .font(.callout).foregroundStyle(CrowTheme.textDim)
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Client folder").font(.caption).foregroundStyle(CrowTheme.textDim)
-                HStack {
-                    TextField("Local folder", text: $directory).crowSettingsInput()
-                    Button {
-                        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-                        panel.allowsMultipleSelection = false
-                        panel.directoryURL = URL(fileURLWithPath: directory)
-                        panel.begin { response in if response == .OK, let path = panel.url?.path { directory = path } }
-                    } label: { Image(systemName: "folder") }.buttonStyle(CrowButtonStyle()).help("Choose client folder")
-                }.disabled(busy || request.sessionID != nil || request.replacingTerminalID != nil)
-            }
             VStack(alignment: .leading, spacing: 7) {
                 Text("Agent server").font(.caption).foregroundStyle(CrowTheme.textDim)
                 CrowChoiceMenu(title: "Server", selection: $hostID,
@@ -362,11 +349,11 @@ struct ReverseAgentSheet: View {
                 Spacer()
                 Button("Cancel") { launchTask?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Open Agent") { launch() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(busy || hostID == nil || directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(busy || hostID == nil)
             }
         }.padding(22).frame(width: 480).background(CrowTheme.bg0)
             .onAppear {
-                directory = request.directory; provider = request.provider
+                provider = request.provider
                 let previous = UserDefaults.standard.string(forKey: "crow.reverse-agent-last-host").flatMap(UUID.init(uuidString:)).map(HostID.init(rawValue:))
                 hostID = request.hostID ?? model.hosts.first(where: { $0.id == previous })?.id ?? model.hosts.first?.id
             }
@@ -376,7 +363,7 @@ struct ReverseAgentSheet: View {
 
     private func launch() {
         guard let host = model.hosts.first(where: { $0.id == hostID }) else { return }
-        var value = request; value.provider = provider; value.directory = directory
+        var value = request; value.provider = provider
         error = nil
         launchTask = Task { @MainActor in
             defer { launchTask = nil }

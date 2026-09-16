@@ -227,8 +227,8 @@ Mac의 시스템 원격 로그인을 켤 필요도 없습니다. 토글을 켤 �
 
 ### Reverse Agent · macOS
 
-로컬 워크스페이스의 탭 **+ → Reverse Agent…**에서 클라이언트 폴더, SSH 서버,
-Claude·Codex·Grok을 선택합니다. Crow가 서버 연결과 Reverse SSH를 준비하고 접속 명령을
+로컬 워크스페이스의 탭 **+ → Reverse Agent…**에서 SSH 서버와 Claude·Codex·Grok을
+선택합니다. 현재 작업 폴더가 자동으로 적용됩니다. Crow가 서버 연결과 Reverse SSH를 준비하고 접속 명령을
 복사한 다음, 서버에 로그인된 CLI를 실행합니다. 양쪽 Mac에 Python 3이 필요하며,
 선택한 서버에는 해당 CLI의 설치와 로그인이 완료되어 있어야 합니다.
 필요한 도구 설정을 지원하지 않는 구버전 CLI는 실행 전에 업데이트 안내를 표시합니다.
