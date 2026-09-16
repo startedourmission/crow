@@ -396,11 +396,15 @@ swift test --package-path Packages/CrowCore
 
 macOS 앱과 터미널 통합 테스트:
 
+테스트 빌드는 별도 DerivedData 경로를 사용합니다. 실행 중인 개발용 Crow를
+덮어쓰면 코드 서명 불일치로 키체인 접근이 거부될 수 있습니다.
+
 ```sh
 bash scripts/test-macos-terminal.sh
 xcodebuild test \
   -project Crow.xcodeproj \
   -scheme Crow-macOS \
+  -derivedDataPath "${TMPDIR:-/tmp}/crow-macos-tests-${UID}" \
   -destination 'platform=macOS,arch=arm64'
 ```
 
@@ -410,6 +414,7 @@ iOS 시뮬레이터 테스트:
 xcodebuild test \
   -project Crow.xcodeproj \
   -scheme Crow-iOS \
+  -derivedDataPath "${TMPDIR:-/tmp}/crow-ios-tests-${UID}" \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 

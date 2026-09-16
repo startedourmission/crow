@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
+import Security
 #else
 import UIKit
 #endif
@@ -129,7 +130,15 @@ struct SSHKeysView: View {
             keys = []
             let failure = error as NSError
             if failure.domain == NSOSStatusErrorDomain {
+                #if os(macOS)
+                if failure.code == Int(errSecAuthFailed) {
+                    failures.append("macOS denied access to saved SSH keys (\(failure.code)). If Crow was rebuilt or replaced while running, quit and reopen Crow, then retry. Otherwise, unlock the keychain and allow Crow access.")
+                } else {
+                    failures.append("Could not access saved SSH keys in this device’s Keychain (\(failure.code)). Unlock the keychain and allow Crow access, then retry.")
+                }
+                #else
                 failures.append("Could not access saved SSH keys in this device’s Keychain (\(failure.code)). Unlock the keychain and allow Crow access, then retry.")
+                #endif
             } else {
                 failures.append("Could not load saved SSH keys: " + error.localizedDescription)
             }
