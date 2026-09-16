@@ -186,22 +186,37 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             status = "Starting SSH shell…"
             let initialCommand = TerminalCommand.utf8Environment + "\n" + (launchCommand.map { "exec sh -lc " + TerminalCommand.quote($0) + "\n" }
                 ?? (SSHCommand.remoteDirectoryCommand(directory) + "\n" + SSHCommand.directoryTrackingCommand + "\n"))
+            let startup = SSHStartupOutput()
             shellTask = Task { [weak self] in
                 guard let self else { return }
+                let timeout = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    guard let self, !self.running else { return }
+                    self.status = "SSH shell initialization timed out. Reconnect to try again."
+                    self.view.feed(text: self.status + "\r\n")
+                    self.shellTask?.cancel()
+                }
+                defer { timeout.cancel() }
                 do {
                     let dims = view.getTerminal().getDims()
                     try await client.withPTY(.init(wantReply: true, term: "xterm-256color",
                         terminalCharacterWidth: dims.cols, terminalRowHeight: dims.rows,
                         terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { @Sendable [weak self] inbound, outbound in
-                        try await outbound.write(ByteBuffer(string: initialCommand))
-                        await self?.connected(RemoteWriter(value: outbound))
+                        var startup = startup
+                        try await outbound.write(ByteBuffer(string: startup.command(initialCommand)))
                         for try await output in inbound {
                             try Task.checkCancellation()
                             switch output {
-                            case .stdout(let bytes), .stderr(let bytes): await self?.receive(Array(bytes.readableBytesView))
+                            case .stdout(let bytes), .stderr(let bytes):
+                                let wasReady = startup.isReady
+                                let visible = startup.receive(Array(bytes.readableBytesView))
+                                if !wasReady && startup.isReady { await self?.connected(RemoteWriter(value: outbound)) }
+                                if !visible.isEmpty { await self?.receive(visible) }
                             }
                         }
                     }
+                    try Task.checkCancellation()
+                    if !running { view.feed(text: "SSH shell closed before initialization completed.\r\n") }
                     status = "Shell exited"
                 } catch { if !Task.isCancelled { status = "SSH: \(error.localizedDescription)"; view.feed(text: "\r\n\(status)\r\n") } }
                 writer = nil; running = false

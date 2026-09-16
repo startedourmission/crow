@@ -169,6 +169,39 @@ public struct SSHCommand: Equatable, Sendable {
     }
 }
 
+/// Hide the PTY's echo and continuation prompts while it reads Crow's startup
+/// group. The marker executes only after the complete group has been parsed;
+/// everything after it (including setup errors and OSC directory reports) stays visible.
+public struct SSHStartupOutput: Sendable {
+    private let token: String
+    private let marker: Data
+    private var pending = Data()
+    public private(set) var isReady = false
+
+    public init() {
+        token = UUID().uuidString
+        marker = Data("\u{1b}]1337;CrowStartup=\(token)\u{7}".utf8)
+    }
+
+    public func command(_ setup: String) -> String {
+        "{\nprintf '\\033]1337;CrowStartup=%s\\007' " + TerminalCommand.quote(token)
+            + "\n" + setup + "\n}\n"
+    }
+
+    public mutating func receive(_ bytes: [UInt8]) -> [UInt8] {
+        guard !isReady else { return bytes }
+        pending.append(contentsOf: bytes)
+        if let range = pending.range(of: marker) {
+            let output = Array(pending[range.upperBound...])
+            pending.removeAll(); isReady = true
+            return output
+        }
+        // Only a split marker can matter; never retain banners or command echo.
+        pending = Data(pending.suffix(marker.count - 1))
+        return []
+    }
+}
+
 public struct CommandError: LocalizedError, Sendable {
     public let message: String
     public init(_ message: String) { self.message = message }
