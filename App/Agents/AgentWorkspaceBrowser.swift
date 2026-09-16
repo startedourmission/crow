@@ -627,6 +627,10 @@ struct AgentWorkspaceBrowser: View {
                 if let agent { AgentProviderIcon(provider: agent.provider, size: 13) }
                 else { Image(systemName: "terminal").font(.system(size: 11)) }
                 Text(title).font(.system(size: 12)).lineLimit(1)
+                if let hostID = agent?.reverseHostID {
+                    Image(systemName: "arrow.uturn.backward").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                        .help("Agent server: " + (model.hosts.first { $0.id == hostID }?.userAtHost ?? "SSH"))
+                }
                 Spacer(minLength: 0)
             }.padding(.vertical, 8).padding(.leading, 36).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)

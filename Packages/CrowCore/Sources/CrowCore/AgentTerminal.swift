@@ -31,6 +31,9 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
     public var forkSession: Bool?
     /// Legacy isolated-agent tabs must be reopened explicitly as ordinary agents.
     public var isManagedReverse: Bool?
+    /// The tab belongs to a local workspace, while its CLI and history live on this server.
+    public var reverseHostID: HostID?
+    public var reverseServerDirectory: String?
     public var command: String {
         guard let sessionID else { return provider.command(directory: directory) }
         let resume: [String] = provider == .codex ? [forkSession == true ? "fork" : "resume", sessionID]

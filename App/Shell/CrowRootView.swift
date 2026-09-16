@@ -52,6 +52,9 @@ struct CrowRootView: View {
         .sheet(item: Bindable(model).credentialRequest, onDismiss: {
             model.finishHostEditorDismissal()
         }) { host in HostEditorView(host: host, authenticationOnly: true).environment(model) }
+        #if os(macOS)
+        .sheet(item: Bindable(model).reverseAgentRequest) { request in ReverseAgentSheet(request: request).environment(model) }
+        #endif
         .alert("Crow", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(model.errorMessage ?? "") }

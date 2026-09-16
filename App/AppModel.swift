@@ -95,6 +95,7 @@ final class AppModel {
     var errorMessage: String?
     var closeRequest: BufferID?
     var terminalCloseRequest: UUID?
+    var reverseAgentRequest: ReverseAgentRequest?
     var closeOtherTabsRequest: CloseOtherTabsRequest?
     var draggedTab: WorkspaceTabDrag?
     var draggedFile: ExplorerFileDrag?
@@ -1535,6 +1536,10 @@ final class AppModel {
             }
             if agent.isManagedReverse == true {
                 session.startupUnavailableMessage = "Isolated reverse agents were removed. Open a new agent tab and enable Reverse SSH on the host."
+            }
+            if agent.reverseHostID != nil {
+                session.launchCommand = nil
+                session.startupUnavailableMessage = "Reverse agent disconnected. Use Restart Reverse Agent from the tab menu to reconnect to the client workspace."
             }
         }
         session.imagePasteContext = { [weak self, weak state] in

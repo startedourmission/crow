@@ -1,4 +1,7 @@
 """Read CLI-owned conversation records. No credentials or tool output are returned."""
+import hashlib
+import shlex
+import tempfile
 import collections
 import concurrent.futures
 import datetime
@@ -417,10 +420,243 @@ def list_skills(workspace):
     return {"skills": unique[:500], "warnings": sorted(set(warnings))}
 
 
+
+def reverse_tool(root, name, args):
+    root = canonical(root)
+    def path(value="."):
+        result = canonical(os.path.join(root, value))
+        if os.path.commonpath([root, result]) != root:
+            raise ValueError("Path is outside the selected client workspace.")
+        return result
+    if name == "workspace_info":
+        return {"root": root, "host": os.uname().nodename, "platform": sys.platform}
+    if name == "list_directory":
+        with os.scandir(path(args.get("path", "."))) as entries:
+            return [{"name": item.name, "directory": item.is_dir()} for _, item in zip(range(1000), entries)]
+    if name == "read_file":
+        with open(path(args["path"]), encoding="utf-8") as stream:
+            text = stream.read(200001)
+        return {"text": text[:200000], "truncated": len(text) > 200000}
+    if name in ("write_file", "edit_file"):
+        target = path(args["path"])
+        if name == "write_file":
+            text = args["text"]
+            if os.path.exists(target):
+                raise ValueError("File exists. Use edit_file with exact old_text to change it.")
+            mode = "x"
+        else:
+            with open(target, encoding="utf-8", newline="") as stream:
+                original = stream.read(2000001)
+            if len(original) > 2000000:
+                raise ValueError("File exceeds the edit limit; use the client shell.")
+            old = args["old_text"]
+            if not old or original.count(old) != 1:
+                raise ValueError("old_text must match exactly once; read the file again.")
+            text = original.replace(old, args["new_text"], 1)
+            mode = "w"
+        if not isinstance(text, str) or len(text) > 2000000:
+            raise ValueError("Text exceeds the write limit.")
+        with open(target, mode, encoding="utf-8", newline="") as stream:
+            stream.write(text)
+        return {"path": target, "written": True}
+    if name == "shell":
+        directory = path(args.get("cwd", "."))
+        timeout = min(120, max(1, float(args.get("timeout", 60))))
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen(["/bin/zsh", "-lc", "cd -- " + shlex.quote(directory) + " && " + args["command"]], cwd=directory,
+                                       stdin=subprocess.DEVNULL, stdout=output, stderr=output, start_new_session=True)
+            try:
+                deadline = time.monotonic() + timeout
+                while process.poll() is None:
+                    if time.monotonic() > deadline or os.fstat(output.fileno()).st_size > 4 * 1024 * 1024:
+                        raise ValueError("Client command exceeded its time or output limit.")
+                    time.sleep(0.05)
+                output.seek(0)
+                data = output.read(200001)
+                return {"exit_code": process.returncode, "output": data[:200000].decode("utf-8", errors="replace"),
+                        "truncated": len(data) > 200000, "cwd": directory}
+            finally:
+                # Also reap child processes left behind by the shell.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+    raise ValueError("Unknown client tool.")
+
+
+def reverse_tool_definitions(root):
+    def tool(name, description, properties, required=()):
+        return {"name": name, "description": description + " Runs on the Crow CLIENT. Workspace: " + root,
+                "inputSchema": {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}}
+    string = {"type": "string"}
+    return [tool("workspace_info", "Identify the client and fixed working root.", {}),
+            tool("list_directory", "List up to 1,000 entries.", {"path": string}),
+            tool("read_file", "Read a UTF-8 file (up to 200,000 characters).", {"path": string}, ["path"]),
+            tool("write_file", "Create a new UTF-8 file. Existing files are never overwritten.", {"path": string, "text": string}, ["path", "text"]),
+            tool("edit_file", "Replace one exact occurrence of old_text in a UTF-8 file.", {"path": string, "old_text": string, "new_text": string}, ["path", "old_text", "new_text"]),
+            tool("shell", "Run a shell command on the client. Default cwd is the workspace. Commands stop on timeout; use no detached jobs.",
+                 {"command": string, "cwd": string, "timeout": {"type": "number", "minimum": 1, "maximum": 120}}, ["command"])]
+
+
+def reverse_serve(root):
+    if not os.path.isdir(root):
+        raise ValueError("Client workspace no longer exists.")
+    for line in sys.stdin:
+        request = json.loads(line)
+        identifier = request.get("id")
+        if identifier is None:
+            continue
+        method = request.get("method")
+        response = {"jsonrpc": "2.0", "id": identifier}
+        try:
+            if method == "initialize":
+                result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
+                          "serverInfo": {"name": "crow-client", "version": "1.0"}}
+            elif method == "tools/list":
+                result = {"tools": reverse_tool_definitions(root)}
+            elif method == "ping":
+                result = {}
+            elif method == "tools/call":
+                params = request["params"]
+                try:
+                    value = reverse_tool(root, params["name"], params.get("arguments") or {})
+                    result = {"content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False)}]}
+                except Exception as error:
+                    result = {"isError": True, "content": [{"type": "text", "text": str(error)}]}
+            else:
+                response["error"] = {"code": -32601, "message": "Method not found"}
+                result = None
+            if "error" not in response:
+                response["result"] = result
+        except Exception as error:
+            response["error"] = {"code": -32602, "message": str(error)}
+        print(json.dumps(response, ensure_ascii=False), flush=True)
+    return None
+
+
+def reverse_guard():
+    request = json.load(sys.stdin)
+    name = request.get("tool_name", "")
+    # Claude and Codex both expose MCP tool names with this prefix. Grok's
+    # plugin namespace includes the same dedicated server name.
+    allowed = re.search(r"(?:^|__)crow_client__", name) is not None
+    allowed = allowed or name in ("update_plan", "request_user_input", "AskUserQuestion", "TodoWrite")
+    decision = "allow" if allowed else "deny"
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+            "permissionDecisionReason": "Use crow_client tools: this session works on the client, not on the agent server."}}
+
+
+def reverse_prepare(request):
+    provider = request["provider"]
+    if provider not in ("claude", "codex", "grok"):
+        raise ValueError("Unsupported agent provider.")
+    executable = shutil.which(provider)
+    if not executable:
+        raise ValueError(provider.title() + " CLI is not installed on the selected server.")
+    help_text = subprocess.run([executable, "--help"], capture_output=True, text=True, timeout=15).stdout
+    required = {"claude": ["--tools", "--mcp-config", "--strict-mcp-config", "--settings"],
+                "codex": ["--dangerously-bypass-hook-trust"],
+                "grok": ["--tools", "--plugin-dir", "--rules"]}[provider]
+    if any(flag not in help_text for flag in required):
+        raise ValueError("Update " + provider.title() + " on the server: this version does not support Crow's client tool routing.")
+    identity = request["client_id"] + "\n" + request["client_root"]
+    workspace = pathlib.Path.home() / ".crow/reverse-agents" / hashlib.sha256(identity.encode()).hexdigest()[:32]
+    workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if workspace.is_symlink() or workspace.stat().st_mode & 0o077:
+        raise ValueError("Reverse agent storage must be private.")
+    launch = pathlib.Path(tempfile.mkdtemp(prefix="launch-", dir=workspace))
+    def write(relative, text):
+        target = launch / relative
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with open(target, "x", encoding="utf-8") as stream:
+            os.chmod(target, 0o600)
+            stream.write(text)
+        return str(target)
+    try:
+        runtime = write("runtime.py", request["runtime_source"])
+        local_request = json.dumps({"action": "reverse-tools", "workspace": request["client_root"]})
+        remote_command = "exec " + shlex.quote(request["client_python"]) + " " + shlex.quote(request["client_runtime"]) + " " + shlex.quote(local_request)
+        connector = shlex.split(request["connector"])
+        if len(connector) != 1 or not os.path.isabs(connector[0]) or not os.access(connector[0], os.X_OK):
+            raise ValueError("Reverse SSH connector is unavailable. Enable Reverse SSH again.")
+        server = {"command": connector[0], "args": ["-T", remote_command]}
+        probe = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "workspace_info", "arguments": {}}}
+        checked = subprocess.run([server["command"]] + server["args"], input=json.dumps(probe) + "\n", capture_output=True, text=True, timeout=15)
+        messages = [json.loads(line) for line in checked.stdout.splitlines() if line.startswith("{")]
+        if checked.returncode or not messages or messages[0].get("result", {}).get("isError"):
+            raise ValueError("Could not verify the client workspace over Reverse SSH.")
+        info = json.loads(messages[0]["result"]["content"][0]["text"])
+        if canonical(info["root"]) != canonical(request["client_root"]):
+            raise ValueError("Reverse SSH reached a different workspace.")
+        instructions = ("This is a Crow reverse agent session. You run on a server using its saved login, but the ONLY work target is the client workspace "
+                        + request["client_root"] + ". Use crow_client MCP tools for ALL filesystem reads, edits, searches, git, tests, and shell commands. "
+                        "Server-side tools are disabled or denied. Never use server filesystem paths for project work. Begin by calling workspace_info. "
+                        "Use shell for searches or commands that are not covered by the other client tools. Read AGENTS.md and CLAUDE.md on the client if present.")
+        hook_command = shlex.quote(sys.executable) + " " + shlex.quote(runtime) + " " + shlex.quote(json.dumps({"action": "reverse-guard", "workspace": str(workspace)}))
+        hooks = {"PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": hook_command, "timeout": 5}]}]}
+        if provider == "claude":
+            config = write("mcp.json", json.dumps({"mcpServers": {"crow_client": server}}))
+            settings = write("settings.json", json.dumps({"hooks": hooks, "disableAllHooks": False}))
+            args = [executable, "--dangerously-skip-permissions", "--tools", "", "--strict-mcp-config", "--mcp-config", config,
+                    "--settings", settings, "--append-system-prompt", instructions]
+        elif provider == "codex":
+            # Per-process overrides retain the server account's authentication and
+            # history. No persistent user config or credential is copied/changed.
+            def toml(value):
+                if isinstance(value, dict):
+                    return "{" + ",".join(json.dumps(k) + "=" + toml(v) for k, v in value.items()) + "}"
+                if isinstance(value, list):
+                    return "[" + ",".join(map(toml, value)) + "]"
+                return json.dumps(value)
+            args = [executable, "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust",
+                    "-c", "mcp_servers.crow_client=" + toml(server), "-c", "hooks.PreToolUse=" + toml(hooks["PreToolUse"]),
+                    "-c", "developer_instructions=" + toml(instructions), "-c", "projects." + json.dumps(str(workspace)) + ".trust_level=\"trusted\"", "--enable", "hooks", "--disable", "shell_tool", "--disable", "multi_agent"]
+        else:
+            write("plugin/.claude-plugin/plugin.json", json.dumps({"name": "crow-client", "version": "1.0.0"}))
+            write("plugin/.mcp.json", json.dumps({"mcpServers": {"crow_client": server}}))
+            write("plugin/hooks/hooks.json", json.dumps({"hooks": hooks}))
+            args = [executable, "--always-approve", "--no-leader", "--tools", "", "--plugin-dir", str(launch / "plugin"), "--rules", instructions]
+        if request.get("session_id"):
+            if not valid_id(request["session_id"]):
+                raise ValueError("Invalid saved session ID.")
+            if provider == "codex":
+                args += ["fork" if request.get("fork") else "resume", request["session_id"]]
+            else:
+                args += ["--resume", request["session_id"]] + (["--fork-session"] if request.get("fork") else [])
+        write("launch.json", json.dumps({"cwd": str(workspace), "argv": args}))
+        command = "exec " + shlex.quote(sys.executable) + " " + shlex.quote(runtime) + " " + shlex.quote(json.dumps({"action": "reverse-launch", "workspace": str(workspace), "launch": str(launch)}))
+        return {"directory": str(workspace), "launch": str(launch), "command": command}
+    except BaseException:
+        shutil.rmtree(launch)
+        raise
+
+
+def reverse_launch(request):
+    launch = pathlib.Path(request["launch"])
+    config = json.loads((launch / "launch.json").read_text())
+    os.chdir(config["cwd"])
+    os.execv(config["argv"][0], config["argv"])
+
 def main():
     request = json.loads(sys.argv[1])
     action = request.get("action", "list")
     workspace = canonical(request["workspace"])
+    if action == "reverse-cleanup":
+        target = pathlib.Path(request["launch"])
+        base = canonical(pathlib.Path.home() / ".crow/reverse-agents")
+        if target.is_symlink() or not canonical(target).startswith(base + os.sep) or not target.name.startswith("launch-"):
+            raise ValueError("Invalid reverse-agent cleanup path.")
+        shutil.rmtree(target, ignore_errors=True)
+        return {"removed": True}
+    if action == "reverse-tools":
+        return reverse_serve(workspace)
+    if action == "reverse-guard":
+        return reverse_guard()
+    if action == "reverse-prepare":
+        return reverse_prepare(request)
+    if action == "reverse-launch":
+        return reverse_launch(request)
     if action == "skills":
         return list_skills(workspace)
     if action == "list":
@@ -511,7 +747,9 @@ def provider_usage(provider):
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(InterruptedError("Cancelled")))
     try:
-        print(json.dumps(main(), ensure_ascii=False))
+        result = main()
+        if result is not None:
+            print(json.dumps(result, ensure_ascii=False))
     except Exception as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

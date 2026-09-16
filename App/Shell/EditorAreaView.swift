@@ -277,6 +277,13 @@ struct NewTabPopover: View {
                 }.buttonStyle(CrowPopupButtonStyle()).disabled(!connected)
                     .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
             }
+            #if os(macOS)
+            CrowPopupAction(title: "Reverse Agent…", symbol: "arrow.uturn.backward") {
+                dismiss(); model.requestReverseAgent(in: paneID)
+            }.disabled(model.selectedWorkspace.isRemote)
+                .help("Run an agent on an SSH server to work in this local folder")
+                .accessibilityIdentifier("crow.new-tab.reverse-agent")
+            #endif
             CrowDivider().padding(.vertical, 3)
             CrowPopupAction(title: "Web Browser", symbol: "globe") {
                 dismiss(); model.newBrowser(in: paneID)
@@ -701,6 +708,10 @@ private struct WorkspacePaneView: View {
                 HStack(spacing: 5) {
                     if case .terminal(let id) = tab, let agent = model.current.snapshot.agentTerminals.first(where: { $0.id == id }) {
                         AgentProviderIcon(provider: agent.provider, size: 13)
+                        if let hostID = agent.reverseHostID {
+                            Image(systemName: "arrow.uturn.backward").font(.system(size: 9))
+                                .help("Agent server: " + (model.hosts.first { $0.id == hostID }?.userAtHost ?? "SSH"))
+                        }
                     } else {
                         Image(systemName: {
                             switch tab {
@@ -727,6 +738,12 @@ private struct WorkspacePaneView: View {
         .contentShape(Rectangle())
         .accessibilityIdentifier("crow.tab.\(tab.key)")
         .crowContextMenu {
+            #if os(macOS)
+            if case .terminal(let id) = tab, model.current.snapshot.agentTerminals.first(where: { $0.id == id })?.reverseHostID != nil {
+                Button("Restart Reverse Agent…", systemImage: "arrow.clockwise") { model.requestReverseAgent(in: pane.id, replacing: id) }
+                Divider()
+            }
+            #endif
             Button("Split Right") { model.splitTab(tab, in: pane.id, placement: .right) }
             Button("Split Down") { model.splitTab(tab, in: pane.id, placement: .bottom) }
             if let layout = model.current.snapshot.layout {

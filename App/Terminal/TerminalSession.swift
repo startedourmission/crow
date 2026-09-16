@@ -27,6 +27,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var running = false
     var launchCommand: String?
     var startupUnavailableMessage: String?
+    @ObservationIgnored var onStop: (() -> Void)?
     var tmuxLocation: TmuxLocation? {
         didSet { if oldValue != tmuxLocation { tmuxCurrentDirectory = nil } }
     }
@@ -209,6 +210,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     }
 
     func stop() {
+        let cleanup = onStop; onStop = nil; cleanup?()
         activityTask?.cancel(); activityTask = nil; agentActivity = .unknown
         imagePasteTask?.cancel(); imagePasteTask = nil; imagePasteInProgress = false
         #if os(macOS)

@@ -13,12 +13,16 @@ final class WorkspaceState: Identifiable {
     @ObservationIgnored var remote: RemoteConnection?
     var terminalGeneration = 0
     var tmuxContextDirectory: String?
-    var contextRootPath: String { tmuxContextDirectory ?? snapshot.rootPath }
-    var contextDirectoryPath: String { tmuxContextDirectory ?? snapshot.directoryPath }
+    private var reverseAgentDirectory: String? {
+        snapshot.agentTerminals.first { $0.id == snapshot.selectedTerminalID && $0.reverseHostID != nil }?.directory
+    }
+    var contextRootPath: String { reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.rootPath }
+    var contextDirectoryPath: String { reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.directoryPath }
     var agentHistoryPath: String {
         // Terminal instances are stored outside Observation; track their replacement too.
         _ = terminalGeneration
         guard let id = snapshot.selectedTerminalID else { return snapshot.rootPath }
+        if let agent = snapshot.agentTerminals.first(where: { $0.id == id }), agent.reverseHostID != nil { return agent.directory }
         let initial = snapshot.agentTerminals.first { $0.id == id }?.directory ?? snapshot.rootPath
         guard let terminal = terminals[id] else { return initial }
         if terminal.tmuxLocation != nil, let path = terminal.tmuxCurrentDirectory { return path }

@@ -8,6 +8,59 @@ import Observation
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testReverseAgentKeepsLocalContextAndRoutesHistoryToServer() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-context-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let state = model.current, host = HostID(rawValue: UUID())
+        var agent = AgentTerminal(provider: .codex, directory: "/client/workspace")
+        agent.reverseHostID = host; agent.reverseServerDirectory = "/server/crow/session"
+        state.snapshot.agentTerminals.append(agent)
+        state.snapshot.terminalIDs.append(agent.id); state.snapshot.selectedTerminalID = agent.id
+        let terminal = model.terminal(agent.id, in: state)
+        terminal.view.feed(text: "\u{1b}]7;file://server/server/crow/session\u{7}")
+        XCTAssertEqual(state.agentHistoryPath, "/client/workspace")
+        XCTAssertEqual(state.contextRootPath, "/client/workspace")
+        XCTAssertEqual(state.contextDirectoryPath, "/client/workspace")
+        XCTAssertFalse(state.snapshot.workspace.isRemote)
+        XCTAssertNotNil(terminal.startupUnavailableMessage, "Restored tabs must never run the server agent locally")
+        XCTAssertNil(terminal.launchCommand)
+        XCTAssertThrowsError(try model.agentHistorySource(for: state), "A disconnected server must not fall back to local history")
+        let roundTrip = try JSONDecoder().decode(AgentTerminal.self, from: JSONEncoder().encode(agent))
+        XCTAssertEqual(roundTrip.reverseHostID, host)
+        XCTAssertEqual(roundTrip.reverseServerDirectory, "/server/crow/session")
+        state.snapshot.selectedTerminalID = nil
+        XCTAssertEqual(state.contextRootPath, state.snapshot.rootPath)
+    }
+
+    @MainActor func testReverseClientToolsOverRealSSH() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-tools-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = try await ReverseSSHServer.create()
+        defer { server.stop() }
+        let knownHosts = root.appendingPathComponent("known_hosts")
+        try "[127.0.0.1]:\(server.port) \(try server.hostPublicKey)".write(to: knownHosts, atomically: true, encoding: .utf8)
+        let script = try XCTUnwrap(Bundle.main.url(forResource: "agent-history", withExtension: "py"))
+        let python = try await ReverseSSHCommand.run("/bin/sh", ["-c", TerminalCommand.environment + "command -v python3"])
+        let request = String(decoding: try JSONSerialization.data(withJSONObject: ["action": "reverse-tools", "workspace": root.path]), as: UTF8.self)
+        let command = "exec " + TerminalCommand.quote(python.trimmingCharacters(in: .whitespacesAndNewlines)) + " " + TerminalCommand.quote(script.path) + " " + TerminalCommand.quote(request)
+        let calls: [[String: Any]] = [
+            ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [:]],
+            ["jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": ["name": "write_file", "arguments": ["path": "client.txt", "text": "client-side"]]],
+            ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "shell", "arguments": ["command": "pwd"]]]
+        ]
+        let input = try calls.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n") + "\n"
+        let output = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+            "-o", "IdentityAgent=none", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + knownHosts.path,
+            "-i", server.directory.appendingPathComponent("identity").path, "-p", String(server.port), server.username + "@127.0.0.1", command], input: Data(input.utf8))
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("client.txt"), encoding: .utf8), "client-side")
+        let replies = try output.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        XCTAssertEqual(replies.count, 3)
+        let result = try XCTUnwrap(replies.last?["result"] as? [String: Any])
+        XCTAssertNil(result["isError"])
+    }
+
     @MainActor func testCommandRunnerInheritsEnvironmentUnlessExplicitlyOverridden() async throws {
         let inheritedHome = try XCTUnwrap(ProcessInfo.processInfo.environment["HOME"])
         let inheritedPath = try XCTUnwrap(ProcessInfo.processInfo.environment["PATH"])

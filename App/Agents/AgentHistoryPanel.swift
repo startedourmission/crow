@@ -25,7 +25,7 @@ struct AgentHistoryResult: Decodable {
 }
 
 @MainActor enum AgentHistoryService {
-    static func run(_ request: [String: Any], in state: WorkspaceState, operation: String = "Agent history") async throws -> Data {
+    static func run(_ request: [String: Any], in state: WorkspaceState, operation: String = "Agent history", timeout: TimeInterval = 12) async throws -> Data {
         guard let url = Bundle.main.url(forResource: "agent-history", withExtension: "py") else { throw CommandError("The agent history reader is missing from this build.") }
         let script = try String(contentsOf: url, encoding: .utf8)
         let json = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
@@ -38,11 +38,11 @@ struct AgentHistoryResult: Decodable {
             output = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + ssh.multiplexArguments + ["sh -c " + TerminalCommand.quote(command)], operation: operation)
         } else {
             guard let remote = state.remote, remote.isConnected else { throw FileFailure.disconnected }
-            output = try await remote.workspaceCommand(command, operation: operation)
+            output = try await remote.workspaceCommand(command, operation: operation, timeout: timeout)
         }
         #else
         guard state.snapshot.workspace.isRemote, let remote = state.remote, remote.isConnected else { throw CommandError("Select a connected SSH host to read its agent data.") }
-        output = try await remote.workspaceCommand(command, operation: operation)
+        output = try await remote.workspaceCommand(command, operation: operation, timeout: timeout)
         #endif
         return Data(output.utf8)
     }
@@ -68,6 +68,9 @@ struct AgentHistoryPanel: View {
     @State private var deletion: AgentHistoryEntry?
     @State private var loadedState: WorkspaceState?
     @State private var loadedPath: String?
+    @State private var loadedExecutionState: WorkspaceState?
+    @State private var loadedExecutionPath: String?
+    @State private var loadedReverseHost: HostID?
     private var scope: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(refreshID)" }
 
     var body: some View {
@@ -101,9 +104,13 @@ struct AgentHistoryPanel: View {
             .task(id: scope) {
                 let state = model.current, path = model.current.agentHistoryPath
                 loadedPath = path; loadedState = state; entries = []; error = nil; warnings = []; expanded = []; deletion = nil; loading = true
+                loadedExecutionState = nil; loadedExecutionPath = nil; loadedReverseHost = nil
                 while !Task.isCancelled {
                     do {
-                        let result = try await AgentHistoryService.list(in: state, workspacePath: path); try Task.checkCancellation()
+                        let (source, sourcePath) = try model.agentHistorySource(for: state)
+                        let result = try await AgentHistoryService.list(in: source, workspacePath: sourcePath); try Task.checkCancellation()
+                        loadedExecutionState = source; loadedExecutionPath = sourcePath
+                        loadedReverseHost = source === state ? nil : source.snapshot.workspace.hostID
                         entries = result.sessions; warnings = result.warnings; error = nil
                     } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
                     if !Task.isCancelled { loading = false }
@@ -160,6 +167,11 @@ struct AgentHistoryPanel: View {
     }
     private func resume(_ entry: AgentHistoryEntry, fork: Bool) {
         guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
+        if let hostID = loadedReverseHost, let pane = state.snapshot.layout?.activePaneID {
+            model.reverseAgentRequest = ReverseAgentRequest(workspaceID: state.id, paneID: pane,
+                directory: path, provider: entry.provider, hostID: hostID, sessionID: entry.id, fork: fork)
+            return
+        }
         if !fork, let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.sessionID == entry.id && $0.forkSession != true }), state.terminals[agent.id]?.running == true {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
@@ -173,6 +185,7 @@ struct AgentHistoryPanel: View {
     }
     private func delete(_ entry: AgentHistoryEntry) {
         guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
+        guard let source = loadedExecutionState, let sourcePath = loadedExecutionPath else { return }
         guard !state.snapshot.agentTerminals.contains(where: { $0.provider == entry.provider && $0.sessionID == entry.id && state.terminals[$0.id]?.running == true }) else {
             error = "Close this session's terminal before deleting its history."; return
         }
@@ -180,7 +193,7 @@ struct AgentHistoryPanel: View {
         Task {
             defer { deleting = false }
             do {
-                try await AgentHistoryService.delete(entry, in: state, workspacePath: path)
+                try await AgentHistoryService.delete(entry, in: source, workspacePath: sourcePath)
                 if state === loadedState, loadedPath == path { entries.removeAll { $0.key == entry.key }; refreshID += 1 }
             } catch { if state === loadedState, loadedPath == path { self.error = error.localizedDescription } }
         }
@@ -294,3 +307,84 @@ struct AgentSkillsPanel: View {
         }
     }
 }
+
+#if os(macOS)
+struct ReverseAgentSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let request: ReverseAgentRequest
+    @State private var hostID: HostID?
+    @State private var provider: AgentProvider = .claude
+    @State private var directory = ""
+    @State private var status: String?
+    @State private var error: String?
+    @State private var launchTask: Task<Void, Never>?
+    private var busy: Bool { launchTask != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Reverse Agent").font(.title3.weight(.semibold))
+            Text("Use the server’s agent login to work in a folder on this Mac.")
+                .font(.callout).foregroundStyle(CrowTheme.textDim)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Client folder").font(.caption).foregroundStyle(CrowTheme.textDim)
+                HStack {
+                    TextField("Local folder", text: $directory).crowSettingsInput()
+                    Button {
+                        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.directoryURL = URL(fileURLWithPath: directory)
+                        panel.begin { response in if response == .OK, let path = panel.url?.path { directory = path } }
+                    } label: { Image(systemName: "folder") }.buttonStyle(CrowButtonStyle()).help("Choose client folder")
+                }.disabled(busy || request.sessionID != nil || request.replacingTerminalID != nil)
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Agent server").font(.caption).foregroundStyle(CrowTheme.textDim)
+                CrowChoiceMenu(title: "Server", selection: $hostID,
+                    choices: [("Choose an SSH server", nil as HostID?)] + model.hosts.map { ($0.userAtHost, Optional($0.id)) }, showTitle: false)
+                    .disabled(busy || request.sessionID != nil || request.replacingTerminalID != nil)
+                if model.hosts.isEmpty { Text("Add an SSH host in Workspaces first.").font(.caption).foregroundStyle(CrowTheme.textDim) }
+            }
+            HStack(spacing: 8) {
+                ForEach(AgentProvider.allCases) { value in
+                    Button { provider = value } label: {
+                        HStack(spacing: 7) { AgentProviderIcon(provider: value, size: 16); Text(value.title) }
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(provider == value ? CrowTheme.bg3 : CrowTheme.bg1, in: RoundedRectangle(cornerRadius: 6))
+                    }.buttonStyle(.plain)
+                }
+            }.disabled(busy || request.sessionID != nil || request.replacingTerminalID != nil)
+            if let status {
+                HStack(spacing: 8) { if busy { ProgressView().controlSize(.small) }; Text(status).font(.caption) }
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled) }
+            HStack {
+                Spacer()
+                Button("Cancel") { launchTask?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Open Agent") { launch() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(busy || hostID == nil || directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(22).frame(width: 480).background(CrowTheme.bg0)
+            .onAppear {
+                directory = request.directory; provider = request.provider
+                let previous = UserDefaults.standard.string(forKey: "crow.reverse-agent-last-host").flatMap(UUID.init(uuidString:)).map(HostID.init(rawValue:))
+                hostID = request.hostID ?? model.hosts.first(where: { $0.id == previous })?.id ?? model.hosts.first?.id
+            }
+            .onDisappear { launchTask?.cancel() }
+            .interactiveDismissDisabled(busy)
+    }
+
+    private func launch() {
+        guard let host = model.hosts.first(where: { $0.id == hostID }) else { return }
+        var value = request; value.provider = provider; value.directory = directory
+        error = nil
+        launchTask = Task { @MainActor in
+            defer { launchTask = nil }
+            do {
+                try await model.launchReverseAgent(value, host: host) { status = $0 }
+                dismiss()
+            } catch is CancellationError {} catch { self.error = error.localizedDescription; status = nil }
+        }
+    }
+}
+#endif

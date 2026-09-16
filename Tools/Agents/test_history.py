@@ -195,5 +195,97 @@ class SkillTests(unittest.TestCase):
         self.assertTrue(warnings)
 
 
+class ReverseToolsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name).resolve()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_tools_edit_client_files_and_shell_uses_fixed_root(self):
+        root = str(self.root)
+        history.reverse_tool(root, "write_file", {"path": "note.txt", "text": "before"})
+        history.reverse_tool(root, "edit_file", {"path": "note.txt", "old_text": "before", "new_text": "after"})
+        self.assertEqual(history.reverse_tool(root, "read_file", {"path": "note.txt"})["text"], "after")
+        self.assertEqual(history.reverse_tool(root, "shell", {"command": "pwd"})["output"].strip(), root)
+        with self.assertRaises(ValueError):
+            history.reverse_tool(root, "write_file", {"path": "note.txt", "text": "clobber"})
+        with self.assertRaises(ValueError):
+            history.reverse_tool(root, "edit_file", {"path": "note.txt", "old_text": "stale", "new_text": "bad"})
+        self.assertEqual((self.root / "note.txt").read_text(), "after")
+
+    def test_path_escape_and_symlink_are_rejected(self):
+        (self.root / "outside").symlink_to(self.root.parent, target_is_directory=True)
+        for path in ["../outside.txt", "outside/other.txt", "/etc/passwd"]:
+            with self.assertRaises(ValueError):
+                history.reverse_tool(str(self.root), "read_file", {"path": path})
+
+    def test_mcp_stdio_handshake_tools_and_errors(self):
+        import subprocess
+        requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "workspace_info", "arguments": {}}},
+                    {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "read_file", "arguments": {"path": "missing"}}}]
+        out = subprocess.run([os.sys.executable, history.__file__, json.dumps({"action": "reverse-tools", "workspace": str(self.root)})],
+                             input="".join(json.dumps(r) + "\n" for r in requests), text=True, capture_output=True, timeout=5, check=True)
+        replies = [json.loads(line) for line in out.stdout.splitlines()]
+        self.assertEqual([r["id"] for r in replies], [1, 2, 3, 4])
+        self.assertEqual(len(replies[1]["result"]["tools"]), 6)
+        self.assertEqual(json.loads(replies[2]["result"]["content"][0]["text"])["root"], str(self.root))
+        self.assertTrue(replies[3]["result"]["isError"])
+
+    def test_hook_allows_client_tools_and_denies_server_tools(self):
+        import io
+        for name, decision in [("mcp__crow_client__shell", "allow"), ("mcp__crow-client__crow_client__read_file", "allow"),
+                               ("exec_command", "deny"), ("apply_patch", "deny"), ("Bash", "deny"), ("Read", "deny"),
+                               ("mcp__other__shell", "deny")]:
+            with patch.object(history.sys, "stdin", io.StringIO(json.dumps({"tool_name": name}))):
+                self.assertEqual(history.reverse_guard()["hookSpecificOutput"]["permissionDecision"], decision)
+
+    def test_prepare_preserves_server_login_and_uses_process_scoped_tools(self):
+        import subprocess
+        connector = self.root / "connect"
+        connector.write_text("#!/bin/sh\n[ \"$1\" = -T ] || exit 2\nexec /bin/sh -c \"$2\"\n")
+        connector.chmod(0o700)
+        request = {"provider": "claude", "client_id": "client-A", "client_root": str(self.root),
+                   "client_python": os.sys.executable, "client_runtime": history.__file__, "runtime_source": pathlib.Path(history.__file__).read_text(),
+                   "connector": history.shlex.quote(str(connector))}
+        original_run = subprocess.run
+        def run(args, **kwargs):
+            if args[-1:] == ["--help"]:
+                return subprocess.CompletedProcess(args, 0, "--tools --mcp-config --strict-mcp-config --settings --dangerously-bypass-hook-trust --plugin-dir --rules", "")
+            return original_run(args, **kwargs)
+        with patch.object(pathlib.Path, "home", return_value=self.root), patch.object(history.shutil, "which", return_value="/server/bin/agent"), patch.object(subprocess, "run", side_effect=run):
+            for provider in ["claude", "codex", "grok"]:
+                prepared = history.reverse_prepare(dict(request, provider=provider))
+                launch = pathlib.Path(prepared["launch"])
+                config = json.loads((launch / "launch.json").read_text())
+                self.assertEqual(config["argv"][0], "/server/bin/agent")
+                self.assertEqual(config["cwd"], prepared["directory"])
+                self.assertNotIn("CODEX_HOME", " ".join(config["argv"]))
+                self.assertNotIn("GROK_HOME", " ".join(config["argv"]))
+                self.assertTrue(str(self.root / ".crow/reverse-agents") in prepared["directory"])
+                self.assertEqual(launch.stat().st_mode & 0o777, 0o700)
+                if provider == "claude":
+                    args = config["argv"]
+                    self.assertEqual(args[args.index("--tools") + 1], "")
+                    self.assertTrue(json.loads((launch / "mcp.json").read_text())["mcpServers"]["crow_client"]["command"].endswith("connect"))
+            changed = history.reverse_prepare(dict(request, client_id="client-B"))
+            original = history.reverse_prepare(request)
+            self.assertNotEqual(changed["directory"], original["directory"])
+            self.assertEqual(history.reverse_prepare(request)["directory"], original["directory"])
+
+    def test_unsupported_cli_and_broken_reverse_do_not_launch(self):
+        import subprocess
+        with patch.object(history.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "not installed"):
+                history.reverse_prepare({"provider": "codex"})
+        with patch.object(history.shutil, "which", return_value="/old/codex"), patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "old help", "")):
+            with self.assertRaisesRegex(ValueError, "Update Codex"):
+                history.reverse_prepare({"provider": "codex"})
+
+
 if __name__ == "__main__":
     unittest.main()
