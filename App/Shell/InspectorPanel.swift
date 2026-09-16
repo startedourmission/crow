@@ -33,8 +33,7 @@ struct InspectorPanel: View {
                     Button { model.inspectorTab = item } label: {
                         Group {
                             if item == "Git" {
-                                GitBranchIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                                    .frame(width: 16, height: 16)
+                                GitBranchIcon(selected: tab == item)
                             } else {
                                 Image(systemName: item == "Files" ? "folder" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
                             }
@@ -238,7 +237,20 @@ struct InspectorPanel: View {
     }
 }
 
-private struct GitBranchIcon: Shape {
+private struct GitBranchIcon: View {
+    @Environment(\.crowControlHovered) private var hovered
+    let selected: Bool
+
+    var body: some View {
+        let color = selected ? CrowTheme.accent : CrowTheme.textDim
+        GitBranchShape()
+            .stroke(hovered ? CrowTheme.hoveredForeground(color) : color,
+                    style: StrokeStyle(lineWidth: selected ? 1.2 : 1, lineCap: .round, lineJoin: .round))
+            .frame(width: 13, height: 13)
+    }
+}
+
+private struct GitBranchShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         path.move(to: CGPoint(x: 4, y: 7.5))
