@@ -249,7 +249,6 @@ struct AgentWorkspaceBrowser: View {
     @State private var folderSource: WorkspaceID?
     @State private var cloneHost: String?
     @State private var hostMenu: String?
-    @State private var sessionMenu: WorkspaceID?
     @SceneStorage("crow.workspaces.localHeight") private var localHeight = 220.0
     @State private var localDragStart: CGFloat?
     @State private var liveLocalHeight: CGFloat?
@@ -546,7 +545,6 @@ struct AgentWorkspaceBrowser: View {
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
                 }.accessibilityIdentifier("crow.workspaces.select." + state.id.rawValue.uuidString)
-                newSessionMenu(state)
             }.font(.system(size: 12)).padding(.horizontal, 6)
                 .crowContextMenu {
                     Button("Open Workspace") { model.activateWorkspace(state.id); onOpen?() }
@@ -577,35 +575,6 @@ struct AgentWorkspaceBrowser: View {
         #else
         UIPasteboard.general.string = path
         #endif
-    }
-
-    private func newSessionMenu(_ state: WorkspaceState) -> some View {
-        Button { sessionMenu = state.id } label: {
-            Image(systemName: "plus").frame(width: 24, height: 24).contentShape(Rectangle())
-        }.buttonStyle(CrowButtonStyle())
-            .disabled(state.snapshot.workspace.isRemote && state.remote?.isConnected != true)
-            .accessibilityLabel("New session").help("New session")
-            .accessibilityIdentifier("crow.workspaces.new-session." + state.id.rawValue.uuidString)
-            .popover(isPresented: Binding(get: { sessionMenu == state.id }, set: { if !$0, sessionMenu == state.id { sessionMenu = nil } }), arrowEdge: .trailing) {
-                CrowPopupPanel(title: state.snapshot.workspace.name) {
-                    Button("Web Browser") {
-                        sessionMenu = nil
-                        model.activateWorkspace(state.id); model.newBrowser(); onOpen?()
-                    }.buttonStyle(CrowPopupButtonStyle())
-                    Button("New Terminal") {
-                        sessionMenu = nil
-                        model.activateWorkspace(state.id); model.newTerminal(); model.compactSurface = .terminal; onOpen?()
-                    }.buttonStyle(CrowPopupButtonStyle())
-                    CrowDivider().padding(.vertical, 3)
-                    ForEach(AgentProvider.allCases) { provider in
-                        Button("New \(provider.title)") {
-                            sessionMenu = nil
-                            model.activateWorkspace(state.id)
-                            if model.newAgentTerminal(provider) != nil { onOpen?() }
-                        }.buttonStyle(CrowPopupButtonStyle())
-                    }
-                }.accessibilityIdentifier("crow.workspaces.new-session-menu")
-            }
     }
 
     private func sessionRow(_ id: UUID, state: WorkspaceState) -> some View {
