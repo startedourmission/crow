@@ -1441,7 +1441,7 @@ final class AppModel {
         #if os(macOS)
         useSystemSSH = state.systemSSH != nil
         #endif
-        let directory = state.contextRootPath
+        let directory = state.snapshot.agentTerminals.first { $0.id == id }?.directory ?? state.contextRootPath
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: directory,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
         if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {

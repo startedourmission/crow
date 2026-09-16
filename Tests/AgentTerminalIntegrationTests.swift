@@ -116,6 +116,39 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertFalse(model.current.snapshot.layout?.allTabs.contains(.terminal(agent.id)) ?? true)
     }
 
+    @MainActor func testAgentHistoryFollowsTerminalDirectoryAndTabFocus() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-cwd-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let state = model.current
+        XCTAssertEqual(state.agentHistoryPath, root.path)
+        model.newTerminal()
+        let firstID = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let first = model.terminal(firstID, in: state)
+        let pane = try XCTUnwrap(state.snapshot.layout?.activePaneID)
+        first.view.feed(text: "\u{1b}]7;file://localhost/tmp/project-one\u{7}")
+        XCTAssertEqual(state.agentHistoryPath, "/tmp/project-one")
+        first.view.feed(text: "\u{1b}]7;file://localhost/tmp/project-one/subfolder\u{7}")
+        XCTAssertEqual(state.agentHistoryPath, "/tmp/project-one/subfolder", "cd must change the history scope without changing tabs")
+        model.newTerminal()
+        let secondID = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let second = model.terminal(secondID, in: state)
+        second.view.feed(text: "\u{1b}]7;file://localhost/tmp/project-two\u{7}")
+        XCTAssertEqual(state.agentHistoryPath, "/tmp/project-two")
+        model.selectTab(.terminal(firstID), in: pane)
+        XCTAssertEqual(state.agentHistoryPath, "/tmp/project-one/subfolder")
+        second.view.feed(text: "\u{1b}]7;file://localhost/tmp/background-tab\u{7}")
+        XCTAssertEqual(state.agentHistoryPath, "/tmp/project-one/subfolder", "Output from an unfocused terminal must not change the list")
+        let path = state.agentHistoryPath
+        let agentID = try XCTUnwrap(model.newAgentTerminal(.codex, directory: path))
+        let agent = try XCTUnwrap(state.snapshot.agentTerminals.first { $0.id == agentID })
+        XCTAssertEqual(agent.directory, path, "History resumes must run in the folder used to load the list")
+        let resumed = model.terminal(agentID, in: state)
+        XCTAssertEqual(resumed.workingDirectory, path, "An agent has the right initial path even before it emits OSC 7")
+        XCTAssertEqual(state.agentHistoryPath, path)
+        XCTAssertEqual(state.snapshot.rootPath, root.path)
+    }
+
     @MainActor func testTmuxFocusUpdatesFolderWithoutChangingSavedWorkspace() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-context-" + UUID().uuidString)
         let folder = root.appendingPathComponent("pane-project")
@@ -130,6 +163,10 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         let focus = TmuxFocus(location: .init(sessionID: "$3", windowID: "@2", paneID: "%9"), directory: folder.path)
         model.applyTmuxFocus(focus, in: state, terminalID: id)
         XCTAssertEqual(state.contextRootPath, folder.path)
+        XCTAssertEqual(state.agentHistoryPath, folder.path)
+        // The outer shell's OSC directory must not override the focused tmux pane.
+        session.view.feed(text: "\u{1b}]7;file://localhost/tmp/outer-shell\u{7}")
+        XCTAssertEqual(state.agentHistoryPath, folder.path)
         XCTAssertEqual(state.explorer.rootPath, folder.path)
         XCTAssertEqual(state.snapshot.rootPath, original)
         XCTAssertEqual(session.tmuxLocation, focus.location)
@@ -138,6 +175,9 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         model.applyTmuxFocus(.init(location: focus.location, directory: "/stale"), in: state, terminalID: id)
         XCTAssertEqual(state.contextRootPath, folder.path, "Ignore a result for a terminal that lost focus")
         model.clearTmuxContext(in: state)
+        XCTAssertEqual(state.agentHistoryPath, folder.path, "The newly opened agent retains its own launch folder")
+        model.newTerminal()
+        XCTAssertEqual(state.agentHistoryPath, original, "A normal terminal must not inherit another terminal's tmux context")
         XCTAssertEqual(state.contextRootPath, original)
         XCTAssertEqual(state.explorer.rootPath, original)
     }

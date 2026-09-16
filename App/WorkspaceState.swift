@@ -15,6 +15,15 @@ final class WorkspaceState: Identifiable {
     var tmuxContextDirectory: String?
     var contextRootPath: String { tmuxContextDirectory ?? snapshot.rootPath }
     var contextDirectoryPath: String { tmuxContextDirectory ?? snapshot.directoryPath }
+    var agentHistoryPath: String {
+        // Terminal instances are stored outside Observation; track their replacement too.
+        _ = terminalGeneration
+        guard let id = snapshot.selectedTerminalID else { return snapshot.rootPath }
+        let initial = snapshot.agentTerminals.first { $0.id == id }?.directory ?? snapshot.rootPath
+        guard let terminal = terminals[id] else { return initial }
+        if terminal.tmuxLocation != nil, let path = terminal.tmuxCurrentDirectory { return path }
+        return terminal.workingDirectory
+    }
     @ObservationIgnored var tmuxFocusGeneration = UUID()
     @ObservationIgnored var terminals: [UUID: TerminalSession] = [:]
     @ObservationIgnored var browsers: [UUID: BrowserSession] = [:]

@@ -27,7 +27,11 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var running = false
     var launchCommand: String?
     var startupUnavailableMessage: String?
-    var tmuxLocation: TmuxLocation?
+    var tmuxLocation: TmuxLocation? {
+        didSet { if oldValue != tmuxLocation { tmuxCurrentDirectory = nil } }
+    }
+    var tmuxCurrentDirectory: String?
+    var workingDirectory: String { currentDirectory ?? directory }
     var agentProvider: AgentProvider?
     private(set) var agentActivity: AgentActivity = .unknown
     @ObservationIgnored private var activityTask: Task<Void, Never>?

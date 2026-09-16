@@ -47,11 +47,11 @@ struct AgentHistoryResult: Decodable {
         return Data(output.utf8)
     }
     static func list(in state: WorkspaceState, workspacePath: String? = nil) async throws -> AgentHistoryResult {
-        try JSONDecoder().decode(AgentHistoryResult.self, from: await run(["workspace": workspacePath ?? state.contextRootPath], in: state))
+        try JSONDecoder().decode(AgentHistoryResult.self, from: await run(["workspace": workspacePath ?? state.agentHistoryPath], in: state))
     }
     static func delete(_ entry: AgentHistoryEntry, in state: WorkspaceState, workspacePath: String? = nil) async throws {
         let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry))
-        _ = try await run(["workspace": workspacePath ?? state.contextRootPath, "action": "delete", "session": value], in: state)
+        _ = try await run(["workspace": workspacePath ?? state.agentHistoryPath, "action": "delete", "session": value], in: state)
     }
 }
 
@@ -68,12 +68,12 @@ struct AgentHistoryPanel: View {
     @State private var deletion: AgentHistoryEntry?
     @State private var loadedState: WorkspaceState?
     @State private var loadedPath: String?
-    private var scope: String { "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)-\(model.current.remote?.isConnected == true)-\(refreshID)" }
+    private var scope: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(refreshID)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(model.workspaceFolderName(model.current.contextRootPath)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(model.workspaceFolderName(model.current.agentHistoryPath)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Spacer()
                 if loading || deleting { ProgressView().controlSize(.small) }
                 Button { refreshID += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
@@ -99,7 +99,7 @@ struct AgentHistoryPanel: View {
             .windowDragExcluded()
             .accessibilityIdentifier("crow.history.panel")
             .task(id: scope) {
-                let state = model.current, path = model.current.contextRootPath
+                let state = model.current, path = model.current.agentHistoryPath
                 loadedPath = path; loadedState = state; entries = []; error = nil; warnings = []; expanded = []; deletion = nil; loading = true
                 while !Task.isCancelled {
                     do {
@@ -159,11 +159,11 @@ struct AgentHistoryPanel: View {
         }.padding(.leading, 12).padding(.vertical, 4)
     }
     private func resume(_ entry: AgentHistoryEntry, fork: Bool) {
-        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.contextRootPath else { return }
+        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
         if !fork, let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.sessionID == entry.id && $0.forkSession != true }), state.terminals[agent.id]?.running == true {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
-        guard let id = model.newAgentTerminal(entry.provider), let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }) else { return }
+        guard let id = model.newAgentTerminal(entry.provider, directory: path), let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }) else { return }
         state.snapshot.agentTerminals[index].name = entry.title
         state.snapshot.agentTerminals[index].sessionID = entry.id
         state.snapshot.agentTerminals[index].forkSession = fork
@@ -172,7 +172,7 @@ struct AgentHistoryPanel: View {
         model.schedulePersist()
     }
     private func delete(_ entry: AgentHistoryEntry) {
-        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.contextRootPath else { return }
+        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
         guard !state.snapshot.agentTerminals.contains(where: { $0.provider == entry.provider && $0.sessionID == entry.id && state.terminals[$0.id]?.running == true }) else {
             error = "Close this session's terminal before deleting its history."; return
         }

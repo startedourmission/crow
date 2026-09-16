@@ -42,6 +42,7 @@ extension AppModel {
               state.snapshot.selectedTerminalID == terminalID, let session = state.terminals[terminalID],
               session.running, session.tmuxLocation?.sessionID == focus.location.sessionID else { return }
         session.tmuxLocation = focus.location
+        session.tmuxCurrentDirectory = focus.directory
         guard state.tmuxContextDirectory != focus.directory else { return }
         state.tmuxContextDirectory = focus.directory
         refreshFiles()

@@ -92,12 +92,12 @@ extension AppModel {
         state.snapshot.isPinned.toggle(); schedulePersist()
     }
 
-    @discardableResult func newAgentTerminal(_ provider: AgentProvider, in paneID: UUID? = nil) -> UUID? {
+    @discardableResult func newAgentTerminal(_ provider: AgentProvider, in paneID: UUID? = nil, directory: String? = nil) -> UUID? {
         guard hasWorkspace else { folderImporterVisible = true; return nil }
         guard !current.snapshot.workspace.isRemote || current.remote?.isConnected == true else {
             report(CommandError("Connect this workspace’s SSH host before starting an agent.")); return nil
         }
-        let agent = AgentTerminal(provider: provider, directory: current.contextRootPath)
+        let agent = AgentTerminal(provider: provider, directory: directory ?? current.contextRootPath)
         current.snapshot.agentTerminals.append(agent)
         openCommandTerminal(id: agent.id, in: paneID)
         return agent.id
