@@ -31,8 +31,14 @@ struct InspectorPanel: View {
             HStack(spacing: 10) {
                 ForEach(tabs, id: \.self) { item in
                     Button { model.inspectorTab = item } label: {
-                        Label(item, systemImage: item == "Files" ? "folder" : item == "Summary" ? "list.bullet.indent" : item == "Agents" ? "bubble.left.and.bubble.right" : "point.3.connected.trianglepath.dotted")
-                            .labelStyle(.iconOnly)
+                        Group {
+                            if item == "Git" {
+                                GitBranchIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                                    .frame(width: 16, height: 16)
+                            } else {
+                                Image(systemName: item == "Files" ? "folder" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
+                            }
+                        }
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
                             .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
                             .frame(width: 28, height: 28)
@@ -229,6 +235,27 @@ struct InspectorPanel: View {
         if path == root { return "This folder" }
         let prefix = root.hasSuffix("/") ? root : root + "/"
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
+    }
+}
+
+private struct GitBranchIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 4, y: 7.5))
+        path.addLine(to: CGPoint(x: 4, y: 8))
+        path.addCurve(to: CGPoint(x: 9, y: 13), control1: CGPoint(x: 4, y: 11), control2: CGPoint(x: 6, y: 13))
+        path.addLine(to: CGPoint(x: 15, y: 13))
+        path.addCurve(to: CGPoint(x: 20, y: 8), control1: CGPoint(x: 18, y: 13), control2: CGPoint(x: 20, y: 11))
+        path.addLine(to: CGPoint(x: 20, y: 7.5))
+        path.move(to: CGPoint(x: 12, y: 13))
+        path.addLine(to: CGPoint(x: 12, y: 16.5))
+        for center in [CGPoint(x: 4, y: 4), CGPoint(x: 20, y: 4), CGPoint(x: 12, y: 20)] {
+            path.addEllipse(in: CGRect(x: center.x - 3.5, y: center.y - 3.5, width: 7, height: 7))
+        }
+        // Leave room for the outline so none of the three nodes gets clipped.
+        let scale = min(rect.width, rect.height) / 27
+        return path.applying(CGAffineTransform(scaleX: scale, y: scale)
+            .concatenating(CGAffineTransform(translationX: rect.midX - 12 * scale, y: rect.midY - 12 * scale)))
     }
 }
 
