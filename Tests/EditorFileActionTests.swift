@@ -11,6 +11,178 @@ import WebKit
         root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-file-actions-" + UUID().uuidString)
         model = AppModel(vaultURL: root)
     }
+    func testCloseOtherTabsKeepsClickedTabAndOtherPane() throws {
+        let kept = try XCTUnwrap(model.selectedBuffer)
+        let pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        model.newTerminal()
+        let terminal = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        model.splitTab(.terminal(terminal), in: pane, placement: .right)
+        let otherPane = try XCTUnwrap(model.current.snapshot.layout?.panes.first { $0.id != pane })
+        model.closeOtherTabs(except: .file(kept.id), in: pane)
+        XCTAssertNil(model.closeOtherTabsRequest)
+        XCTAssertEqual(model.current.snapshot.layout?.panes.first { $0.id == pane }?.tabs, [.file(kept.id)])
+        XCTAssertEqual(model.current.snapshot.layout?.panes.first { $0.id == otherPane.id }, otherPane)
+        XCTAssertFalse(model.current.snapshot.terminalIDs.contains(terminal))
+        XCTAssertEqual(model.current.snapshot.layout?.activePane?.selected, .file(kept.id))
+    }
+
+    func testCloseOtherTabsWaitsForDirtyFilesAndCancelKeepsEverything() throws {
+        let original = try XCTUnwrap(model.selectedBuffer)
+        model.updateBufferText(original.id, "Do not lose this draft")
+        let pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        model.newTerminal()
+        let kept = WorkspaceTab.terminal(try XCTUnwrap(model.current.snapshot.selectedTerminalID))
+        let before = model.current.snapshot.layout
+        model.closeOtherTabs(except: kept, in: pane)
+        XCTAssertTrue(try XCTUnwrap(model.closeOtherTabsRequest).hasUnsavedFiles)
+        XCTAssertEqual(model.current.snapshot.layout, before)
+        model.closeOtherTabsRequest = nil
+        XCTAssertEqual(model.current.snapshot.layout, before)
+        XCTAssertEqual(model.buffers.first { $0.id == original.id }?.text, "Do not lose this draft")
+    }
+
+    func testSaveAndCloseOtherTabsKeepsNewTabsAndUsesOriginalWorkspace() async throws {
+        let original = try XCTUnwrap(model.selectedBuffer)
+        let source = model.current
+        model.updateBufferText(original.id, "Saved before closing")
+        let pane = try XCTUnwrap(source.snapshot.layout?.activePaneID)
+        model.newTerminal()
+        let kept = WorkspaceTab.terminal(try XCTUnwrap(source.snapshot.selectedTerminalID))
+        model.closeOtherTabs(except: kept, in: pane)
+        let request = try XCTUnwrap(model.closeOtherTabsRequest)
+        model.newTerminal()
+        let addedAfterRequest = try XCTUnwrap(source.snapshot.selectedTerminalID)
+        let other = root.appendingPathComponent("another-workspace")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        model.openFolder(other)
+        let destination = model.current
+        let otherLayout = destination.snapshot.layout
+        await model.confirmClosingOtherTabs(request, saveChanges: true)
+        XCTAssertEqual(try String(contentsOfFile: original.path, encoding: .utf8), "Saved before closing")
+        XCTAssertFalse(source.snapshot.buffers.contains { $0.id == original.id })
+        XCTAssertTrue(source.snapshot.terminalIDs.contains(addedAfterRequest))
+        XCTAssertTrue(model.current === destination)
+        XCTAssertEqual(destination.snapshot.layout, otherLayout)
+        XCTAssertEqual(source.snapshot.layout?.panes.first { $0.id == pane }?.selected, kept)
+        XCTAssertEqual(source.snapshot.selectedTerminalID.map(WorkspaceTab.terminal), kept)
+    }
+
+    func testCloseOtherTabsKeepsDirtyFileOpenInAnotherSplit() throws {
+        let file = try XCTUnwrap(model.selectedBuffer)
+        let pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        model.splitTab(.file(file.id), in: pane, placement: .right)
+        model.activatePane(pane)
+        model.newTerminal()
+        let kept = WorkspaceTab.terminal(try XCTUnwrap(model.current.snapshot.selectedTerminalID))
+        model.updateBufferText(file.id, "Shared draft")
+        model.closeOtherTabs(except: kept, in: pane)
+        XCTAssertNil(model.closeOtherTabsRequest)
+        XCTAssertEqual(model.buffers.first { $0.id == file.id }?.text, "Shared draft")
+        XCTAssertEqual(model.current.snapshot.layout?.allTabs.filter { $0 == .file(file.id) }.count, 1)
+    }
+
+    func testFailedSaveDoesNotCloseOtherTabs() async throws {
+        let file = try XCTUnwrap(model.selectedBuffer)
+        model.updateBufferText(file.id, "Unsaved draft")
+        let pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        model.newTerminal()
+        let kept = WorkspaceTab.terminal(try XCTUnwrap(model.current.snapshot.selectedTerminalID))
+        model.closeOtherTabs(except: kept, in: pane)
+        let request = try XCTUnwrap(model.closeOtherTabsRequest)
+        let before = model.current.snapshot.layout
+        try FileManager.default.removeItem(atPath: file.path)
+        try FileManager.default.createDirectory(atPath: file.path, withIntermediateDirectories: true)
+        await model.confirmClosingOtherTabs(request, saveChanges: true)
+        XCTAssertEqual(model.current.snapshot.layout, before)
+        XCTAssertEqual(model.buffers.first { $0.id == file.id }?.text, "Unsaved draft")
+    }
+
+    func testCloseOtherTabsConfirmsWorkingAgentAndDiscardClosesTargets() async throws {
+        let kept = try XCTUnwrap(model.selectedBuffer)
+        let pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        let id = try XCTUnwrap(model.newAgentTerminal(.claude))
+        let session = model.terminal(id, in: model.current)
+        session.running = true
+        session.view.feed(text: "Working (esc to interrupt)\r\n")
+        model.closeOtherTabs(except: .file(kept.id), in: pane)
+        let request = try XCTUnwrap(model.closeOtherTabsRequest)
+        XCTAssertTrue(request.hasWorkingTerminals)
+        XCTAssertTrue(model.current.snapshot.terminalIDs.contains(id))
+        await model.confirmClosingOtherTabs(request, saveChanges: false)
+        XCTAssertFalse(model.current.snapshot.terminalIDs.contains(id))
+        XCTAssertEqual(model.current.snapshot.layout?.panes.first { $0.id == pane }?.tabs, [.file(kept.id)])
+    }
+
+    #if os(macOS)
+    func testCustomMenuFitsRowsAndDismissesBeforeInvokingAction() async throws {
+        var actions: [String] = []
+        let view = CrowActionMenuContent(dismiss: { actions.append("dismiss") }) {
+            Button("Close Tab") { actions.append("close") }
+            Button("Close Other Tabs", systemImage: "xmark.square") { actions.append("others") }
+            Divider()
+            Toggle("Show Hidden Files", isOn: .constant(true))
+        }
+        let hosting = NSHostingView(rootView: view)
+        let size = hosting.fittingSize
+        XCTAssertEqual(size.width, 240, accuracy: 1)
+        XCTAssertLessThan(size.height, 180, "A short menu should not reserve the maximum scrolling height")
+        XCTAssertGreaterThan(size.height, 70)
+        let longMenu = NSHostingView(rootView: CrowActionMenuContent(dismiss: {}) {
+            ForEach(0..<80) { index in Button("Item \(index)") {} }
+        })
+        XCTAssertLessThanOrEqual(longMenu.fittingSize.height, 440)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        // Click the first row through AppKit, as a pointer user would.
+        let point = hosting.convert(NSPoint(x: 60, y: 18), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            NSApp.sendEvent(event)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(actions, ["dismiss", "close"])
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/crow-custom-menu.png"))
+    }
+
+    func testCustomContextMenuRoutesSecondaryClicksToRowWithoutStealingDrags() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let list = CrowContextMenuAnchorView(frame: NSRect(x: 0, y: 0, width: 300, height: 300))
+        list.regionSize = list.bounds.size
+        window.contentView = list
+        let row = CrowContextMenuAnchorView(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
+        row.regionSize = row.bounds.size
+        list.addSubview(row)
+        var rows = 0, backgrounds = 0
+        row.present = { _ in rows += 1 }; list.present = { _ in backgrounds += 1 }
+        func event(_ type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags = [], point: NSPoint? = nil) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point ?? row.convert(NSPoint(x: 12, y: 12), to: nil), modifierFlags: modifiers,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        XCTAssertFalse(CrowContextMenuRouter.shared.route(try event(.leftMouseDown)))
+        XCTAssertFalse(CrowContextMenuRouter.shared.route(try event(.leftMouseDragged)))
+        XCTAssertTrue(CrowContextMenuRouter.shared.route(try event(.rightMouseDown)))
+        XCTAssertEqual(rows, 1); XCTAssertEqual(backgrounds, 0)
+        XCTAssertTrue(CrowContextMenuRouter.shared.route(try event(.leftMouseDown, modifiers: .control)))
+        XCTAssertEqual(rows, 2)
+        XCTAssertTrue(CrowContextMenuRouter.shared.route(try event(.rightMouseDown, point: list.convert(NSPoint(x: 280, y: 280), to: nil))))
+        XCTAssertEqual(backgrounds, 1)
+        row.isHidden = true
+        XCTAssertTrue(CrowContextMenuRouter.shared.route(try event(.rightMouseDown)))
+        XCTAssertEqual(rows, 2); XCTAssertEqual(backgrounds, 2)
+        list.menuEnabled = false
+        XCTAssertFalse(CrowContextMenuRouter.shared.route(try event(.rightMouseDown)))
+    }
+    #endif
+
     override func tearDown() async throws {
         model.shutdown()
         try? FileManager.default.removeItem(at: root)

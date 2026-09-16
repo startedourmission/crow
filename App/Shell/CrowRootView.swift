@@ -67,6 +67,22 @@ struct CrowRootView: View {
                     .keyboardShortcut(.defaultAction)
                 Button("Cancel", role: .cancel) {}
             } message: { _ in Text("The shell and its running commands will be terminated.") }
+        .alert("Close other tabs?", isPresented: Binding(
+            get: { model.closeOtherTabsRequest != nil }, set: { if !$0 { model.closeOtherTabsRequest = nil } }),
+            presenting: model.closeOtherTabsRequest) { request in
+                if request.hasUnsavedFiles {
+                    Button("Save and Close") { Task { await model.confirmClosingOtherTabs(request, saveChanges: true) } }
+                }
+                Button(request.hasUnsavedFiles ? "Discard Changes and Close" : "Close Other Tabs", role: .destructive) {
+                    Task { await model.confirmClosingOtherTabs(request, saveChanges: false) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { request in
+                Text(request.hasUnsavedFiles && request.hasWorkingTerminals
+                     ? "Other tabs in this pane contain unsaved changes and running commands. Closing them will terminate those commands."
+                     : request.hasUnsavedFiles ? "Other tabs in this pane contain unsaved changes."
+                     : "Running commands in the other tabs of this pane will be terminated.")
+            }
         .alert("Remove workspace from list?", isPresented: Binding(
             get: { model.workspaceRemovalRequest != nil },
             set: { if !$0 { model.workspaceRemovalRequest = nil } }), presenting: model.workspaceRemovalRequest) { id in
@@ -435,7 +451,7 @@ private struct PhoneWorkspaceBar: View {
                 Button { keyboard?.show(for: model.compactSurface) } label: { controlIcon("keyboard") }
                     .accessibilityLabel("Show Keyboard").accessibilityIdentifier("crow.phone.keyboard")
             } else {
-                Menu {
+                CrowMenu {
                     sessionMenu
                     generalMenu
                     if keyboardVisible {
@@ -446,8 +462,6 @@ private struct PhoneWorkspaceBar: View {
             }
         }
         .buttonStyle(CrowButtonStyle())
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .foregroundStyle(CrowTheme.accent)
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(CrowTheme.bg1)

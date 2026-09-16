@@ -49,7 +49,7 @@ struct FloatingWorkspaceView: View {
                     }.help(surface.rawValue.capitalized)
                 }
                 MacSnippetButton()
-                Menu {
+                CrowMenu {
                     if model.compactSurface == .terminal {
                         Button("New Terminal") { model.newTerminal() }
                         ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
@@ -66,7 +66,7 @@ struct FloatingWorkspaceView: View {
                     Button("SSH Keys…") { model.sshKeysVisible = true }
                     Button("Settings…") { model.settingsVisible = true }
                 } label: { Image(systemName: "square.grid.2x2").frame(width: 32, height: 36) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .fixedSize()
             }.padding(8).background(CrowTheme.bg1)
         }
         .environment(\.crowPhoneLayout, true).buttonStyle(CrowButtonStyle())

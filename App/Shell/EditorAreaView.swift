@@ -63,10 +63,15 @@ struct EditorAreaView: View {
                 .crowForeground(selected ? CrowTheme.text : CrowTheme.textDim)
             }
             .buttonStyle(CrowButtonStyle())
-            .contextMenu {
+            .crowContextMenu {
                 if sizeClass != .compact {
                     Button("Open in Split") { model.current.snapshot.splitBufferID = buffer.id; model.schedulePersist() }
                 }
+                if let pane = model.current.snapshot.layout?.panes.first(where: { $0.tabs.contains(.file(buffer.id)) }) {
+                    Button("Close Other Tabs", systemImage: "xmark.square") { model.closeOtherTabs(except: .file(buffer.id), in: pane.id) }
+                        .disabled(pane.tabs.count < 2)
+                }
+                Button("Close Tab", systemImage: "xmark") { model.closeBuffer(buffer.id) }
             }
 
             Button {
@@ -634,7 +639,7 @@ private struct WorkspacePaneView: View {
                     else if let tab { scroll.scrollTo(tab.key) }
                 }
             }
-            Menu {
+            CrowMenu {
                 Button("New Tab") { showingNewTab = true }
                 Button("New Terminal Tab") { model.activatePane(pane.id); model.newTerminal() }
                 Button("SSH Command…") { model.sshCommandVisible = true }
@@ -649,7 +654,7 @@ private struct WorkspacePaneView: View {
                     Button("Disconnect") { model.disconnectCurrent() }
                 }
             } label: { PanelActionIcon(symbol: "ellipsis") }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .fixedSize()
             .frame(width: 28, height: 28).help("Pane actions")
             .crowMenuHover()
             .windowDragExcluded()
@@ -721,7 +726,7 @@ private struct WorkspacePaneView: View {
         .overlay(alignment: .bottom) { if selected { CrowTheme.accent.frame(height: 1) } }
         .contentShape(Rectangle())
         .accessibilityIdentifier("crow.tab.\(tab.key)")
-        .contextMenu {
+        .crowContextMenu {
             Button("Split Right") { model.splitTab(tab, in: pane.id, placement: .right) }
             Button("Split Down") { model.splitTab(tab, in: pane.id, placement: .bottom) }
             if let layout = model.current.snapshot.layout {
@@ -734,6 +739,9 @@ private struct WorkspacePaneView: View {
             }
             Divider()
             Button("Close Tab") { model.closeTab(tab, in: pane.id) }
+            Button("Close Other Tabs", systemImage: "xmark.square") { model.closeOtherTabs(except: tab, in: pane.id) }
+                .disabled(pane.tabs.count < 2)
+                .accessibilityIdentifier("crow.tab.close-others")
         }
         #if os(macOS)
         .background { WindowDragExclusion() }

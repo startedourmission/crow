@@ -183,7 +183,7 @@ private struct AutomationEditor: View {
                 HStack {
                     Text("Schedule").font(.caption).foregroundStyle(CrowTheme.textDim)
                     Spacer()
-                    Menu("Presets") {
+                    CrowMenu("Presets") {
                         Button("Every minute") { schedule = "* * * * *" }
                         Button("Every hour") { schedule = "0 * * * *" }
                         Button("Daily at 9:00") { schedule = "0 9 * * *" }

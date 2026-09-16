@@ -38,11 +38,9 @@ struct HostEditorView: View {
                     }
                 }
                 Section {
-                    Picker("Method", selection: $host.authentication) {
-                        Text("Password").tag(SSHAuthenticationKind.password)
-                        Text("SSH Key · Ed25519").tag(SSHAuthenticationKind.ed25519)
-                        Text("SSH Key · RSA").tag(SSHAuthenticationKind.rsa)
-                    }.accessibilityIdentifier("crow.host.authentication")
+                    CrowChoiceMenu(title: "Method", selection: $host.authentication, choices: [
+                        ("Password", .password), ("SSH Key · Ed25519", .ed25519), ("SSH Key · RSA", .rsa)
+                    ]).accessibilityIdentifier("crow.host.authentication")
                     if host.authentication == .password {
                         SecureField("Password", text: $credential.password)
                     } else {
@@ -236,10 +234,9 @@ struct CrowSettingsView: View {
                 }
                 Divider()
                 CrowSettingsRow("Default Markdown view") {
-                    Picker("Default Markdown view", selection: $model.markdownPreviewEnabled) {
-                        Text("Rendered").tag(true)
-                        Text("Source").tag(false)
-                    }.labelsHidden().fixedSize().accessibilityIdentifier("crow.settings.markdown-view")
+                    CrowChoiceMenu(title: "Default Markdown view", selection: $model.markdownPreviewEnabled,
+                        choices: [("Rendered", true), ("Source", false)], showTitle: false)
+                        .fixedSize().accessibilityIdentifier("crow.settings.markdown-view")
                 }
                 Divider()
                 CrowSettingsRow("Internal links & backlinks") {
@@ -263,10 +260,10 @@ struct CrowSettingsView: View {
                 CrowSettingsRow("Show hidden files") { Toggle("Show hidden files", isOn: $model.showHiddenFiles).labelsHidden() }
                 Divider()
                 CrowSettingsRow("Delete moves files to") {
-                    Picker("Delete moves files to", selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 })) {
-                        Text("Recovery Folder").tag(FileDeletionDestination.recovery)
-                        Text("Trash").tag(FileDeletionDestination.trash)
-                    }.labelsHidden().fixedSize().accessibilityIdentifier("crow.settings.delete-destination")
+                    CrowChoiceMenu(title: "Delete moves files to",
+                        selection: Binding(get: { model.settings.effectiveFileDeletionDestination }, set: { model.settings.fileDeletionDestination = $0 }),
+                        choices: [("Recovery Folder", FileDeletionDestination.recovery), ("Trash", .trash)], showTitle: false)
+                        .fixedSize().accessibilityIdentifier("crow.settings.delete-destination")
                 }
             }
             Text("Recovery Folder keeps deleted items in .crow/recovery inside the workspace. Trash uses the file’s computer or storage provider. If trash is unavailable, the file stays in place.")

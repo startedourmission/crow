@@ -37,7 +37,7 @@ struct OpenWithMenu: View {
     private var isRemote: Bool { model.states.first { $0.id == workspaceID }?.snapshot.workspace.isRemote == true }
 
     var body: some View {
-        Menu {
+        CrowMenu {
             let file = URL(fileURLWithPath: path)
             let type = UTType(filenameExtension: file.pathExtension) ?? .data
             let preferred = isRemote ? NSWorkspace.shared.urlForApplication(toOpen: type) : NSWorkspace.shared.urlForApplication(toOpen: file)
@@ -136,7 +136,7 @@ struct EditorFileMenu: View {
     @State private var downloaded = false
 
     var body: some View {
-        Menu {
+        CrowMenu {
             #if os(macOS)
             if let state = model.locate(buffer.id)?.0 {
                 OpenWithMenu(path: buffer.path, workspaceID: state.id)
@@ -151,7 +151,6 @@ struct EditorFileMenu: View {
             if preparing { ProgressView().controlSize(.mini) }
             else { Image(systemName: downloaded ? "checkmark" : "ellipsis") }
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden)
         .fixedSize().buttonStyle(CrowButtonStyle())
         .disabled(preparing)
         .help(downloaded ? "File Downloaded" : "File Actions")

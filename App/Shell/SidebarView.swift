@@ -175,14 +175,14 @@ struct SidebarView: View {
             if explorer.searchVisible {
                 VStack(spacing: 0) {
                 HStack(spacing: 4) {
-                    Menu {
+                    CrowMenu {
                         Button("File names") { selectSearchMode(contents: false) }
                         Button("File contents — contents:") { selectSearchMode(contents: true) }
                     } label: {
                         Text(FileSearchQuery(explorer.query).contents ? "Contents" : "Name")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .menuStyle(.borderlessButton).fixedSize().crowMenuHover()
+                    .fixedSize().crowMenuHover()
                     .accessibilityLabel("Search mode").accessibilityIdentifier("crow.search-mode")
                     TextField("File names or contents: text", text: Bindable(explorer).query)
                         .textFieldStyle(.plain).focused($searchFocused)
@@ -262,7 +262,7 @@ struct SidebarView: View {
             .listRowBackground((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? CrowTheme.fileSelection : Color.clear)
             .accessibilityAddTraits((explorer.selectedPath ?? model.selectedBuffer?.path) == entry.path ? .isSelected : [])
             .accessibilityValue(entry.isDirectory ? (explorer.expanded.contains(entry.path) ? "Expanded" : "Collapsed") : "File")
-            .contextMenu {
+            .crowContextMenu {
                 if !entry.isDirectory {
                     Button("Open", systemImage: "arrow.up.forward.square") { model.openFile(entry) }
                     #if os(macOS)
@@ -300,7 +300,7 @@ struct SidebarView: View {
             .windowDragExcluded()
             #endif
         }
-        .contextMenu { hiddenFilesToggle }
+        .crowContextMenu { hiddenFilesToggle }
         #if os(iOS)
         .listStyle(.plain)
         .contentMargins(.horizontal, 0, for: .scrollContent)

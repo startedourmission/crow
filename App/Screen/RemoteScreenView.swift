@@ -142,10 +142,9 @@ struct RemoteScreenView: View {
     }
 
     private var screenMenu: some View {
-        Menu {
-            Picker("Screen Login", selection: $loginMode) {
-                ForEach(ScreenLoginMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
-            }.disabled(screen.active)
+        CrowMenu {
+            CrowChoiceMenu(title: "Screen Login", selection: $loginMode,
+                choices: ScreenLoginMode.allCases.map { ($0.title, $0) }).disabled(screen.active)
             Divider()
             Toggle("Fit to Window", isOn: Bindable(screen).fitToWindow)
             Toggle("View Only", isOn: Bindable(screen).viewOnly)
@@ -168,7 +167,6 @@ struct RemoteScreenView: View {
         } label: {
             Image(systemName: "ellipsis")
         }
-        .menuIndicator(.hidden)
         .accessibilityLabel("Screen Controls")
         .accessibilityIdentifier("crow.screen.menu")
     }

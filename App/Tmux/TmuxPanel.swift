@@ -161,13 +161,13 @@ struct TmuxPanel: View {
                 Button { createWindow(in: session) } label: {
                     Image(systemName: "plus").frame(width: 22, height: 24).contentShape(Rectangle())
                 }.help("New window").accessibilityLabel("New window in " + session.name)
-                Menu {
+                CrowMenu {
                     Button("New Window") { createWindow(in: session) }
                     Button("Attach") { attach(location) }
                     Button("Rename…") { renaming = session; name = session.name; editing = true }
                     Button("Close Session…", role: .destructive) { closing = .init(location: location, name: session.name) }
                 } label: { Image(systemName: "ellipsis").frame(width: 22, height: 24) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .fixedSize()
             }.padding(8)
                 .background(selectedLocation == location ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
             if !collapsedSessions.contains(session.id) {

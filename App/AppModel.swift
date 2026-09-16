@@ -14,6 +14,16 @@ struct WorkspaceTabDrag: Codable, Equatable {
     let tab: WorkspaceTab
 }
 
+struct CloseOtherTabsRequest {
+    let id = UUID()
+    let workspaceID: WorkspaceID
+    let paneID: UUID
+    let keptTab: WorkspaceTab
+    let tabs: [WorkspaceTab]
+    let hasUnsavedFiles: Bool
+    let hasWorkingTerminals: Bool
+}
+
 struct ExplorerFileDrag: Codable, Equatable {
     let workspaceID: WorkspaceID
     let path: String
@@ -85,6 +95,7 @@ final class AppModel {
     var errorMessage: String?
     var closeRequest: BufferID?
     var terminalCloseRequest: UUID?
+    var closeOtherTabsRequest: CloseOtherTabsRequest?
     var draggedTab: WorkspaceTabDrag?
     var draggedFile: ExplorerFileDrag?
     var workspaceRemovalRequest: WorkspaceID?
@@ -312,23 +323,83 @@ final class AppModel {
         schedulePersist()
     }
     func closeTab(_ tab: WorkspaceTab, in paneID: UUID) {
-        guard current.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
+        closeTab(tab, in: paneID, workspace: current, confirmed: false)
+    }
+    private func closeTab(_ tab: WorkspaceTab, in paneID: UUID, workspace state: WorkspaceState, confirmed: Bool) {
+        guard state.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
         switch tab {
         case .file(let id):
-            if (current.snapshot.layout?.allTabs.filter { $0 == tab }.count ?? 0) > 1 {
-                current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
-            } else { closeBuffer(id) }
-        case .terminal(let id): requestTerminalClose(id)
+            if (state.snapshot.layout?.allTabs.filter { $0 == tab }.count ?? 0) > 1 {
+                state.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
+            } else if confirmed { discardBuffer(id) }
+            else { closeBuffer(id) }
+        case .terminal(let id):
+            if confirmed { closeTerminal(id) } else { requestTerminalClose(id) }
         case .browser(let id):
-            current.snapshot.layout?.remove(tab, from: paneID)
-            if current.snapshot.layout?.allTabs.contains(tab) != true {
-                current.browsers.removeValue(forKey: id)?.close()
-                current.snapshot.browserAddresses.removeValue(forKey: id)
+            state.snapshot.layout?.remove(tab, from: paneID)
+            if state.snapshot.layout?.allTabs.contains(tab) != true {
+                state.browsers.removeValue(forKey: id)?.close()
+                state.snapshot.browserAddresses.removeValue(forKey: id)
             }
             schedulePersist()
         case .start:
-            current.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
+            state.snapshot.layout?.remove(tab, from: paneID); schedulePersist()
         }
+    }
+
+    func closeOtherTabs(except tab: WorkspaceTab, in paneID: UUID) {
+        let state = current
+        guard let pane = state.snapshot.layout?.panes.first(where: { $0.id == paneID }), pane.tabs.contains(tab) else { return }
+        let tabs = pane.tabs.filter { $0 != tab }
+        guard !tabs.isEmpty else { return }
+        let dirty = tabs.contains { candidate in
+            guard case .file(let id) = candidate else { return false }
+            return state.snapshot.buffers.first { $0.id == id }?.isDirty == true &&
+                state.snapshot.layout?.allTabs.filter { $0 == candidate }.count == 1
+        }
+        let working = tabs.contains { candidate in
+            guard case .terminal(let id) = candidate, let session = state.terminals[id] else { return false }
+            session.updateAgentActivity(); return session.isWorking
+        }
+        let request = CloseOtherTabsRequest(workspaceID: state.id, paneID: paneID, keptTab: tab, tabs: tabs,
+                                           hasUnsavedFiles: dirty, hasWorkingTerminals: working)
+        if dirty || working { closeOtherTabsRequest = request }
+        else { finishClosingOtherTabs(request, in: state) }
+    }
+
+    func confirmClosingOtherTabs(_ request: CloseOtherTabsRequest, saveChanges: Bool) async {
+        guard let state = states.first(where: { $0.id == request.workspaceID }),
+              state.snapshot.layout?.panes.contains(where: { $0.id == request.paneID && $0.tabs.contains(request.keptTab) }) == true else { return }
+        if saveChanges {
+            for tab in request.tabs {
+                guard state.snapshot.layout?.panes.first(where: { $0.id == request.paneID })?.tabs.contains(tab) == true,
+                      case .file(let id) = tab, state.snapshot.buffers.first(where: { $0.id == id })?.isDirty == true,
+                      state.snapshot.layout?.allTabs.filter({ $0 == tab }).count == 1 else { continue }
+                guard await saveBuffer(id) else { return }
+            }
+            // Edits can arrive while an SSH save is in flight. Never discard those.
+            guard !request.tabs.contains(where: { tab in
+                guard case .file(let id) = tab else { return false }
+                return state.snapshot.buffers.first(where: { $0.id == id })?.isDirty == true &&
+                    state.snapshot.layout?.allTabs.filter({ $0 == tab }).count == 1
+            }) else { report(CommandError("Files changed while saving. Review your edits and try closing again.")); return }
+        }
+        finishClosingOtherTabs(request, in: state)
+    }
+
+    private func finishClosingOtherTabs(_ request: CloseOtherTabsRequest, in state: WorkspaceState) {
+        guard states.contains(where: { $0 === state }),
+              state.snapshot.layout?.panes.contains(where: { $0.id == request.paneID && $0.tabs.contains(request.keptTab) }) == true else { return }
+        for tab in request.tabs { closeTab(tab, in: request.paneID, workspace: state, confirmed: true) }
+        // Keep the clicked tab selected, even if another tab was active originally.
+        state.snapshot.layout?.select(request.keptTab, in: request.paneID)
+        switch request.keptTab {
+        case .file(let id): state.snapshot.selectedBufferID = id
+        case .terminal(let id): state.snapshot.selectedTerminalID = id
+        case .start, .browser: break
+        }
+        if closeOtherTabsRequest?.id == request.id { closeOtherTabsRequest = nil }
+        schedulePersist()
     }
     @discardableResult func moveTab(_ drag: WorkspaceTabDrag, to paneID: UUID,
         placement: PanePlacement, before: WorkspaceTab? = nil) -> Bool {

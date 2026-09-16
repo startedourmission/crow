@@ -40,6 +40,14 @@ struct GitCloneSheet: View {
         #endif
     }
 
+    private var deviceChoices: [(String, String)] {
+        var choices: [(String, String)] = []
+        #if os(macOS)
+        choices.append(("Local", "local"))
+        #endif
+        return choices + connectedHosts.map { ($0.userAtHost, $0.id.rawValue.uuidString) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Clone Git Repository").font(.title3.weight(.semibold))
@@ -47,12 +55,8 @@ struct GitCloneSheet: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     caption("Device")
-                    Picker("Device", selection: $host) {
-                        #if os(macOS)
-                        Text("Local").tag("local")
-                        #endif
-                        ForEach(connectedHosts) { item in Text(item.userAtHost).tag(item.id.rawValue.uuidString) }
-                    }.labelsHidden().pickerStyle(.menu).accessibilityIdentifier("crow.clone.device")
+                    CrowChoiceMenu(title: "Device", selection: $host, choices: deviceChoices, showTitle: false)
+                        .accessibilityIdentifier("crow.clone.device")
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     caption("Repository URL")
@@ -385,7 +389,7 @@ struct AgentWorkspaceBrowser: View {
     }
 
     private var addWorkspaceMenu: some View {
-        Menu {
+        CrowMenu {
             Button("Clone Git Repository…", systemImage: "arrow.down.to.line") {
                 cloneHost = model.current.snapshot.workspace.hostID?.rawValue.uuidString ?? "local"
             }.accessibilityIdentifier("crow.workspaces.clone")
@@ -399,7 +403,7 @@ struct AgentWorkspaceBrowser: View {
             }
             Button("Add SSH Host…", systemImage: "plus") { model.sshCommandVisible = true }
         } label: { Image(systemName: "plus").frame(width: 24, height: 24).contentShape(Rectangle()) }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .fixedSize()
             .accessibilityLabel("Add workspace").accessibilityIdentifier("crow.workspaces.add").windowDragExcluded()
     }
 
@@ -544,7 +548,7 @@ struct AgentWorkspaceBrowser: View {
                 }.accessibilityIdentifier("crow.workspaces.select." + state.id.rawValue.uuidString)
                 newSessionMenu(state)
             }.font(.system(size: 12)).padding(.horizontal, 6)
-                .contextMenu {
+                .crowContextMenu {
                     Button("Open Workspace") { model.activateWorkspace(state.id); onOpen?() }
                     Button("Copy Path") { copyPath(state.snapshot.rootPath) }
                     #if os(macOS)
@@ -634,7 +638,7 @@ struct AgentWorkspaceBrowser: View {
             }.buttonStyle(.plain).help("Close terminal").accessibilityLabel("Close " + title)
                 .accessibilityIdentifier("crow.agents.close." + id.uuidString)
         }.background(selected ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
-            .contextMenu {
+            .crowContextMenu {
                 if let agent {
                     Button("Rename…") { name = agent.title; renaming = .init(workspaceID: state.id, terminalID: id) }
                 }

@@ -299,11 +299,10 @@ struct SnippetsView: View {
                                 Text(snippet.text).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }.buttonStyle(.plain)
-                        Menu {
+                        CrowMenu {
                             Button("Edit") { editing = snippet }
                             Button("Delete", role: .destructive) { model.settings.textSnippets?.removeAll { $0.id == snippet.id } }
                         } label: { Image(systemName: "ellipsis").frame(width: 36, height: 44) }
-                            .menuStyle(.borderlessButton).menuIndicator(.hidden)
                             .buttonStyle(.plain).fixedSize()
                             .accessibilityLabel("Options for " + snippet.name)
                     }

@@ -108,6 +108,163 @@ struct CrowPopupButtonStyle: ButtonStyle {
     }
 }
 
+private struct CrowMenuDismissKey: EnvironmentKey {
+    static let defaultValue: (@MainActor () -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var crowMenuDismiss: (@MainActor () -> Void)? {
+        get { self[CrowMenuDismissKey.self] }
+        set { self[CrowMenuDismissKey.self] = newValue }
+    }
+}
+
+/// Action menus share the compact popover appearance, including nested menus.
+struct CrowMenu<Label: View, Content: View>: View {
+    @Environment(\.crowMenuDismiss) private var dismissParent
+    @State private var presented = false
+    private let content: Content
+    private let label: Label
+
+    init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
+        self.content = content(); self.label = label()
+    }
+
+    init(_ title: String, @ViewBuilder content: () -> Content) where Label == Text {
+        self.content = content(); self.label = Text(title)
+    }
+
+    var body: some View {
+        Group {
+            if dismissParent != nil {
+                Button { presented.toggle() } label: {
+                    HStack(spacing: 8) {
+                        label
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.system(size: 9))
+                    }
+                }.buttonStyle(CrowPopupButtonStyle())
+            } else {
+                Button { presented.toggle() } label: { label }.buttonStyle(CrowButtonStyle())
+            }
+        }
+        .popover(isPresented: $presented, arrowEdge: dismissParent == nil ? .bottom : .trailing) {
+            CrowActionMenuContent {
+                presented = false; dismissParent?()
+            } content: { content }
+        }
+        .windowDragExcluded()
+    }
+}
+
+struct CrowActionMenuContent<Content: View>: View {
+    let dismiss: @MainActor () -> Void
+    @ViewBuilder var content: Content
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            rows
+            ScrollView { rows }
+        }
+        .frame(width: 240).frame(maxHeight: 440).fixedSize(horizontal: false, vertical: true)
+        .background(CrowTheme.bg0).foregroundStyle(CrowTheme.text)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .environment(\.crowMenuDismiss, dismiss)
+        .buttonStyle(CrowMenuActionStyle())
+        .toggleStyle(CrowMenuToggleStyle())
+        .labelStyle(.titleAndIcon).font(.system(size: 12))
+        .presentationCompactAdaptation(.popover)
+        #if os(macOS)
+        .onExitCommand(perform: dismiss)
+        #else
+        .onKeyPress(.escape) { dismiss(); return .handled }
+        #endif
+        .windowDragExcluded()
+    }
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 1) { content }.padding(5)
+    }
+}
+
+struct CrowChoiceMenu<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let choices: [(String, Value)]
+    var showTitle = true
+    @Environment(\.crowMenuDismiss) private var dismissParent
+
+    var body: some View {
+        CrowMenu {
+            ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                Button { selection = choice.1 } label: {
+                    HStack(spacing: 8) {
+                        Text(choice.0)
+                        Spacer(minLength: 0)
+                        if selection == choice.1 { Image(systemName: "checkmark").font(.system(size: 10)) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if showTitle { Text(title).foregroundStyle(CrowTheme.textDim) }
+                Text(choices.first { $0.1 == selection }?.0 ?? "Select…").lineLimit(1)
+                if dismissParent == nil { Image(systemName: "chevron.up.chevron.down").font(.system(size: 9)) }
+            }.padding(.vertical, 3).contentShape(Rectangle())
+        }.accessibilityLabel(title)
+    }
+}
+
+/// Closing before triggering also dismisses the parent of a submenu action.
+private struct CrowMenuActionStyle: PrimitiveButtonStyle {
+    @Environment(\.crowMenuDismiss) private var dismiss
+    func makeBody(configuration: Configuration) -> some View {
+        Button(role: configuration.role) {
+            dismiss?(); configuration.trigger()
+        } label: { configuration.label }
+        .buttonStyle(CrowPopupButtonStyle())
+    }
+}
+
+private struct CrowMenuToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.label
+            Spacer(minLength: 0)
+            Toggle(isOn: configuration.$isOn) { configuration.label }.labelsHidden().toggleStyle(.switch).controlSize(.mini)
+        }.padding(.horizontal, 8).padding(.vertical, 4)
+    }
+}
+
+extension View {
+    func crowContextMenu<MenuContent: View>(@ViewBuilder content: () -> MenuContent) -> some View {
+        modifier(CrowContextMenuModifier(menu: content()))
+    }
+}
+
+private struct CrowContextMenuModifier<MenuContent: View>: ViewModifier {
+    @Environment(\.isEnabled) private var enabled
+    @State private var presented = false
+    @State private var location: CGPoint = .zero
+    let menu: MenuContent
+    func body(content: Content) -> some View {
+        content
+            #if os(macOS)
+            .background {
+                GeometryReader { geometry in
+                    CrowContextMenuAnchor(size: geometry.size, enabled: enabled) { point in
+                        location = point; presented = true
+                    }
+                }.allowsHitTesting(false)
+            }
+            #else
+            .onLongPressGesture { if enabled { presented = true } }
+            #endif
+            .accessibilityAction(named: Text("Show actions")) { if enabled { presented = true } }
+            .popover(isPresented: $presented, attachmentAnchor: .rect(.rect(CGRect(origin: location, size: CGSize(width: 1, height: 1)))), arrowEdge: .bottom) {
+                CrowActionMenuContent(dismiss: { presented = false }) { menu }
+            }
+    }
+}
+
 private struct CrowControlHoveredKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -192,6 +349,56 @@ private struct CrowControlFeedback: ViewModifier {
 
 #if os(macOS)
 import AppKit
+
+private struct CrowContextMenuAnchor: NSViewRepresentable {
+    let size: CGSize
+    let enabled: Bool
+    let present: (CGPoint) -> Void
+    func makeNSView(context: Context) -> CrowContextMenuAnchorView { CrowContextMenuAnchorView() }
+    func updateNSView(_ view: CrowContextMenuAnchorView, context: Context) {
+        view.regionSize = size; view.menuEnabled = enabled; view.present = present
+    }
+}
+
+final class CrowContextMenuAnchorView: NSView {
+    var regionSize: CGSize = .zero
+    var menuEnabled = true
+    var present: (CGPoint) -> Void = { _ in }
+    override var isFlipped: Bool { true }
+    var activeRect: NSRect { NSRect(origin: bounds.origin, size: regionSize).intersection(bounds).intersection(visibleRect) }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        CrowContextMenuRouter.shared.register(self)
+    }
+}
+
+/// Local secondary clicks only. Native file/tab drag overlays keep normal clicks
+/// and drags; a row's context menu wins over its enclosing list's menu.
+@MainActor final class CrowContextMenuRouter {
+    static let shared = CrowContextMenuRouter()
+    private let anchors = NSHashTable<CrowContextMenuAnchorView>.weakObjects()
+    private var monitor: Any?
+    func register(_ view: CrowContextMenuAnchorView) {
+        if view.window != nil { anchors.add(view) } else { anchors.remove(view) }
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak self] event in
+            let consumed = MainActor.assumeIsolated { self?.route(event) == true }
+            return consumed ? nil : event
+        }
+    }
+    @discardableResult func route(_ event: NSEvent) -> Bool {
+        guard event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)),
+              let window = event.window, window.attachedSheet == nil else { return false }
+        let candidates = anchors.allObjects.filter {
+            $0.window === window && $0.menuEnabled && !$0.isHiddenOrHasHiddenAncestor &&
+                $0.activeRect.contains($0.convert(event.locationInWindow, from: nil))
+        }
+        guard let anchor = candidates.min(by: { $0.activeRect.width * $0.activeRect.height < $1.activeRect.width * $1.activeRect.height }) else { return false }
+        anchor.present(anchor.convert(event.locationInWindow, from: nil))
+        return true
+    }
+}
 
 private struct CrowHoverTracking: NSViewRepresentable {
     let size: CGSize

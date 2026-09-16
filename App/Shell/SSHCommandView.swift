@@ -14,6 +14,13 @@ struct SSHCommandView: View {
     @State private var choosingKey = false
     @State private var identityPath = ""
     @FocusState private var focused: Bool
+    private var authenticationChoices: [(String, String)] {
+        var choices = [("Automatic · SSH config / saved credentials", "auto"), ("Password", "password"), ("Saved SSH Key", "key")]
+        #if os(macOS)
+        choices.append(("Private Key File", "file"))
+        #endif
+        return choices
+    }
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
@@ -25,20 +32,12 @@ struct SSHCommandView: View {
                     .textInputAutocapitalization(.never)
                     #endif
                     .onSubmit(connect)
-                Picker("Authentication", selection: $authentication) {
-                    Text("Automatic · SSH config / saved credentials").tag("auto")
-                    Text("Password").tag("password")
-                    Text("Saved SSH Key").tag("key")
-                    #if os(macOS)
-                    Text("Private Key File").tag("file")
-                    #endif
-                }.pickerStyle(.menu).accessibilityIdentifier("crow.ssh.authentication")
+                CrowChoiceMenu(title: "Authentication", selection: $authentication, choices: authenticationChoices)
+                    .accessibilityIdentifier("crow.ssh.authentication")
                 if authentication == "key" {
                     HStack {
-                        Picker("SSH Key", selection: $selectedKey) {
-                            Text("Select a key").tag(nil as UUID?)
-                            ForEach(identities) { key in Text(key.name).tag(Optional(key.id)) }
-                        }.pickerStyle(.menu)
+                        CrowChoiceMenu(title: "SSH Key", selection: $selectedKey,
+                            choices: [("Select a key", nil as UUID?)] + identities.map { ($0.name, Optional($0.id)) })
                         Button("Manage Keys…") { choosingKey = true }
                     }
                 }

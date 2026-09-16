@@ -5,7 +5,6 @@ struct TerminalPanelView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.crowPhoneLayout) private var phoneLayout
-    @State private var closeTerminalID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,11 +23,6 @@ struct TerminalPanelView: View {
             }
         }
         .background(CrowTheme.bg0)
-        .alert("Close this terminal?", isPresented: Binding(get: { closeTerminalID != nil }, set: { if !$0 { closeTerminalID = nil } }), presenting: closeTerminalID) { id in
-            Button("Close Terminal", role: .destructive) { model.closeTerminal(id) }
-                .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in Text("The shell and its running commands will be terminated.") }
     }
 
     private func terminal(_ id: UUID) -> some View {
@@ -59,14 +53,20 @@ struct TerminalPanelView: View {
                             } else { Text("\(index + 1)") }
                         }
                             .crowForeground(id == model.current.snapshot.selectedTerminalID ? CrowTheme.accent : CrowTheme.textDim)
-                            .contextMenu { Button("Close Terminal…", role: .destructive) { closeTerminalID = id } }
+                            .crowContextMenu {
+                                Button("Close Terminal", role: .destructive) { model.requestTerminalClose(id) }
+                                if let pane = model.current.snapshot.layout?.panes.first(where: { $0.tabs.contains(.terminal(id)) }) {
+                                    Button("Close Other Tabs", systemImage: "xmark.square") { model.closeOtherTabs(except: .terminal(id), in: pane.id) }
+                                        .disabled(pane.tabs.count < 2)
+                                }
+                            }
                     }
                 }
             }
             Spacer()
             Button { model.sshCommandVisible = true } label: { Image(systemName: "network.badge.shield.half.filled") }.help("SSH Command")
             if model.selectedWorkspace.isRemote {
-                Menu {
+                CrowMenu {
                     Button("Reconnect") { model.reconnectCurrent() }
                     Button("Disconnect") { model.disconnectCurrent() }
                 } label: { Image(systemName: "network") }.fixedSize().crowMenuHover()
@@ -79,7 +79,7 @@ struct TerminalPanelView: View {
                     label: { Image(systemName: "rectangle.split.2x1") }.help("Split Terminal")
             }
             Button { model.newTerminal() } label: { Image(systemName: "plus") }.help("New Terminal")
-            Button { closeTerminalID = model.current.snapshot.selectedTerminalID } label: { Image(systemName: "xmark") }
+            Button { model.requestTerminalClose(model.current.snapshot.selectedTerminalID) } label: { Image(systemName: "xmark") }
                 .help("Close Terminal")
         }
         .padding(.horizontal, 10)
