@@ -47,6 +47,24 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertTrue(result.sessions.isEmpty, "Other folders' conversations must not appear in this workspace")
     }
 
+    @MainActor func testBundledSkillsReaderUsesRequestedDirectoryAndDecodesProvider() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-skills-" + UUID().uuidString)
+        let project = root.appendingPathComponent("project")
+        let skill = project.appendingPathComponent(".claude/skills/crow-fixture/SKILL.md")
+        try FileManager.default.createDirectory(at: skill.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: project.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try "---\nname: crow-fixture\ndescription: Fixture for the focused directory\n---\nBody".write(to: skill, atomically: true, encoding: .utf8)
+        let model = AppModel(vaultURL: root.appendingPathComponent("vault"))
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let data = try await AgentHistoryService.run(["action": "skills", "workspace": project.path], in: model.current, operation: "Agent skills")
+        let result = try JSONDecoder().decode(AgentSkillsResult.self, from: data)
+        let entry = try XCTUnwrap(result.skills.first { $0.name == "crow-fixture" })
+        XCTAssertEqual(entry.provider, .claude)
+        XCTAssertEqual(entry.scope, "Project")
+        XCTAssertEqual(URL(fileURLWithPath: entry.path).resolvingSymlinksInPath(), skill.resolvingSymlinksInPath())
+        XCTAssertEqual(entry.description, "Fixture for the focused directory")
+    }
+
     @MainActor func testResourceSamplingAndSleepAssertionLifecycle() {
         let status = DeviceStatusState()
         status.sampleResources()

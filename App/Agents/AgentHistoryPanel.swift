@@ -25,24 +25,24 @@ struct AgentHistoryResult: Decodable {
 }
 
 @MainActor enum AgentHistoryService {
-    static func run(_ request: [String: Any], in state: WorkspaceState) async throws -> Data {
+    static func run(_ request: [String: Any], in state: WorkspaceState, operation: String = "Agent history") async throws -> Data {
         guard let url = Bundle.main.url(forResource: "agent-history", withExtension: "py") else { throw CommandError("The agent history reader is missing from this build.") }
         let script = try String(contentsOf: url, encoding: .utf8)
         let json = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
-        let command = TerminalCommand.environment + "command -v python3 >/dev/null 2>&1 || { echo 'Python 3 is required on this host to read CLI session history.' >&2; exit 1; }; exec python3 -c " + TerminalCommand.quote(script) + " " + TerminalCommand.quote(json)
+        let command = TerminalCommand.environment + "command -v python3 >/dev/null 2>&1 || { echo 'Python 3 is required on this host to read agent data.' >&2; exit 1; }; exec python3 -c " + TerminalCommand.quote(script) + " " + TerminalCommand.quote(json)
         let output: String
         #if os(macOS)
         if !state.snapshot.workspace.isRemote {
-            output = try await ReverseSSHCommand.run("/bin/sh", ["-c", command], operation: "Agent history")
+            output = try await ReverseSSHCommand.run("/bin/sh", ["-c", command], operation: operation)
         } else if let ssh = state.systemSSH, state.remote?.isConnected == true {
-            output = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + ssh.multiplexArguments + ["sh -c " + TerminalCommand.quote(command)], operation: "Agent history")
+            output = try await ReverseSSHCommand.run("/usr/bin/ssh", ["-T"] + ssh.multiplexArguments + ["sh -c " + TerminalCommand.quote(command)], operation: operation)
         } else {
             guard let remote = state.remote, remote.isConnected else { throw FileFailure.disconnected }
-            output = try await remote.workspaceCommand(command, operation: "Agent history")
+            output = try await remote.workspaceCommand(command, operation: operation)
         }
         #else
-        guard state.snapshot.workspace.isRemote, let remote = state.remote, remote.isConnected else { throw CommandError("Select a connected SSH host to read its CLI sessions.") }
-        output = try await remote.workspaceCommand(command, operation: "Agent history")
+        guard state.snapshot.workspace.isRemote, let remote = state.remote, remote.isConnected else { throw CommandError("Select a connected SSH host to read its agent data.") }
+        output = try await remote.workspaceCommand(command, operation: operation)
         #endif
         return Data(output.utf8)
     }
@@ -183,6 +183,114 @@ struct AgentHistoryPanel: View {
                 try await AgentHistoryService.delete(entry, in: state, workspacePath: path)
                 if state === loadedState, loadedPath == path { entries.removeAll { $0.key == entry.key }; refreshID += 1 }
             } catch { if state === loadedState, loadedPath == path { self.error = error.localizedDescription } }
+        }
+    }
+}
+
+struct AgentSkillEntry: Decodable, Identifiable {
+    let provider: AgentProvider
+    let name: String
+    let description: String
+    let path: String
+    let scope: String
+    var id: String { provider.rawValue + ":" + path }
+}
+
+struct AgentSkillsResult: Decodable {
+    let skills: [AgentSkillEntry]
+    let warnings: [String]
+}
+
+struct AgentSkillsPanel: View {
+    @Environment(AppModel.self) private var model
+    @State private var entries: [AgentSkillEntry] = []
+    @State private var warnings: [String] = []
+    @State private var search = ""
+    @State private var loading = false
+    @State private var error: String?
+    @State private var refreshID = 0
+    @State private var loadedScope = ""
+    private var scope: String {
+        "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(refreshID)"
+    }
+    private var visibleEntries: [AgentSkillEntry] {
+        guard loadedScope == scope else { return [] }
+        return entries.filter { search.isEmpty || ($0.name + " " + $0.description + " " + $0.provider.title).localizedCaseInsensitiveContains(search) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(model.workspaceFolderName(model.current.agentHistoryPath))
+                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    .help(model.current.agentHistoryPath)
+                Spacer(minLength: 0)
+                if loading { ProgressView().controlSize(.small) }
+                Button { refreshID += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
+                    .buttonStyle(CrowButtonStyle()).disabled(loading)
+                    .help("Refresh skills").accessibilityLabel("Refresh skills")
+                    .accessibilityIdentifier("crow.skills.refresh")
+            }.padding(.horizontal, 12).padding(.top, 12)
+            TextField("Search skills", text: $search).textFieldStyle(.roundedBorder).padding(.horizontal, 12)
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled).padding(.horizontal, 12)
+            }
+            ForEach(warnings, id: \.self) {
+                Text($0).font(.caption).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12)
+            }
+            if visibleEntries.isEmpty && !loading && error == nil {
+                Text(search.isEmpty ? "No skills found for this folder." : "No matching skills.")
+                    .font(.system(size: 12)).foregroundStyle(CrowTheme.textDim).padding(12)
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(visibleEntries) { entry in
+                        Button {
+                            guard loadedScope == scope else { return }
+                            model.openFile(FileEntry(name: "SKILL.md", path: entry.path, isDirectory: false))
+                        } label: {
+                            HStack(alignment: .top, spacing: 8) {
+                                AgentProviderIcon(provider: entry.provider, size: 14).padding(.top, 1)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text(entry.name).font(.system(size: 12)).lineLimit(2)
+                                        Spacer(minLength: 0)
+                                        Text(entry.scope).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                                    }
+                                    if !entry.description.isEmpty {
+                                        Text(entry.description).font(.system(size: 11))
+                                            .foregroundStyle(CrowTheme.textDim).lineLimit(2)
+                                    }
+                                }
+                            }
+                            .multilineTextAlignment(.leading).padding(.horizontal, 8).padding(.vertical, 7)
+                            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(CrowButtonStyle())
+                        .help("\(entry.provider.title) · \(entry.path)")
+                        .accessibilityLabel("\(entry.provider.title): \(entry.name), \(entry.scope)")
+                    }
+                }.padding(.horizontal, 4).padding(.bottom, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .windowDragExcluded().accessibilityIdentifier("crow.skills.panel")
+        .task(id: scope) {
+            let requestScope = scope, state = model.current, path = model.current.agentHistoryPath
+            entries = []; warnings = []; error = nil; loading = true; loadedScope = ""
+            do {
+                // Debounce prompt/cwd updates; no scanner or agent process stays running.
+                try await Task.sleep(for: .milliseconds(180))
+                let data = try await AgentHistoryService.run(["action": "skills", "workspace": path], in: state, operation: "Agent skills")
+                let result = try JSONDecoder().decode(AgentSkillsResult.self, from: data)
+                try Task.checkCancellation()
+                guard scope == requestScope else { return }
+                entries = result.skills; warnings = result.warnings; loadedScope = requestScope
+            } catch {
+                guard !Task.isCancelled, scope == requestScope else { return }
+                self.error = error.localizedDescription
+            }
+            loading = false
         }
     }
 }

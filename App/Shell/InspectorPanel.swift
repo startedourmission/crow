@@ -24,7 +24,7 @@ struct InspectorPanel: View {
     }
 
     private var buffer: OpenBuffer? { model.inspectedBuffer }
-    private let tabs = ["Files", "Agents", "Summary", "Git"]
+    private let tabs = ["Files", "Agents", "Skills", "Summary", "Git"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +35,7 @@ struct InspectorPanel: View {
                             if item == "Git" {
                                 GitBranchIcon(selected: tab == item)
                             } else {
-                                Image(systemName: item == "Files" ? "folder" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
+                                Image(systemName: item == "Files" ? "folder" : item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
                             }
                         }
                             .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
@@ -58,6 +58,7 @@ struct InspectorPanel: View {
             CrowDivider()
             if tab == "Files" { SidebarView(filesOnly: true) }
             else if tab == "Agents" { AgentHistoryPanel() }
+            else if tab == "Skills" { AgentSkillsPanel() }
             else if tab == "Summary" { summary }
             else { git }
         }

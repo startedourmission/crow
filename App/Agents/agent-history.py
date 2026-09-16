@@ -260,10 +260,169 @@ def delete_session(workspace, expected):
     return {"deleted": True}
 
 
+def skill_metadata(path):
+    """Read display metadata only. Never evaluate YAML tags or skill commands."""
+    with open(path, encoding="utf-8-sig", errors="replace") as stream:
+        lines = stream.read(65536).splitlines()
+    values = {}
+    if not lines or lines[0].strip() != "---":
+        return values
+    for index, line in enumerate(lines[1:], 1):
+        if line.strip() in ("---", "..."):
+            break
+        match = re.match(r"^(name|description):\s*(.*)$", line)
+        if not match:
+            continue
+        key, value = match.groups()
+        if value.startswith(("|", ">")) or not value:
+            parts = []
+            for continuation in lines[index + 1:]:
+                if continuation and not continuation[0].isspace():
+                    break
+                parts.append(continuation.strip())
+            value = " ".join(parts)
+        elif value.startswith('"') and value.endswith('"'):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                value = value[1:-1]
+        elif value.startswith("'") and value.endswith("'"):
+            value = value[1:-1].replace("''", "'")
+        else:
+            value = re.split(r"\s+#", value, maxsplit=1)[0]
+        values[key] = value[:2000]
+    return values
+
+
+def skill_project_directories(workspace):
+    """Nearest directory first, stopping at the Git/worktree boundary."""
+    directory = pathlib.Path(canonical(workspace))
+    directories = []
+    for _ in range(64):
+        directories.append(directory)
+        if (directory / ".git").exists() or directory == directory.parent:
+            break
+        directory = directory.parent
+    return directories
+
+
+def skill_json(path, warnings):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            value = json.loads(stream.read(2 * 1024 * 1024))
+        return value if isinstance(value, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        warnings.append("Could not read skill settings: " + str(path))
+        return {}
+
+
+def skill_files(root, provider, scope, warnings, prefix=""):
+    result = []
+    try:
+        # One level only: do not crawl the workspace or plugin cache.
+        with os.scandir(root) as entries:
+            for index, entry in enumerate(entries):
+                if index >= 1000:
+                    warnings.append("Skill folder limit reached: " + str(root))
+                    break
+                if entry.name.startswith(".") or entry.name == "synced":
+                    continue
+                path = pathlib.Path(entry.path) / "SKILL.md"
+                if not path.is_file():
+                    continue
+                try:
+                    metadata = skill_metadata(path)
+                    result.append({"provider": provider, "name": prefix + (metadata.get("name") or entry.name),
+                                   "description": metadata.get("description", ""), "path": canonical(path), "scope": scope})
+                except OSError:
+                    warnings.append("Could not read skill: " + str(path))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        warnings.append("Could not read skill folder: " + str(root))
+    return sorted(result, key=lambda item: item["name"].casefold())
+
+
+def claude_skills(workspace, warnings):
+    home = homes()["claude"]
+    directories = skill_project_directories(workspace)
+    enabled, overrides = {}, {}
+    settings_paths = [home / "settings.json"]
+    for directory in reversed(directories):
+        settings_paths.extend([directory / ".claude/settings.json", directory / ".claude/settings.local.json"])
+    managed = pathlib.Path("/Library/Application Support/ClaudeCode" if sys.platform == "darwin" else "/etc/claude-code")
+    settings_paths.append(managed / "managed-settings.json")
+    for path in settings_paths:
+        settings = skill_json(path, warnings)
+        for key, target in (("enabledPlugins", enabled), ("skillOverrides", overrides)):
+            if isinstance(settings.get(key), dict):
+                target.update(settings[key])
+    # Personal skills take precedence over project skills; nested project skills
+    # may share a name. Preserve both paths rather than silently dropping one.
+    result = skill_files(managed / "skills", "claude", "Managed", warnings)
+    managed_names = {item["name"] for item in result}
+    result += [item for item in skill_files(home / "skills", "claude", "User", warnings) if item["name"] not in managed_names]
+    global_names = {item["name"] for item in result}
+    for directory in directories:
+        result += [item for item in skill_files(directory / ".claude/skills", "claude", "Project", warnings)
+                   if item["name"] not in global_names]
+    result = [item for item in result if overrides.get(item["name"]) != "off"]
+    installed = skill_json(home / "plugins/installed_plugins.json", warnings).get("plugins", {})
+    if isinstance(installed, dict):
+        for plugin, installations in list(installed.items())[:500]:
+            if enabled.get(plugin) is not True or not isinstance(installations, list):
+                continue
+            eligible = [item for item in installations if isinstance(item, dict)
+                        and (item.get("scope") in ("user", "managed")
+                             or (item.get("scope") in ("project", "local") and item.get("projectPath")
+                                 and canonical(item["projectPath"]) in {str(d) for d in directories}))]
+            eligible.sort(key=lambda item: {"local": 0, "project": 1, "user": 2, "managed": 3}.get(item.get("scope"), 4))
+            if eligible and isinstance(eligible[0].get("installPath"), str):
+                result += skill_files(pathlib.Path(eligible[0]["installPath"]) / "skills", "claude", "Plugin", warnings,
+                                      prefix=plugin.split("@")[0] + ":")
+    return result
+
+
+def list_skills(workspace):
+    warnings = []
+    result = claude_skills(workspace, warnings)
+    try:
+        response = codex_rpc("skills/list", {"cwds": [workspace], "forceReload": True})
+        for group in response.get("data", []):
+            if canonical(group.get("cwd", "")) != canonical(workspace):
+                continue
+            for item in group.get("skills", [])[:1000]:
+                if item.get("enabled") is False or not isinstance(item.get("path"), str):
+                    continue
+                interface = item.get("interface") or {}
+                result.append({"provider": "codex", "name": interface.get("displayName") or item.get("name") or pathlib.Path(item["path"]).parent.name,
+                               "description": interface.get("shortDescription") or item.get("description") or "",
+                               "path": item["path"], "scope": "Plugin" if item.get("pluginId") else
+                               {"repo": "Project", "user": "User", "system": "System", "admin": "Managed"}.get(item.get("scope"), "Project")})
+            for error in group.get("errors", []):
+                warnings.append("Codex: " + str(error.get("message", "Could not load a skill.")))
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        warnings.append("Codex skill discovery unavailable: " + str(error))
+    seen = set()
+    unique = []
+    for item in sorted(result, key=lambda item: (item["provider"], item["name"].casefold(), item["path"])):
+        key = (item["provider"], canonical(item["path"]))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    if len(unique) > 500:
+        warnings.append("Showing the first 500 skills.")
+    return {"skills": unique[:500], "warnings": sorted(set(warnings))}
+
+
 def main():
     request = json.loads(sys.argv[1])
     action = request.get("action", "list")
     workspace = canonical(request["workspace"])
+    if action == "skills":
+        return list_skills(workspace)
     if action == "list":
         return list_sessions(workspace)
     if action == "delete":
