@@ -28,33 +28,43 @@ struct InspectorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                ForEach(tabs, id: \.self) { item in
-                    Button { model.inspectorTab = item } label: {
-                        Group {
-                            if item == "Git" {
-                                GitBranchIcon(selected: tab == item)
-                            } else {
-                                Image(systemName: item == "Files" ? "folder" : item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
+            GeometryReader { geometry in
+                #if os(iOS)
+                let leading: CGFloat = 8, trailing: CGFloat = 24, maximumSpacing: CGFloat = 6
+                #else
+                let leading: CGFloat = 12, trailing: CGFloat = 12, maximumSpacing: CGFloat = 10
+                #endif
+                // Five tabs, the close button and a spacer must fit even at 200 pt.
+                let spacing = min(maximumSpacing, max(0, (geometry.size.width - leading - trailing - 28 * CGFloat(tabs.count + 1)) / CGFloat(tabs.count + 1)))
+                HStack(spacing: spacing) {
+                    ForEach(tabs, id: \.self) { item in
+                        Button { model.inspectorTab = item } label: {
+                            Group {
+                                if item == "Git" {
+                                    GitBranchIcon(selected: tab == item)
+                                } else {
+                                    Image(systemName: item == "Files" ? "folder" : item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
+                                }
                             }
-                        }
-                            .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
-                            .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }.windowDragExcluded()
-                        .help(item)
-                        .accessibilityLabel(item)
-                        .accessibilityIdentifier("crow.inspector-" + item.lowercased())
+                                .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
+                                .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }.windowDragExcluded()
+                            .help(item)
+                            .accessibilityLabel(item)
+                            .accessibilityIdentifier("crow.inspector-" + item.lowercased())
+                    }
+                    Spacer(minLength: 0)
+                    Button { model.inspectorVisible = false } label: { PanelActionIcon(symbol: "sidebar.right") }
+                        .help("Hide Right Sidebar").accessibilityLabel("Hide Right Sidebar")
+                        .accessibilityIdentifier("crow.inspector-close")
+                        .windowDragExcluded()
                 }
-                Spacer(minLength: 0)
-                Button { model.inspectorVisible = false } label: { PanelActionIcon(symbol: "sidebar.right") }
-                    .help("Hide Right Sidebar").accessibilityLabel("Hide Right Sidebar")
-                    .accessibilityIdentifier("crow.inspector-close")
-                    .windowDragExcluded()
-            }
-            .buttonStyle(CrowButtonStyle()).padding(.horizontal, 12).frame(height: 36)
-            .windowDragBackground()
+                .buttonStyle(CrowButtonStyle())
+                .padding(.leading, leading).padding(.trailing, trailing).frame(height: 36)
+                .windowDragBackground()
+            }.frame(height: 36)
             CrowDivider()
             if tab == "Files" { SidebarView(filesOnly: true) }
             else if tab == "Agents" { AgentHistoryPanel() }
