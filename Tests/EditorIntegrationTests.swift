@@ -27,6 +27,37 @@ import WebKit
 }
 
 final class IOSEditorIntegrationTests: XCTestCase {
+    @MainActor func testKeyboardHideSurvivesInputReplacementAndRejectsHiddenScreenRestore() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let controller = UIViewController(); window.rootViewController = controller
+        let previous = UITextField(frame: CGRect(x: 10, y: 20, width: 200, height: 40))
+        let replacement = UITextField(frame: CGRect(x: 10, y: 80, width: 200, height: 40))
+        controller.view.addSubview(previous); controller.view.addSubview(replacement)
+        window.makeKeyAndVisible()
+        defer { window.endEditing(true); window.isHidden = true }
+        let keyboard = PhoneKeyboardFocus()
+        var surface = CompactSurface.editor
+        keyboard.currentSurface = { surface }
+        keyboard.attach(controller.view)
+        keyboard.register(previous, surface: .editor)
+        XCTAssertTrue(keyboard.show(for: .editor))
+        XCTAssertTrue(previous.isFirstResponder)
+        keyboard.register(replacement, surface: .editor)
+        surface = .hosts
+        keyboard.transition(from: .editor, to: .hosts)
+        XCTAssertFalse(previous.isFirstResponder, "Dismiss the actual responder even after the registered input changes")
+        XCTAssertFalse(keyboard.show(for: .editor), "A dismissed popover must not focus a hidden editor")
+        keyboard.register(replacement, surface: .terminal)
+        surface = .terminal
+        XCTAssertTrue(keyboard.show(for: .terminal))
+        keyboard.hide()
+        XCTAssertFalse(replacement.isFirstResponder)
+        surface = .editor
+        keyboard.transition(from: .terminal, to: .editor)
+        XCTAssertFalse(replacement.isFirstResponder, "Navigation must not bring back a manually hidden keyboard")
+    }
+
     @MainActor func testTabDropRoutesAboveSourceAndRenderedEditorsWithoutInsertingContent() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ipad-drag-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
@@ -95,6 +126,7 @@ final class IOSEditorIntegrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ios-editor-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
         let id = try XCTUnwrap(model.selectedBufferID)
+        model.markdownPreviewEnabled = false
         model.updateBufferText(id, "# Keyboard\n\nKeep this text.\n")
         model.compactSurface = .editor
         let keyboard = PhoneKeyboardFocus()
@@ -186,6 +218,17 @@ final class IOSEditorIntegrationTests: XCTestCase {
         markdown.keyboardAccessory.press(KeyboardBarKey(key: "Tab"))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(model.selectedBuffer?.text.contains("Snippet     Keyboard") == true)
+        model.showHosts()
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertFalse(keyboard.show(for: .editor), "Late snippet/tab callbacks must not restore a hidden screen")
+        let hiddenFocus = try await web.callAsyncJavaScript("return document.activeElement?.isContentEditable", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertNotEqual(hiddenFocus, true, "Leaving Markdown must clear DOM focus as well as UIKit focus")
+        model.compactSurface = .editor
+        XCTAssertTrue(keyboard.show(for: .editor))
+        keyboard.hide()
+        try await Task.sleep(for: .milliseconds(150))
+        let dismissedFocus = try await web.callAsyncJavaScript("return document.activeElement?.isContentEditable", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertNotEqual(dismissedFocus, true)
     }
 }
 #endif

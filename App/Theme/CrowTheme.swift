@@ -125,13 +125,14 @@ struct CrowMenu<Label: View, Content: View>: View {
     @State private var presented = false
     private let content: Content
     private let label: Label
+    private let onDismiss: (() -> Void)?
 
-    init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
-        self.content = content(); self.label = label()
+    init(onDismiss: (() -> Void)? = nil, @ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
+        self.content = content(); self.label = label(); self.onDismiss = onDismiss
     }
 
     init(_ title: String, @ViewBuilder content: () -> Content) where Label == Text {
-        self.content = content(); self.label = Text(title)
+        self.content = content(); self.label = Text(title); self.onDismiss = nil
     }
 
     var body: some View {
@@ -152,6 +153,7 @@ struct CrowMenu<Label: View, Content: View>: View {
             CrowActionMenuContent {
                 presented = false; dismissParent?()
             } content: { content }
+                .onDisappear { onDismiss?() }
         }
         .windowDragExcluded()
     }

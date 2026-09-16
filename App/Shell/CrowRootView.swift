@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import AppKit
 #else
 import UIKit
+import WebKit
 #endif
 
 struct CrowRootView: View {
@@ -231,13 +232,23 @@ extension EnvironmentValues {
         init(view: UIView, focus: (() -> Void)?) { self.view = view; self.focus = focus }
     }
     private var inputs: [CompactSurface: Input] = [:]
+    private weak var anchor: UIView?
+    private weak var inputWindow: UIWindow?
+    private var focusGeneration = 0
+    var currentSurface: (() -> CompactSurface?)?
+
+    func attach(_ view: UIView) { anchor = view }
 
     func register(_ view: UIView, surface: CompactSurface, focus: (() -> Void)? = nil) {
         inputs[surface] = Input(view: view, focus: focus)
+        if let window = view.window { inputWindow = window }
     }
 
     @discardableResult func show(for surface: CompactSurface) -> Bool {
+        guard surface == .editor || surface == .terminal,
+              currentSurface?() == nil || currentSurface?() == surface else { return false }
         guard let input = inputs[surface], let view = input.view, view.window != nil else { return false }
+        focusGeneration += 1
         if let focus = input.focus { focus(); return true }
         return view.becomeFirstResponder()
     }
@@ -248,16 +259,53 @@ extension EnvironmentValues {
     }
 
     func transition(from previous: CompactSurface, to next: CompactSurface) {
+        guard next == .editor || next == .terminal else { hide(); return }
         guard let view = inputs[previous]?.view, containsFirstResponder(view) else { return }
         // Both input views remain mounted, so UIKit can transfer focus without
         // dismissing and presenting the keyboard between document and shell.
         if (next == .editor || next == .terminal), show(for: next) { return }
-        view.endEditing(true)
+        hide()
+    }
+
+    func hide() {
+        focusGeneration += 1
+        let generation = focusGeneration
+        guard let window = anchor?.window ?? inputWindow ?? inputs.values.compactMap({ $0.view?.window }).first else { return }
+        dismissInput(in: window)
+        // Popover dismissal can restore the presenting view's responder after
+        // an immediate resign. Repeat at transition completion in this window.
+        var controller = window.rootViewController
+        while let presented = controller?.presentedViewController { controller = presented }
+        controller?.transitionCoordinator?.animate(alongsideTransition: nil) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                guard let self, let window, self.focusGeneration == generation else { return }
+                self.dismissInput(in: window)
+            }
+        }
+    }
+
+    private func dismissInput(in window: UIWindow) {
+        func blurWebInputs(_ view: UIView) {
+            if let web = view as? WKWebView {
+                web.evaluateJavaScript("document.activeElement?.blur()", in: nil, in: .defaultClient)
+            }
+            for child in view.subviews { blurWebInputs(child) }
+        }
+        blurWebInputs(window)
+        window.endEditing(true)
     }
 
     private func containsFirstResponder(_ view: UIView) -> Bool {
         view.isFirstResponder || view.subviews.contains(where: containsFirstResponder)
     }
+}
+
+private struct PhoneKeyboardAnchor: UIViewRepresentable {
+    let keyboard: PhoneKeyboardFocus
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(); view.isUserInteractionEnabled = false; keyboard.attach(view); return view
+    }
+    func updateUIView(_ view: UIView, context: Context) { keyboard.attach(view) }
 }
 
 private struct PhoneKeyboardFocusKey: EnvironmentKey {
@@ -300,8 +348,10 @@ struct CompactWorkspaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.crowPhoneLayout, true)
         .background(CrowTheme.bg0)
+        .background(PhoneKeyboardAnchor(keyboard: keyboard))
         .safeAreaInset(edge: .bottom, spacing: 0) { PhoneWorkspaceBar() }
         .environment(\.phoneKeyboardFocus, keyboard)
+        .onAppear { keyboard.currentSurface = { [weak model] in model?.compactSurface } }
         .onChange(of: model.compactSurface) { previous, next in
             keyboard.transition(from: previous, to: next)
         }
@@ -318,6 +368,7 @@ private struct PhoneWorkspaceBar: View {
     @State private var restoreSnippetKeyboard = false
     @State private var showingTabs = false
     @State private var restoreTabsKeyboard = false
+    @State private var hideAfterMenu = false
     @State private var copyToast: (id: UUID, message: String)?
     private var browserID: UUID? {
         if model.compactSurface == .editor, case .browser(let id) = model.current.snapshot.layout?.activePane?.selected { return id }
@@ -448,17 +499,24 @@ private struct PhoneWorkspaceBar: View {
                     SnippetsView(onInsert: canShowKeyboard ? { text in _ = keyboard?.insert(text, for: snippetSurface) } : nil)
                         .environment(model).frame(width: 320, height: 420)
                         .presentationCompactAdaptation(.popover)
-                        .onDisappear { if restoreSnippetKeyboard { keyboard?.show(for: snippetSurface) } }
+                        .onDisappear {
+                            if restoreSnippetKeyboard, model.compactSurface == snippetSurface { keyboard?.show(for: snippetSurface) }
+                            restoreSnippetKeyboard = false
+                        }
                 }
             if canShowKeyboard && !keyboardVisible {
                 Button { keyboard?.show(for: model.compactSurface) } label: { controlIcon("keyboard") }
                     .accessibilityLabel("Show Keyboard").accessibilityIdentifier("crow.phone.keyboard")
             } else {
-                CrowMenu {
+                CrowMenu(onDismiss: {
+                    if hideAfterMenu || model.compactSurface == .hosts || model.compactSurface == .files { keyboard?.hide() }
+                    hideAfterMenu = false
+                }) {
                     sessionMenu
                     generalMenu
                     if keyboardVisible {
                         Button("Hide Keyboard", systemImage: "keyboard.chevron.compact.down", action: hideKeyboard)
+                            .accessibilityIdentifier("crow.phone.hide-keyboard")
                     }
                 } label: { controlIcon("square.grid.2x2") }
                     .accessibilityLabel("Session and Settings").accessibilityIdentifier("crow.phone.screens")
@@ -500,6 +558,7 @@ private struct PhoneWorkspaceBar: View {
         .accessibilityIdentifier("crow.phone.navigation")
         .sheet(isPresented: $showingTabs, onDismiss: {
             if restoreTabsKeyboard { keyboard?.show(for: model.compactSurface) }
+            restoreTabsKeyboard = false
         }) {
             WorkspaceTabsView().environment(model).presentationDetents([.large])
         }
@@ -542,7 +601,8 @@ private struct PhoneWorkspaceBar: View {
     }
 
     private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        restoreTabsKeyboard = false; restoreSnippetKeyboard = false; hideAfterMenu = true
+        keyboard?.hide()
     }
     private func navigate(_ surface: CompactSurface) {
         model.compactSurface = surface
