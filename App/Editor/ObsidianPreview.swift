@@ -55,6 +55,34 @@ struct ObsidianDocumentView: View {
 
 /// Every path is scoped to the workspace that owns the document, even after a tab switch.
 @MainActor enum ObsidianFiles {
+    static func writeNote(_ relative: String, expected: String, replacement: String, in state: WorkspaceState, model: AppModel) async throws {
+        guard ["md", "markdown"].contains((relative as NSString).pathExtension.lowercased()),
+              replacement.utf8.count <= TextFiles.sizeLimit else { throw CommandError("Only Markdown note properties can be edited here.") }
+        let path = try await resolve(relative, in: state)
+        func matches(_ buffer: OpenBuffer) -> Bool {
+            state.snapshot.workspace.isRemote ? buffer.path == path : URL(fileURLWithPath: buffer.path).resolvingSymlinksInPath().path == path
+        }
+        guard model.states.contains(where: { $0 === state }),
+              !state.movingPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { throw CommandError("This note moved or its workspace was closed.") }
+        if let buffer = state.snapshot.buffers.first(where: matches), buffer.isDirty || buffer.text != expected {
+            throw CommandError("This note has changed in an editor. Save it and refresh the Base before editing its properties.")
+        }
+        if state.snapshot.workspace.isRemote {
+            guard let remote = state.remote else { throw FileFailure.disconnected }
+            try await remote.write(replacement, path: path, expected: expected)
+        } else {
+            try TextFiles.write(replacement, to: URL(fileURLWithPath: path), expected: expected)
+        }
+        if let index = state.snapshot.buffers.firstIndex(where: matches) {
+            if state.snapshot.buffers[index].text == expected && !state.snapshot.buffers[index].isDirty {
+                state.snapshot.buffers[index].text = replacement
+            }
+            state.snapshot.buffers[index].savedText = replacement
+            state.snapshot.buffers[index].isDirty = state.snapshot.buffers[index].text != replacement
+            model.schedulePersist()
+        }
+    }
+
     static func resolve(_ relative: String, in state: WorkspaceState) async throws -> String {
         guard !relative.isEmpty, !relative.contains("\0"), !relative.hasPrefix("/"), !relative.split(separator: "/").contains(".."), !relative.contains("://") else {
             throw CommandError("Choose a file inside this workspace.")
@@ -248,7 +276,7 @@ struct ObsidianDocumentView: View {
                         let (files, warning) = try await ObsidianFiles.inventory(in: state) { files, folders in
                             guard !Task.isCancelled else { return }
                             self.status.message = "Reading workspace: \(files.count) files · \(folders) folders"
-                            var partial = payload; partial["files"] = files; partial["loading"] = true
+                            var partial = payload; partial["source"] = self.source; partial["files"] = files; partial["loading"] = true
                             _ = try? await view.callAsyncJavaScript("window.crowObsidian.receive(payload)", arguments: ["payload": partial], in: nil, contentWorld: .defaultClient)
                         }
                         payload["files"] = files; payload["warning"] = warning
@@ -260,9 +288,10 @@ struct ObsidianDocumentView: View {
                             }
                             return result
                         }.value
-                        payload["html"] = html
+                        if value == self.source { payload["html"] = html }
                     }
                     try Task.checkCancellation()
+                    payload["source"] = self.source
                     _ = try await view.callAsyncJavaScript("window.crowObsidian.receive(payload)", arguments: ["payload": payload], in: nil, contentWorld: .defaultClient)
                     try Task.checkCancellation()
                     watchdog?.cancel(); status.loading = false; status.message = nil; status.cancel = nil
@@ -275,7 +304,47 @@ struct ObsidianDocumentView: View {
         }
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: String], let action = body["action"],
-                  let path = body["path"], let (state, _) = model.locate(bufferID) else { return }
+                  let (state, index) = model.locate(bufferID) else { return }
+            if action == "change", let replacement = body["source"], let expected = body["expected"] {
+                guard replacement.utf8.count <= TextFiles.sizeLimit,
+                      state.snapshot.buffers[index].text == expected else {
+                    let current = state.snapshot.buffers[index].text
+                    Task { [weak view = message.webView] in
+                        _ = try? await view?.callAsyncJavaScript("window.crowObsidian.rejectSource(source)",
+                            arguments: ["source": current], in: nil, contentWorld: .defaultClient)
+                    }
+                    return
+                }
+                // Acknowledge our own edit before SwiftUI updates the representable;
+                // an input event must not rebuild the canvas or restart a vault scan.
+                source = replacement
+                model.updateBufferText(bufferID, replacement)
+                return
+            }
+            if action == "save" {
+                Task { [weak view = message.webView] in
+                    let saved = await model.saveBuffer(bufferID)
+                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.saved(ok)", arguments: ["ok": saved], in: nil, contentWorld: .defaultClient)
+                }
+                return
+            }
+            if action == "markdown", let text = body["text"], text.utf8.count <= 512 * 1024, let id = body["id"] {
+                Task { [weak view = message.webView] in
+                    let html = await Task.detached(priority: .utility) { MarkdownPreview.body(text) }.value
+                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.asset(id, value)", arguments: ["id": id, "value": ["html": html]], in: nil, contentWorld: .defaultClient)
+                }
+                return
+            }
+            guard let path = body["path"] else { return }
+            if action == "property", let expected = body["expected"], let replacement = body["source"], let id = body["id"] {
+                Task { [weak view = message.webView] in
+                    var result: [String: Any] = ["ok": true]
+                    do { try await ObsidianFiles.writeNote(path, expected: expected, replacement: replacement, in: state, model: model) }
+                    catch { result = ["ok": false, "error": error.localizedDescription] }
+                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.propertyResult(id, result)", arguments: ["id": id, "result": result], in: nil, contentWorld: .defaultClient)
+                }
+                return
+            }
             if action == "asset", let id = body["id"], let view = message.webView {
                 guard assets.count < 2000 else { return }
                 let previous = assetTail
@@ -291,6 +360,7 @@ struct ObsidianDocumentView: View {
                     catch { result = ["error": error.localizedDescription] }
                     guard !Task.isCancelled else { return }
                     _ = try? await view?.callAsyncJavaScript("window.crowObsidian.asset(id, value)", arguments: ["id": id, "value": result], in: nil, contentWorld: .defaultClient)
+                    self.assets.removeValue(forKey: id)
                 }
                 assets[id] = request; assetTail = request
             } else if action == "open" {

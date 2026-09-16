@@ -32,6 +32,32 @@ import WebKit
         XCTAssertEqual(LanguageMode.infer(filename: "list.base"), .yaml)
     }
 
+    func testBasePropertyWritesKeepOpenNotesInSyncAndRejectConflicts() async throws {
+        let file = root.appendingPathComponent("Properties.md")
+        let original = "---\nstatus: reading\n---\n# Keep this body\n"
+        let edited = original.replacingOccurrences(of: "reading", with: "done")
+        try Data(original.utf8).write(to: file)
+        model.openFile(.init(name: file.lastPathComponent, path: file.path, isDirectory: false))
+        let id = try XCTUnwrap(model.selectedBufferID), state = model.current
+        try await ObsidianFiles.writeNote("Properties.md", expected: original, replacement: edited, in: state, model: model)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), edited)
+        XCTAssertEqual(model.locate(id)?.0.snapshot.buffers[model.locate(id)!.1].text, edited)
+        XCTAssertFalse(try XCTUnwrap(model.selectedBuffer).isDirty)
+        model.updateBufferText(id, edited + "Unsaved draft")
+        do {
+            try await ObsidianFiles.writeNote("Properties.md", expected: edited, replacement: original, in: state, model: model)
+            XCTFail("Property edits must not overwrite an unsaved note")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), edited)
+        model.updateBufferText(id, edited)
+        try Data((edited + "External edit").utf8).write(to: file)
+        do {
+            try await ObsidianFiles.writeNote("Properties.md", expected: edited, replacement: original, in: state, model: model)
+            XCTFail("Property edits must detect external changes")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), edited + "External edit")
+    }
+
     #if os(macOS)
     func testFolderSearchMatchesPartialNamesAndListsAllChildren() throws {
         for name in ["Project One", "Project Two", "Team Notes", "Archive", "Build", "한글 자료", ".hidden"] {
@@ -143,6 +169,109 @@ import WebKit
             }
             if !rendered, let view = web(hosting) { print("PREVIEW", try await view.callAsyncJavaScript("return document.querySelector('main').textContent", arguments: [:], in: nil, contentWorld: .defaultClient) as Any) }
             XCTAssertTrue(rendered, "Expected rendered content for " + name)
+        }
+    }
+
+    func testObsidianRenderedEditingSavesCanvasAndBaseProperties() async throws {
+        let note = root.appendingPathComponent("Project.md")
+        try Data("---\n# Preserve comment\nstatus: reading\n---\n# Project\nBody stays intact.\n".utf8).write(to: note)
+        let canvas = """
+        {"custom":{"preserved":true},"nodes":[
+          {"id":"group","type":"group","x":-200,"y":-150,"width":840,"height":460,"label":"Project plan","color":"5"},
+          {"id":"note","type":"text","x":-160,"y":-90,"width":300,"height":220,"text":"# Research\\n\\nCollect ideas and references."},
+          {"id":"next","type":"text","x":280,"y":-90,"width":300,"height":220,"text":"# Build\\n\\n- Design\\n- Implement\\n- Review"}],
+         "edges":[{"id":"edge","fromNode":"note","toNode":"next","label":"Next","fromSide":"right","toSide":"left"}]}
+        """
+        let base = "# Preserve view comment\nfilters: 'file.ext == \"md\"'\ncustom: kept\nviews:\n  - type: table\n    name: Notes\n    order: [file.name, status]\n"
+        for (name, source, selector) in [("Editable.canvas", canvas, ".node.text"), ("Editable.base", base, "td[data-column='status'][data-path='Project.md']")] {
+            let file = root.appendingPathComponent(name)
+            try Data(source.utf8).write(to: file)
+            model.openFile(.init(name: name, path: file.path, isDirectory: false))
+            let buffer = try XCTUnwrap(model.selectedBuffer)
+            let hosting = NSHostingView(rootView: ObsidianDocumentView(buffer: buffer).environment(model))
+            let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 940, height: 620), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil)
+            defer { window.close() }
+            func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+            var loaded: WKWebView?
+            for _ in 0..<100 {
+                if let view = web(hosting), let count = try? await view.callAsyncJavaScript("return document.querySelectorAll(selector).length", arguments: ["selector": selector], in: nil, contentWorld: .defaultClient) as? Int, count > 0 {
+                    loaded = view; break
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            let view = try XCTUnwrap(loaded)
+            func js(_ script: String) async throws { _ = try await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) }
+            if name.hasSuffix("canvas") {
+                try await js("document.querySelector('[data-node-id=note]').dispatchEvent(new MouseEvent('dblclick', {bubbles:true})); const input=document.querySelector('.node-editor'); input.value='# Research complete\\n\\n한글 편집 저장'; input.dispatchEvent(new Event('input')); input.blur();")
+                for _ in 0..<40 where model.locate(buffer.id)?.0.snapshot.buffers[model.locate(buffer.id)!.1].isDirty != true { try await Task.sleep(for: .milliseconds(25)) }
+                try await js("document.querySelector('button[aria-label=\"Save (⌘S)\"]').click()")
+                for _ in 0..<60 where !(try String(contentsOf: file, encoding: .utf8)).contains("Research complete") { try await Task.sleep(for: .milliseconds(25)) }
+                let saved = try String(contentsOf: file, encoding: .utf8)
+                XCTAssertTrue(saved.contains("한글 편집 저장")); XCTAssertTrue(saved.contains("preserved"))
+                try await js("document.querySelector('[data-history=undo]').click()")
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertFalse(try XCTUnwrap(model.selectedBuffer).text.contains("Research complete"))
+                try await js("document.querySelector('[data-history=redo]').click()")
+                // The initial fit must survive SwiftUI layout and rapid document updates.
+                try await Task.sleep(for: .milliseconds(100))
+                let fitted = try await view.callAsyncJavaScript("const v=document.querySelector('.canvas-viewport').getBoundingClientRect(); return [...document.querySelectorAll('.node')].every(n=>{const r=n.getBoundingClientRect(); return r.left>=v.left && r.right<=v.right && r.top>=v.top && r.bottom<=v.bottom})", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+                XCTAssertEqual(fitted, true)
+                // Synthetic pointer events exercise the same move/resize/connect handlers;
+                // pointer capture itself requires hardware input, so stub only that method.
+                try await js("""
+                function drag(selector, dx, dy) {
+                  const viewport=document.querySelector('.canvas-viewport'); viewport.setPointerCapture=()=>{};
+                  const target=document.querySelector(selector), r=target.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
+                  target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1,clientX:x,clientY:y}));
+                  viewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:x+dx,clientY:y+dy}));
+                  viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:x+dx,clientY:y+dy}));
+                }
+                drag('[data-node-id=note] .node-bar',24,12);
+                drag('[data-node-id=note] .node-resize',20,10);
+                const viewport=document.querySelector('.canvas-viewport'); viewport.setPointerCapture=()=>{};
+                const port=document.querySelector('[data-node-id=note] .node-port.right'), a=port.getBoundingClientRect(), b=document.querySelector('[data-node-id=next] .node-bar').getBoundingClientRect();
+                if (document.elementFromPoint(b.left+20,b.top+10)?.closest('[data-node-id]')?.dataset.nodeId !== 'next') throw Error('Connection target is not hit-testable');
+                port.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1,clientX:a.left,clientY:a.top}));
+                viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:b.left+20,clientY:b.top+10}));
+                """)
+                try await Task.sleep(for: .milliseconds(100))
+                let moved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(model.selectedBuffer).text.utf8)) as? [String: Any])
+                let nodes = try XCTUnwrap(moved["nodes"] as? [[String: Any]])
+                let edited = try XCTUnwrap(nodes.first { $0["id"] as? String == "note" })
+                XCTAssertGreaterThan(try XCTUnwrap(edited["x"] as? Int), -160)
+                XCTAssertGreaterThan(try XCTUnwrap(edited["width"] as? Int), 300)
+                XCTAssertEqual((moved["edges"] as? [Any])?.count, 2)
+                try await js("document.querySelector('[data-action=add-note]').click()")
+                let added = try await view.callAsyncJavaScript("return document.querySelectorAll('.node').length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int
+                XCTAssertEqual(added, 4)
+                try await js("document.activeElement.blur(); document.querySelector('[data-history=undo]').click()")
+            } else {
+                // Wait for the inventory's final payload before editing properties.
+                for _ in 0..<100 {
+                    if (try? await view.callAsyncJavaScript("return document.querySelector('.base-subhead').textContent.includes('Loading')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == false { break }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                try await js("document.querySelector(\"td[data-column=status][data-path='Project.md']\").dispatchEvent(new MouseEvent('dblclick')); const input=document.querySelector('[data-property-editor=status]'); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));")
+                for _ in 0..<80 where !(try String(contentsOf: note, encoding: .utf8)).contains("status: done") { try await Task.sleep(for: .milliseconds(50)) }
+                let saved = try String(contentsOf: note, encoding: .utf8)
+                XCTAssertTrue(saved.contains("status: done")); XCTAssertTrue(saved.contains("# Preserve comment")); XCTAssertTrue(saved.hasSuffix("# Project\nBody stays intact.\n"))
+                try await js("document.querySelector('button[aria-label=\"View options\"]').click(); document.querySelector('dialog input').value='Project notes'; Array.from(document.querySelectorAll('dialog button')).find(b=>b.textContent==='Apply').click();")
+                try await js("document.querySelector('button[aria-label=\"Save (⌘S)\"]').click()")
+                for _ in 0..<60 where !(try String(contentsOf: file, encoding: .utf8)).contains("Project notes") { try await Task.sleep(for: .milliseconds(25)) }
+                let definition = try String(contentsOf: file, encoding: .utf8)
+                XCTAssertTrue(definition.contains("Project notes")); XCTAssertTrue(definition.contains("custom: kept")); XCTAssertTrue(definition.contains("# Preserve view comment"))
+                try await js("document.querySelector('button[aria-label=\"Add view\"]').click(); document.querySelector('dialog input').value='Cards'; document.querySelector('dialog select').value='cards'; Array.from(document.querySelectorAll('dialog button')).find(b=>b.textContent==='Create view').click();")
+                try await Task.sleep(for: .milliseconds(100))
+                let count = try await view.callAsyncJavaScript("return document.querySelectorAll('.view-select option').length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int
+                XCTAssertEqual(count, 2)
+                XCTAssertTrue(try XCTUnwrap(model.selectedBuffer).text.contains("type: cards"))
+                try await js("document.querySelector('[data-history=undo]').click()")
+            }
+            try await Task.sleep(for: .milliseconds(250))
+            let image = try await view.takeSnapshot(configuration: nil)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: name.hasSuffix("canvas") ? "/tmp/crow-canvas-editor.png" : "/tmp/crow-base-editor.png"))
         }
     }
     #endif

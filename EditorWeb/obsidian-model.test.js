@@ -34,3 +34,38 @@ test('Invalid YAML and frontmatter are reported instead of silently dropping fil
  assert.throws(()=>base('filters: {unknown: []}\nviews: [{type: table}]',files,'a.base'),/Invalid Base filter/);
  assert.throws(()=>base('views: [{type: table}]',[{path:'bad.md',text:'---\nbad: [\n---'}],'a.base'));
 });
+
+test('Canvas edits preserve extension fields and node order', async () => {
+ const {serializeCanvas} = await import('./obsidian-model.js');
+ const source = JSON.stringify({plugin:{zoom:1}, nodes:[{id:'a',type:'text',x:0,y:0,width:300,height:200,text:'old',custom:{keep:true}}],edges:[]});
+ const doc = canvas(source); doc.nodes[0].text = '한글 편집'; doc.nodes[0].x = 42;
+ const saved = JSON.parse(serializeCanvas(doc));
+ assert.deepEqual(saved.plugin,{zoom:1}); assert.deepEqual(saved.nodes[0].custom,{keep:true});
+ assert.equal(saved.nodes[0].text,'한글 편집'); assert.equal(saved.nodes[0].x,42);
+});
+test('Note property edits preserve body, comments, types, BOM and CRLF', async () => {
+ const {updateNoteProperty} = await import('./obsidian-model.js');
+ const source = '\uFEFF---\r\n# Keep this comment\r\nstatus: reading\r\nprice: 12\r\ncustom: {nested: yes}\r\n---\r\n# Body\r\n\r\nUnchanged **Markdown**.\r\n';
+ const edited = updateNoteProperty(source,'note.status','done');
+ assert.equal(edited.slice(edited.indexOf('# Body')),source.slice(source.indexOf('# Body')));
+ assert.ok(edited.includes('# Keep this comment')); assert.ok(edited.startsWith('\uFEFF---\r\n'));
+ assert.ok(!/(?<!\r)\n/.test(edited)); assert.equal(record({path:'a.md',text:edited}).note.status,'done');
+ const typed = updateNoteProperty(updateNoteProperty(edited,'price',3.5),'tags',['one','two']);
+ assert.equal(record({path:'a.md',text:typed}).note.price,3.5);
+ assert.deepEqual(record({path:'a.md',text:typed}).note.tags,['one','two']);
+ assert.equal(record({path:'a.md',text:updateNoteProperty(typed,'price',null)}).note.price,undefined);
+ assert.throws(()=>updateNoteProperty(source,'file.name','renamed'),/Only note/);
+ assert.throws(()=>updateNoteProperty('---\nbad: [\n---\nbody','x','value'));
+ assert.throws(()=>updateNoteProperty('---\nstatus: reading','x','value'),/unclosed/);
+ assert.ok(updateNoteProperty('---\n---\nBody','new','value').endsWith('---\nBody'));
+});
+test('Base view changes preserve comments, global filters and unknown settings', async () => {
+ const {updateBaseView} = await import('./obsidian-model.js');
+ const source = '# Saved by Obsidian\nfilters: \'file.ext == "md"\'\nplugin: {keep: true}\nviews:\n  - type: table\n    name: Notes\n    custom: 42\n    order: [file.name, status]\n';
+ const edited = updateBaseView(source,0,{name:'Reading',sort:[{property:'status',direction:'DESC'}]});
+ assert.ok(edited.includes('# Saved by Obsidian'));
+ assert.equal(yaml(edited).views[0].custom,42); assert.deepEqual(yaml(edited).plugin,{keep:true});
+ assert.equal(yaml(edited).filters,'file.ext == "md"');
+ assert.equal(yaml(updateBaseView(edited,1,{name:'Cards',type:'cards'})).views.length,2);
+ assert.throws(()=>updateBaseView(source,0,{type:'invalid'}),/Unsupported/);
+});

@@ -1,4 +1,4 @@
-import { parse } from 'yaml';
+import { parse, parseDocument } from 'yaml';
 const own = (o, k) => o != null && Object.hasOwn(o, k) ? o[k] : null;
 export function yaml(source) { return parse(source, { maxAliasCount: 30, uniqueKeys: true }) ?? {}; }
 export function canvas(source) {
@@ -13,7 +13,56 @@ export function canvas(source) {
     ids.add(n.id);
   }
   for (const e of edges) if (!e || !ids.has(e.fromNode) || !ids.has(e.toNode)) throw Error('A Canvas connection refers to a missing node.');
-  return {nodes, edges};
+  return {...doc, nodes, edges};
+}
+
+export function serializeCanvas(doc) {
+  const source = JSON.stringify(doc, null, 2) + '\n';
+  canvas(source);
+  return source;
+}
+
+// Edit the YAML syntax tree so comments and unrecognized plugin settings survive.
+export function updateBaseView(source, index, changes) {
+  const value = yaml(source), doc = parseDocument(source);
+  if (!Array.isArray(value.views) || !Number.isInteger(index) || index < 0 || index > value.views.length) throw Error('Missing Base view.');
+  if (index === value.views.length) doc.addIn(['views'], doc.createNode({type: 'table', name: 'New view', order: ['file.name']}));
+  for (const [key, value] of Object.entries(changes)) {
+    if (!['name', 'type', 'order', 'filters', 'sort', 'groupBy'].includes(key)) throw Error('Unsupported view setting.');
+    if (value == null) doc.deleteIn(['views', index, key]);
+    else doc.setIn(['views', index, key], value);
+  }
+  const result = doc.toString();
+  base(result, [], 'Preview.base', index);
+  return result;
+}
+
+export function noteProperty(column) {
+  if (typeof column !== 'string' || column.startsWith('file.') || column.startsWith('formula.')) return null;
+  const name = column.startsWith('note.') ? column.slice(5) : column;
+  return name && !['__proto__', 'constructor', 'prototype'].includes(name) ? name : null;
+}
+
+export function updateNoteProperty(source, column, value) {
+  const name = noteProperty(column);
+  if (!name) throw Error('Only note properties can be edited.');
+  if (typeof source !== 'string') throw Error('This note has not been loaded.');
+  if (!(value == null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)
+      || Array.isArray(value) && value.every(v => typeof v === 'string'))) throw Error('Unsupported property value.');
+  const start = source.match(/^\uFEFF?---\r?\n/), bom = source.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  let body = source.slice(bom.length), frontmatter = '';
+  if (start) {
+    const rest = source.slice(start[0].length), end = /^---[ \t]*(?:\r?\n|$)/m.exec(rest);
+    if (!end) throw Error('The note has unclosed frontmatter.');
+    frontmatter = rest.slice(0, end.index); body = rest.slice(end.index + end[0].length);
+  }
+  const parsed = yaml(frontmatter);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('Invalid note properties.');
+  const doc = parseDocument(frontmatter);
+  if (value == null) doc.delete(name); else doc.set(name, value);
+  const properties = doc.toString().replace(/\r?\n/g, newline);
+  return bom + '---' + newline + properties + '---' + newline + body;
 }
 
 // A small expression interpreter: document expressions never execute as JavaScript.
