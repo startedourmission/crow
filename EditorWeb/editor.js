@@ -1,4 +1,5 @@
-import { Editor, Extension, createNodeFromContent } from '@tiptap/core';
+import {parse} from 'yaml';
+import { Editor, Extension, Node, createNodeFromContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import { TableKit } from '@tiptap/extension-table';
@@ -22,8 +23,12 @@ style.textContent = `
   .tiptap li[data-type=taskItem] { display: flex; gap: .6em; }
   .tiptap li[data-type=taskItem] > div { flex: 1; }
   .tiptap li[data-type=taskItem] label { user-select: none; }
+  .frontmatter { margin-bottom: 24px; font-size: 13px; }
+  .frontmatter th { width: 28%; text-align: left; font-weight: 500; }
+  .frontmatter td { white-space: pre-wrap; }
 `;
 document.head.append(style);
+let noteLinksEnabled = false;
 let source = '', records = [], loading = false, initialized = false, pending = null;
 let modifiers = {control: false, shift: false};
 const send = body => window.webkit.messageHandlers.markdown.postMessage(body);
@@ -31,7 +36,47 @@ const shortcuts = Extension.create({
   name: 'crowShortcuts',
   addKeyboardShortcuts() { return { 'Mod-s': () => { send({action: 'save'}); return true; } }; },
 });
-const extensions = [StarterKit.configure({ link: { openOnClick: false }, trailingNode: false }),
+const Frontmatter = Node.create({
+  name: 'frontmatter', group: 'block', atom: true, selectable: false,
+  addAttributes() { return {source: {default: ''}}; },
+  parseHTML() { return [{tag: 'section[data-frontmatter]'}]; },
+  renderHTML({node}) {
+    const raw = node.attrs.source.replace(/^\uFEFF?---\r?\n/, '').replace(/\r?\n---[ \t]*(?:\r?\n|$)$/, '');
+    try {
+      const values = parse(raw, {maxAliasCount: 30, uniqueKeys: true}) ?? {};
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw Error('Properties must be a YAML map');
+      const rows = Object.entries(values).map(([key,value]) => ['tr', {}, ['th', {scope: 'row'}, key], ['td', {},
+        value == null ? '—' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)]]);
+      return ['section', {'data-frontmatter': '', contenteditable: 'false', class: 'frontmatter'},
+        ['table', {}, ['thead', {}, ['tr', {}, ['th', {}, 'Property'], ['th', {}, 'Value']]], ['tbody', {}, ...rows]]];
+    } catch { return ['section', {'data-frontmatter': '', contenteditable: 'false', class: 'frontmatter'}, ['pre', {}, raw]]; }
+  },
+  renderMarkdown(node) { return node.attrs.source; }
+});
+const WikiLink = Node.create({
+  name: 'wikiLink', group: 'inline', inline: true, atom: true,
+  addAttributes() { return {source: {default: ''}, target: {default: ''}, label: {default: ''}}; },
+  parseHTML() { return [{tag: 'a[data-wikilink]'}]; },
+  renderHTML({node}) { return ['a', {'data-wikilink': '', href: node.attrs.target, contenteditable: 'false'}, node.attrs.label]; },
+  renderMarkdown(node) { return node.attrs.source; }
+});
+function wikiNodes(nodes, insideCode = false) {
+  return nodes.flatMap(node => {
+    if (node.content) return [{...node, content: wikiNodes(node.content, insideCode || node.type === 'codeBlock' || node.type === 'frontmatter')}];
+    if (!noteLinksEnabled || insideCode || node.type !== 'text' || node.marks?.some(mark => ['code','link'].includes(mark.type))) return [node];
+    const output = []; let cursor = 0;
+    for (const match of node.text.matchAll(/(?<!!)\[\[([^\]\n]+)\]\]/g)) {
+      if (match.index > cursor) output.push({...node, text: node.text.slice(cursor, match.index)});
+      const [target, alias] = match[1].split('|');
+      output.push({type: 'wikiLink', attrs: {source: match[0], target, label: alias || target}});
+      cursor = match.index + match[0].length;
+    }
+    if (!output.length) return [node];
+    if (cursor < node.text.length) output.push({...node, text: node.text.slice(cursor)});
+    return output;
+  });
+}
+const extensions = [Frontmatter, WikiLink, StarterKit.configure({ link: { openOnClick: false }, trailingNode: false }),
   Markdown, TableKit.configure({ table: { resizable: false } }), TaskList, TaskItem.configure({ nested: true }), shortcuts];
 const signature = nodes => JSON.stringify(nodes);
 const shape = nodes => JSON.stringify(nodes, (key, value) => key === 'text' ? '' : value);
@@ -100,14 +145,6 @@ const editor = new Editor({
   element: main, extensions, content: '', injectCSS: false, editable: false,
   editorProps: {
     attributes: { 'aria-label': 'Markdown editor', spellcheck: 'false' },
-    handleClickOn(_view, _pos, node, _nodePos, event) {
-      if (!(event.metaKey || event.ctrlKey)) return false;
-      const link = node.marks.find(mark => mark.type.name === 'link');
-      if (link && /^(https?:|mailto:)/i.test(link.attrs.href)) {
-        send({action: 'openLink', url: link.attrs.href}); return true;
-      }
-      return false;
-    },
     handlePaste(_view, event) {
       // Paste only text/Markdown; foreign HTML cannot add embedded resources or styles.
       const text = event.clipboardData?.getData('text/plain');
@@ -115,6 +152,18 @@ const editor = new Editor({
       editor.commands.insertContent(text, {contentType: 'markdown'}); return true;
     },
     handleDOMEvents: {
+      click(_view, event) {
+        const link = event.target.closest('a'); if (!link) return false;
+        const href = link.getAttribute('href') || '';
+        if (!/^(https?:|mailto:)/i.test(href) && !(noteLinksEnabled && !/^[a-z][a-z0-9+.-]*:/i.test(href))) return false;
+        event.preventDefault();
+        if (href.startsWith('#')) {
+          const anchor = decodeURIComponent(href.slice(1)).toLocaleLowerCase();
+          const heading = [...main.querySelectorAll('h1,h2,h3,h4,h5,h6')].find(h => h.textContent.toLocaleLowerCase() === anchor || h.textContent.toLocaleLowerCase().replace(/\s+/g, '-') === anchor);
+          if (heading) heading.scrollIntoView({block: 'start'});
+        } else send({action: 'openLink', url: href});
+        return true;
+      },
       beforeinput(_view, event) {
         if (event.isComposing || event.inputType !== 'insertText' || !event.data || (!modifiers.control && !modifiers.shift)) return false;
         event.preventDefault();
@@ -138,10 +187,12 @@ const editor = new Editor({
   },
 });
 
-function receive(value, blocks, fontSize) {
+function receive(value, blocks, fontSize, linksEnabled = false) {
+  const linksChanged = noteLinksEnabled !== linksEnabled;
   document.body.style.fontSize = Math.min(32, Math.max(11, fontSize)) + 'px';
-  if (initialized && value === source) return; // Never reset selection or IME on a binding echo.
-  if (editor.view.composing) { pending = [value, blocks, fontSize]; return; }
+  if (initialized && value === source && !linksChanged) return; // Never reset selection or IME on a binding echo.
+  if (editor.view.composing) { pending = [value, blocks, fontSize, linksEnabled]; return; }
+  noteLinksEnabled = linksEnabled;
   loading = true;
   try {
     const nodes = []; records = [];
@@ -149,7 +200,8 @@ function receive(value, blocks, fontSize) {
     for (const block of blocks) {
       // generateJSON rebuilds every extension/schema for every block. Reuse the
       // live editor's schema and its cached DOM parser for the whole document.
-      const parsed = createNodeFromContent(block.html, editor.schema, {slice: false}).toJSON().content ?? [];
+      let parsed = block.html.includes('data-crow-frontmatter=') ? [{type: 'frontmatter', attrs: {source: block.source}}] : createNodeFromContent(block.html, editor.schema, {slice: false}).toJSON().content ?? [];
+      parsed = wikiNodes(parsed);
       // Keep unrendered content editable and recoverable rather than silently dropping it.
       if (!parsed.length) parsed.push({type: 'paragraph', ...(block.source.trim() ? {content: [{type: 'text', text: block.source}]} : {})});
       const holder = document.createElement('div'); holder.innerHTML = block.html;

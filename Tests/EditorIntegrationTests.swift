@@ -194,6 +194,45 @@ import AppKit
 import WebKit
 
 final class EditorIntegrationTests: XCTestCase {
+    @MainActor func testMarkdownFrontmatterWikiLinksAndSingleClickPreserveSource() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-note-preview-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root), id = try XCTUnwrap(model.selectedBufferID)
+        let prefix = "---\n# Preserve this comment\ntags: [work, notes]\ncompleted: false\ntitle: '<script>alert(1)</script>'\n---\n"
+        let original = prefix + "# Title\n\nSee [[Other|다른 노트]] and [website](https://example.com).\n\nEditable paragraph\n"
+        model.updateBufferText(id, original)
+        let binding = Binding<String>(get: { model.locate(id)!.0.snapshot.buffers[model.locate(id)!.1].text }, set: { model.updateBufferText(id, $0) })
+        var opened: [String] = []
+        let hosting = NSHostingView(rootView: MarkdownPreviewView(text: binding, fontSize: 15, onOpenLink: { opened.append($0) }, noteLinksEnabled: true))
+        let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 800, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil)
+        defer { window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        for _ in 0..<100 where descendants(hosting, of: WKWebView.self).isEmpty { try await Task.sleep(for: .milliseconds(30)) }
+        let web = try XCTUnwrap(descendants(hosting, of: WKWebView.self).first)
+        func js(_ script: String) async throws -> Any? { try await web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) }
+        for _ in 0..<100 {
+            if (try? await js("return document.querySelectorAll('.frontmatter tbody tr').length")) as? Int == 3 { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let rows = try await js("return document.querySelectorAll('.frontmatter tbody tr').length") as? Int
+        XCTAssertEqual(rows, 3)
+        let scripts = try await js("return document.querySelectorAll('.frontmatter script').length") as? Int
+        XCTAssertEqual(scripts, 0)
+        let alias = try await js("return document.querySelector('a[data-wikilink]').textContent") as? String
+        XCTAssertEqual(alias, "다른 노트")
+        _ = try await js("document.querySelector('a[href=\"https://example.com\"]').click(); document.querySelector('a[data-wikilink]').click()")
+        for _ in 0..<30 where opened.count < 2 { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertEqual(opened, ["https://example.com", "Other"])
+        _ = try await js("""
+        const paragraph=[...document.querySelectorAll('.tiptap p')].find(p=>p.textContent==='Editable paragraph');
+        const range=document.createRange(); range.selectNodeContents(paragraph); range.collapse(false);
+        const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        document.querySelector('.tiptap').focus(); window.crowMarkdown.insertText(' edited');
+        """)
+        for _ in 0..<30 where model.selectedBuffer?.text == original { try await Task.sleep(for: .milliseconds(30)) }
+        let edited = try XCTUnwrap(model.selectedBuffer).text
+        XCTAssertTrue(edited.hasPrefix(prefix)); XCTAssertTrue(edited.contains("[[Other|다른 노트]]")); XCTAssertTrue(edited.contains("Editable paragraph edited"))
+    }
+
     @MainActor func testLiveMarkdownEditsComposeUndoAndSaveWithoutReloading() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-live-markdown-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

@@ -215,8 +215,7 @@ struct CrowEditorView: View {
     }
 
     private var renderedEditor: some View {
-        MarkdownPreviewView(text: textBinding, fontSize: model.settings.fontSize,
-            onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest)
+        WorkspaceMarkdownView(buffer: buffer, text: textBinding, locationRequest: locationRequest)
     }
 
     private var sourceEditor: some View {

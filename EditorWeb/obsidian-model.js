@@ -66,7 +66,9 @@ export function updateNoteProperty(source, column, value) {
 }
 
 // A small expression interpreter: document expressions never execute as JavaScript.
+const expressions = new Map();
 export function expression(source) {
+  if (expressions.has(source)) return expressions.get(source);
   if (typeof source !== 'string' || source.length > 10000) throw Error('Invalid Base expression.');
   const tokens = []; let pos = 0;
   const pattern = /\s*(?:(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|([\p{L}_$][\p{L}\p{N}_$]*)|(==|!=|>=|<=|&&|\|\||[+\-*/%<>!().,\[\]]))/uy;
@@ -100,7 +102,9 @@ export function expression(source) {
     }
     depth--; return node;
   }
-  const tree=read(); if(i !== tokens.length) throw Error('Unexpected tokens in Base expression.'); return tree;
+  const tree=read(); if(i !== tokens.length) throw Error('Unexpected tokens in Base expression.');
+  if (expressions.size >= 256) expressions.delete(expressions.keys().next().value);
+  expressions.set(source, tree); return tree;
 }
 const truth = v => Array.isArray(v) ? v.length > 0 : !!v;
 const linked = v => v && typeof v === 'object' && Object.hasOwn(v,'link') ? v.link : v;
@@ -199,14 +203,19 @@ export function filter(rule, ctx) {
   const values=rule[keys[0]];
   return keys[0]==='and'?values.every(r=>filter(r,ctx)):keys[0]==='or'?values.some(r=>filter(r,ctx)):!values.some(r=>filter(r,ctx));
 }
+const recordsCache = new WeakMap();
 export function record(file) {
+  const cached = recordsCache.get(file);
+  if (cached && cached.text === file.text && cached.modified === file.modified && cached.created === file.created && cached.size === file.size && cached.path === file.path) return cached.value;
   const match=file.text?.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   const note=match?yaml(match[1]):{};
   if(!note || typeof note!=='object' || Array.isArray(note)) throw Error('Invalid frontmatter in '+file.path);
   const name=file.path.split('/').pop(), dot=name.lastIndexOf('.');
   const tags=[...list(note.tags).flatMap(v=>String(v).split(/[,\s]+/)), ...Array.from((file.text??'').matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu),m=>m[1])].map(t=>t.replace(/^#/,''));
   const links=Array.from((file.text??'').matchAll(/\[\[([^\]|#]+)(?:[^\]]*)\]\]/g),m=>m[1]);
-  return {note,file:{...file,name:dot>0?name.slice(0,dot):name,ext:dot>0?name.slice(dot+1):'',folder:file.path.includes('/')?file.path.slice(0,file.path.lastIndexOf('/')):'',tags:[...new Set(tags)],links,properties:note,mtime:file.modified?new Date(file.modified*1000):null,ctime:file.created?new Date(file.created*1000):null}};
+  const value = {note,file:{...file,name:dot>0?name.slice(0,dot):name,ext:dot>0?name.slice(dot+1):'',folder:file.path.includes('/')?file.path.slice(0,file.path.lastIndexOf('/')):'',tags:[...new Set(tags)],links,properties:note,mtime:file.modified?new Date(file.modified*1000):null,ctime:file.created?new Date(file.created*1000):null}};
+  recordsCache.set(file, {text:file.text, modified:file.modified, created:file.created, size:file.size, path:file.path, value});
+  return value;
 }
 export function compare(a,b) { if(a==null)return b==null?0:1;if(b==null)return -1;return typeof a==='number'&&typeof b==='number'?a-b:display(a).localeCompare(display(b),undefined,{numeric:true}); }
 export function base(source, files, path, viewIndex=0) {

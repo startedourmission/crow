@@ -17,6 +17,23 @@ public enum MarkdownPreview {
     }
 
     public static func editingBlocks(_ source: String) -> [EditingBlock] {
+        let frontmatter = try! NSRegularExpression(pattern: #"\A(?:\uFEFF)?---\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)"#)
+        if let match = frontmatter.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)), let range = Range(match.range, in: source) {
+            let prefix = String(source[range]), remainder = String(source[range.upperBound...])
+            let offset = (prefix as NSString).length
+            let positions = try! NSRegularExpression(pattern: #"data-source-(?:start|end)="([0-9]+)""#)
+            let body: [EditingBlock] = remainder.isEmpty ? [] : editingBlocks(remainder).map { block in
+                var html = block.html
+                for match in positions.matches(in: html, range: NSRange(html.startIndex..., in: html)).reversed() {
+                    let digits = match.range(at: 1)
+                    if let value = Int((html as NSString).substring(with: digits)), let range = Range(digits, in: html) {
+                        html.replaceSubrange(range, with: String(value + offset))
+                    }
+                }
+                return EditingBlock(source: block.source, html: html)
+            }
+            return [EditingBlock(source: prefix, html: "<div data-crow-frontmatter=\"true\"></div>")] + body
+        }
         guard let markdown = try? AttributedString(markdown: source,
             options: .init(interpretedSyntax: .full, appliesSourcePositionAttributes: true)) else {
             return [EditingBlock(source: source, html: body(source))]
@@ -90,7 +107,7 @@ public enum MarkdownPreview {
             if style.contains(.strikethrough) { text = "<del>\(text)</del>" }
             // Never execute raw HTML or fetch remote images merely by opening a note.
             if run.imageURL != nil { text = "<span class=\"image-label\">Image: \(text)</span>" }
-            if let url = run.link ?? run.imageURL, isExternalLink(url) {
+            if let url = run.link ?? run.imageURL, isExternalLink(url) || (sourceMap != nil && url.scheme == nil && run.imageURL == nil) {
                 text = "<a href=\"\(escape(url.absoluteString))\">\(text)</a>"
             }
             if let sourceMap, let position = run.markdownSourcePosition, let range = sourceMap.range(position),

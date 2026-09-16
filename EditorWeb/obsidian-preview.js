@@ -96,6 +96,13 @@ window.crowObsidian = {
   },
   receive(value) {
     if (data?.path !== value.path || data?.source !== value.source) { undo = []; redo = []; }
+    if (data?.path === value.path && value.files) {
+      const previous = new Map((data.files ?? []).map(file => [file.path, file]));
+      value.files = value.files.map(file => {
+        const old = previous.get(file.path);
+        return old && old.text === file.text && old.size === file.size && old.modified === file.modified && old.created === file.created ? old : file;
+      });
+    }
     cache.clear();
     if (value.kind === 'canvas' && value.html) {
       try {

@@ -55,6 +55,21 @@ struct ObsidianDocumentView: View {
 
 /// Every path is scoped to the workspace that owns the document, even after a tab switch.
 @MainActor enum ObsidianFiles {
+    private final class InventoryCache {
+        var files: [[String: Any]]
+        init(_ files: [[String: Any]]) { self.files = files }
+    }
+    private static let inventories: NSCache<NSString, InventoryCache> = {
+        let cache = NSCache<NSString, InventoryCache>()
+        cache.countLimit = 4; cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+    private static func inventoryKey(_ state: WorkspaceState) -> NSString {
+        "\(state.id)-\(state.snapshot.rootPath)-\(state.remote.map { String(describing: ObjectIdentifier($0)) } ?? "local")" as NSString
+    }
+    static func cachedInventory(in state: WorkspaceState) -> [[String: Any]]? {
+        inventories.object(forKey: inventoryKey(state))?.files
+    }
     static func writeNote(_ relative: String, expected: String, replacement: String, in state: WorkspaceState, model: AppModel) async throws {
         guard ["md", "markdown"].contains((relative as NSString).pathExtension.lowercased()),
               replacement.utf8.count <= TextFiles.sizeLimit else { throw CommandError("Only Markdown note properties can be edited here.") }
@@ -72,6 +87,11 @@ struct ObsidianDocumentView: View {
             try await remote.write(replacement, path: path, expected: expected)
         } else {
             try TextFiles.write(replacement, to: URL(fileURLWithPath: path), expected: expected)
+        }
+        if let cached = inventories.object(forKey: inventoryKey(state)),
+           let index = cached.files.firstIndex(where: { $0["path"] as? String == relative }) {
+            cached.files[index]["text"] = replacement
+            cached.files[index].removeValue(forKey: "modified") // Revalidate this note on the next scan.
         }
         if let index = state.snapshot.buffers.firstIndex(where: matches) {
             if state.snapshot.buffers[index].text == expected && !state.snapshot.buffers[index].isDirty {
@@ -135,15 +155,18 @@ struct ObsidianDocumentView: View {
         progress: @MainActor ([[String: Any]], Int) async -> Void = { _, _ in }) async throws -> ([[String: Any]], String?) {
         let remote = state.snapshot.workspace.isRemote
         if remote && state.remote == nil { throw FileFailure.disconnected }
-        let root = state.snapshot.rootPath
+        let root = state.snapshot.rootPath, key = inventoryKey(state)
+        let previous = inventories.object(forKey: key)?.files ?? []
+        let cached = Dictionary(uniqueKeysWithValues: previous.compactMap { item in (item["path"] as? String).map { ($0, item) } })
         var queue = [root], files: [[String: Any]] = [], warnings = Set<String>(), total = 0, visited = 0
         var lastReport = Date.distantPast
-        await progress([], 0)
+        try Task.checkCancellation()
+        await progress(previous, 0)
         while let folder = queue.popLast() {
             try Task.checkCancellation()
             visited += 1
             if visited > 3000 || files.count >= 2000 { warnings.insert("Preview limited to 2,000 files / 3,000 folders."); break }
-            if Date().timeIntervalSince(lastReport) > 0.5 { lastReport = Date(); await progress(files, visited) }
+            if previous.isEmpty && Date().timeIntervalSince(lastReport) > 0.5 { lastReport = Date(); await progress(files, visited) }
             let entries: [RemoteFileListing]
             do {
                 if remote {
@@ -177,6 +200,14 @@ struct ObsidianDocumentView: View {
                 do {
                     if ["md", "markdown"].contains((entry.path as NSString).pathExtension.lowercased()) {
                         if total >= 20 * 1024 * 1024 || (details.size ?? 0) > 512 * 1024 { throw FileFailure.tooLarge }
+                        if let old = cached[relative], let text = old["text"] as? String,
+                           let size = details.size, (old["size"] as? NSNumber)?.uint64Value == size,
+                           let modified = details.modified,
+                           (old["modified"] as? Double) == modified.timeIntervalSince1970,
+                           !remote || Date().timeIntervalSince(modified) > 2 {
+                            total += text.utf8.count; item["text"] = text; files.append(item)
+                            continue
+                        }
                         let data: Data
                         if remote {
                             let path = try await resolve(relative, in: state)
@@ -199,10 +230,12 @@ struct ObsidianDocumentView: View {
                     files.append(item)
                 } catch is CancellationError { throw CancellationError() }
                 catch { try Task.checkCancellation(); warnings.insert("Unreadable or oversized notes were omitted (512 KB per note, 20 MB total).") }
-                if files.count == 1 || Date().timeIntervalSince(lastReport) > 0.5 { lastReport = Date(); await progress(files, visited) }
+                if previous.isEmpty && (files.count == 1 || Date().timeIntervalSince(lastReport) > 0.5) { lastReport = Date(); await progress(files, visited) }
             }
         }
         try Task.checkCancellation()
+        guard inventoryKey(state) == key else { throw CancellationError() }
+        inventories.setObject(InventoryCache(files), forKey: key, cost: total + files.count * 256)
         return (files, warnings.isEmpty ? nil : warnings.sorted().joined(separator: " "))
     }
 
@@ -365,11 +398,7 @@ struct ObsidianDocumentView: View {
                 assets[id] = request; assetTail = request
             } else if action == "open" {
                 if let url = URL(string: path), ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") {
-                    #if os(macOS)
-                    NSWorkspace.shared.open(url)
-                    #else
-                    UIApplication.shared.open(url)
-                    #endif
+                    model.openMarkdownLink(path, from: bufferID)
                     return
                 }
                 Task {

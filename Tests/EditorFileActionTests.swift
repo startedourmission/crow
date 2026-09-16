@@ -133,6 +133,31 @@ import WebKit
         XCTAssertNil(model.folderSelectionPanel); XCTAssertFalse(model.folderImporterVisible)
     }
 
+    func testMarkdownWebLinksOpenBrowserInTheOwningWorkspace() throws {
+        let id = try XCTUnwrap(model.selectedBufferID), state = model.current
+        model.openMarkdownLink("https://example.com/docs", from: id)
+        XCTAssertEqual(state.snapshot.browserAddresses.values.filter { $0 == "https://example.com/docs" }.count, 1)
+        let count = state.snapshot.browserAddresses.count
+        model.openMarkdownLink("javascript:alert(1)", from: id)
+        model.openMarkdownLink("Other.md", from: id)
+        XCTAssertEqual(state.snapshot.browserAddresses.count, count, "Unsafe schemes and disabled note links must not open tabs")
+    }
+
+    func testBaseInventoryReusesSnapshotAndReconcilesChangedAndDeletedFiles() async throws {
+        let note = root.appendingPathComponent("Cached.md")
+        try Data("---\nstatus: reading\n---\nBody".utf8).write(to: note)
+        _ = try await ObsidianFiles.inventory(in: model.current)
+        var initial: [[String: Any]]?
+        let (unchanged, _) = try await ObsidianFiles.inventory(in: model.current) { files, _ in if initial == nil { initial = files } }
+        XCTAssertEqual(initial?.count, unchanged.count, "Reopening must publish cached results before any IO")
+        try Data("---\nstatus: done\n---\nChanged body".utf8).write(to: note)
+        let (changed, _) = try await ObsidianFiles.inventory(in: model.current)
+        XCTAssertTrue((changed.first { $0["path"] as? String == "Cached.md" }?["text"] as? String)?.contains("status: done") == true)
+        try FileManager.default.removeItem(at: note)
+        let (deleted, _) = try await ObsidianFiles.inventory(in: model.current)
+        XCTAssertFalse(deleted.contains { $0["path"] as? String == "Cached.md" })
+    }
+
     func testBaseInventoryPublishesBeforeCompletionAndHonorsCancellation() async throws {
         for index in 0..<50 { try Data("---\nstatus: reading\n---".utf8).write(to: root.appendingPathComponent("Note-\(index).md")) }
         let state = model.current

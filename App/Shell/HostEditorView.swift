@@ -241,6 +241,10 @@ struct CrowSettingsView: View {
                         Text("Source").tag(false)
                     }.labelsHidden().fixedSize().accessibilityIdentifier("crow.settings.markdown-view")
                 }
+                Divider()
+                CrowSettingsRow("Internal links & backlinks") {
+                    Toggle("Internal links & backlinks", isOn: Binding(get: { model.settings.effectiveNoteLinksEnabled }, set: { model.settings.noteLinksEnabled = $0 })).labelsHidden()
+                }
             }
         }
         CrowSettingsSection("Terminal & Layout") {

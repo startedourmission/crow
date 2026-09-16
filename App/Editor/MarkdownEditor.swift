@@ -7,6 +7,8 @@ struct MarkdownPreviewView: View {
     let fontSize: Double
     var onSave: () -> Void = {}
     var locationRequest: EditorLocationRequest?
+    var onOpenLink: ((String) -> Void)?
+    var noteLinksEnabled = false
     @State private var failure: String?
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +17,7 @@ struct MarkdownPreviewView: View {
                 NativeEditor(text: $text, fontSize: fontSize, indentWidth: 4, lineNumbers: false,
                     findRequest: 0, onSave: onSave, locationRequest: locationRequest)
             } else {
-                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest)
+                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled)
             }
         }
     }
@@ -23,6 +25,8 @@ struct MarkdownPreviewView: View {
 
 @MainActor private final class MarkdownNavigation: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     var source: String?
+    var onOpenLink: ((String) -> Void)?
+    var noteLinksEnabled = false
     var fontSize: Double?
     var text: Binding<String> = .constant("")
     var onSave: () -> Void = {}
@@ -78,9 +82,9 @@ struct MarkdownPreviewView: View {
             guard !Task.isCancelled, let self, let webView,
                   self.renderID == id, self.text.wrappedValue == value else { return }
             if cached == nil { MarkdownBlockCache.insert(blocks, for: value) }
-            webView.callAsyncJavaScript("window.crowMarkdown.receive(source, blocks, fontSize)",
+            webView.callAsyncJavaScript("window.crowMarkdown.receive(source, blocks, fontSize, noteLinksEnabled)",
                 arguments: ["source": value, "blocks": blocks.map { ["source": $0.source, "html": $0.html] },
-                    "fontSize": self.fontSize ?? 15], in: nil, in: .defaultClient) { [weak self] result in
+                    "fontSize": self.fontSize ?? 15, "noteLinksEnabled": self.noteLinksEnabled], in: nil, in: .defaultClient) { [weak self] result in
                     guard let self, self.renderID == id else { return }
                     self.rendering = false; self.renderTask = nil
                     if case .failure(let error) = result { self.failure.wrappedValue = error.localizedDescription }
@@ -115,7 +119,9 @@ struct MarkdownPreviewView: View {
             } else if let text = body["text"] as? String { UIPasteboard.general.string = text }
         #endif
         case "openLink":
-            guard let value = body["url"] as? String, let url = URL(string: value), MarkdownPreview.isExternalLink(url) else { return }
+            guard let value = body["url"] as? String else { return }
+            if let onOpenLink { onOpenLink(value); return }
+            guard let url = URL(string: value), MarkdownPreview.isExternalLink(url) else { return }
             #if os(macOS)
             NSWorkspace.shared.open(url)
             #else
@@ -127,7 +133,8 @@ struct MarkdownPreviewView: View {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         if navigationAction.navigationType == .linkActivated {
-            if let url = navigationAction.request.url, MarkdownPreview.isExternalLink(url) {
+            if let url = navigationAction.request.url, let onOpenLink { onOpenLink(url.absoluteString) }
+            else if let url = navigationAction.request.url, MarkdownPreview.isExternalLink(url) {
                 #if os(macOS)
                 NSWorkspace.shared.open(url)
                 #else
@@ -151,6 +158,8 @@ struct MarkdownPreviewView: View {
     var onSave: () -> Void
     @Binding var failure: String?
     var locationRequest: EditorLocationRequest?
+    var onOpenLink: ((String) -> Void)?
+    var noteLinksEnabled = false
     func makeCoordinator() -> MarkdownNavigation { MarkdownNavigation() }
     func makeView(_ coordinator: MarkdownNavigation) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -169,15 +178,20 @@ struct MarkdownPreviewView: View {
         view.navigationDelegate = coordinator
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.fontSize = fontSize; coordinator.failure = $failure
         coordinator.locationRequest = locationRequest
+        coordinator.onOpenLink = onOpenLink
+        coordinator.noteLinksEnabled = noteLinksEnabled
         view.loadHTMLString(MarkdownPreview.document("", fontSize: fontSize), baseURL: nil)
         return view
     }
     func update(_ view: WKWebView, coordinator: MarkdownNavigation) {
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.failure = $failure
         coordinator.locationRequest = locationRequest
-        guard coordinator.source != text || coordinator.fontSize != fontSize else { coordinator.navigate(view); return }
+        coordinator.onOpenLink = onOpenLink
+        let linksChanged = coordinator.noteLinksEnabled != noteLinksEnabled
+        coordinator.noteLinksEnabled = noteLinksEnabled
+        guard coordinator.source != text || coordinator.fontSize != fontSize || linksChanged else { coordinator.navigate(view); return }
         coordinator.fontSize = fontSize
-        coordinator.render(view)
+        coordinator.render(view, force: linksChanged)
     }
 }
 #if os(macOS)
@@ -247,4 +261,111 @@ private enum MarkdownLiveEditing {
         }
         """
     }()
+}
+
+/// Link indexing is opt-in and starts only when the backlinks section is expanded.
+struct WorkspaceMarkdownView: View {
+    @Environment(AppModel.self) private var model
+    let buffer: OpenBuffer
+    @Binding var text: String
+    var locationRequest: EditorLocationRequest?
+    @State private var expanded = false
+    @State private var backlinks: [String] = []
+    @State private var loading = false
+    @State private var warning: String?
+    @State private var refresh = 0
+    private var scope: String { "\(buffer.id)-\(buffer.path)-\(model.settings.effectiveNoteLinksEnabled)-\(expanded)-\(refresh)" }
+    var body: some View {
+        VStack(spacing: 0) {
+            MarkdownPreviewView(text: $text, fontSize: model.settings.fontSize,
+                onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest,
+                onOpenLink: { model.openMarkdownLink($0, from: buffer.id) }, noteLinksEnabled: model.settings.effectiveNoteLinksEnabled)
+            if model.settings.effectiveNoteLinksEnabled {
+                DisclosureGroup(isExpanded: $expanded) {
+                    HStack {
+                        if loading { ProgressView().controlSize(.small) }
+                        Text(warning ?? (backlinks.isEmpty ? "No backlinks in this workspace." : "\(backlinks.count) linked notes"))
+                            .font(.caption).foregroundStyle(CrowTheme.textDim)
+                        Spacer()
+                        Button { refresh += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
+                            .buttonStyle(CrowButtonStyle()).disabled(loading).help("Refresh backlinks")
+                    }
+                    if !backlinks.isEmpty {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(backlinks, id: \.self) { path in
+                                    Button(path) { model.openMarkdownWorkspaceFile(path, from: buffer.id) }
+                                        .buttonStyle(.plain).font(.system(size: 12)).lineLimit(1)
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxHeight: 110)
+                    }
+                } label: { Text("Backlinks").font(.system(size: 12)) }
+                .padding(10).background(CrowTheme.bg0).windowDragExcluded()
+            }
+        }
+        .task(id: scope) {
+            guard expanded, model.settings.effectiveNoteLinksEnabled, let (state, _) = model.locate(buffer.id) else { return }
+            backlinks = []; warning = nil; loading = true
+            do {
+                let root = state.snapshot.rootPath
+                let (files, message) = try await ObsidianFiles.inventory(in: state)
+                let notes = Dictionary(uniqueKeysWithValues: files.compactMap { item -> (String, String)? in
+                    guard let path = item["path"] as? String, let text = item["text"] as? String else { return nil }
+                    return (path, text)
+                })
+                let target = String(buffer.path.dropFirst(root == "/" ? 1 : root.count + 1))
+                let worker = Task.detached(priority: .utility) { NoteLinks.backlinks(to: target, notes: notes) }
+                let result = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+                try Task.checkCancellation()
+                backlinks = result; warning = message; loading = false
+            } catch { if !Task.isCancelled { warning = error.localizedDescription; loading = false } }
+        }
+    }
+}
+
+extension AppModel {
+    func openMarkdownLink(_ value: String, from bufferID: BufferID) {
+        guard let (state, index) = locate(bufferID) else { return }
+        if let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            do { _ = try BrowserAddress.parse(value) } catch { report(error); return }
+            activateWorkspace(state.id, reconnect: false); newBrowser(address: value); return
+        }
+        if let url = URL(string: value), url.scheme?.lowercased() == "mailto" {
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #else
+            UIApplication.shared.open(url)
+            #endif
+            return
+        }
+        guard settings.effectiveNoteLinksEnabled, URL(string: value)?.scheme == nil else { return }
+        let root = state.snapshot.rootPath, source = state.snapshot.buffers[index].path
+        Task {
+            do {
+                let files: [[String: Any]]
+                if let cached = ObsidianFiles.cachedInventory(in: state) { files = cached }
+                else { files = try await ObsidianFiles.inventory(in: state).0 }
+                let paths = Set(files.compactMap { $0["path"] as? String })
+                let relative = String(source.dropFirst(root == "/" ? 1 : root.count + 1))
+                guard let target = NoteLinks.resolve(value, from: relative, paths: paths) else {
+                    throw CommandError("The linked file was not found or its name is ambiguous. Use a workspace-relative path.")
+                }
+                try Task.checkCancellation()
+                guard locate(bufferID)?.0 === state, state.snapshot.rootPath == root else { return }
+                openMarkdownWorkspaceFile(target, from: bufferID)
+            } catch { if !Task.isCancelled { report(error) } }
+        }
+    }
+    func openMarkdownWorkspaceFile(_ relative: String, from bufferID: BufferID) {
+        guard let (state, _) = locate(bufferID) else { return }
+        Task {
+            do {
+                let path = try await ObsidianFiles.resolve(relative, in: state)
+                guard states.contains(where: { $0 === state }) else { return }
+                activateWorkspace(state.id, reconnect: false)
+                openFile(FileEntry(name: (path as NSString).lastPathComponent, path: path, isDirectory: false))
+            } catch { report(error) }
+        }
+    }
 }

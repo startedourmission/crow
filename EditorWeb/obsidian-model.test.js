@@ -69,3 +69,11 @@ test('Base view changes preserve comments, global filters and unknown settings',
  assert.equal(yaml(updateBaseView(edited,1,{name:'Cards',type:'cards'})).views.length,2);
  assert.throws(()=>updateBaseView(source,0,{type:'invalid'}),/Unsupported/);
 });
+
+test('Note metadata cache is reused and invalidated after an edit', () => {
+ const file={path:'Note.md',text:'---\nstatus: reading\n---\n#old',modified:1};
+ const first=record(file); assert.strictEqual(record(file),first);
+ file.text='---\nstatus: done\n---\n#new';
+ const changed=record(file); assert.notStrictEqual(changed,first); assert.equal(changed.note.status,'done');
+ file.modified=2; assert.equal(record(file).file.mtime.getTime(),2000);
+});
