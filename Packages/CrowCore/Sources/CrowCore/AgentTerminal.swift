@@ -29,15 +29,21 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
     public var isPinned = false
     public var sessionID: String?
     public var forkSession: Bool?
+    /// The CLI's actual conversation ID; a fork's launch ID still names its parent.
+    public var historySessionID: String?
+    public var createdAt: Date? = Date()
+    public var firstPrompt: String?
+    public var currentSessionID: String? { historySessionID ?? (forkSession == true ? nil : sessionID) }
     /// Legacy isolated-agent tabs must be reopened explicitly as ordinary agents.
     public var isManagedReverse: Bool?
     /// The tab belongs to a local workspace, while its CLI and history live on this server.
     public var reverseHostID: HostID?
     public var reverseServerDirectory: String?
     public var command: String {
-        guard let sessionID else { return provider.command(directory: directory) }
-        let resume: [String] = provider == .codex ? [forkSession == true ? "fork" : "resume", sessionID]
-            : ["--resume", sessionID] + (forkSession == true ? ["--fork-session"] : [])
+        guard let sessionID = historySessionID ?? sessionID else { return provider.command(directory: directory) }
+        let fork = historySessionID == nil && forkSession == true
+        let resume: [String] = provider == .codex ? [fork ? "fork" : "resume", sessionID]
+            : ["--resume", sessionID] + (fork ? ["--fork-session"] : [])
         return TerminalCommand.environment + "cd " + TerminalCommand.path(directory) + " && exec "
             + ([provider.rawValue] + resume + provider.arguments).map(TerminalCommand.quote).joined(separator: " ")
     }

@@ -1524,10 +1524,21 @@ final class AppModel {
         let directory = state.snapshot.agentTerminals.first { $0.id == id }?.directory ?? state.contextRootPath
         let session = TerminalSession(id: id, workspace: state.snapshot.workspace, directory: directory,
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
+        if let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }),
+           state.snapshot.agentTerminals[index].sessionID == nil,
+           state.snapshot.agentTerminals[index].historySessionID == nil {
+            state.snapshot.agentTerminals[index].createdAt = Date()
+            state.snapshot.agentTerminals[index].firstPrompt = nil
+        }
         if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {
-            session.launchCommand = agent.command
+        session.launchCommand = agent.command
             session.agentProvider = agent.provider
             session.agentConversationTitle = agent.conversationTitle
+            session.onFirstAgentPrompt = { [weak state] prompt in
+                guard let state, let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }),
+                      state.snapshot.agentTerminals[index].firstPrompt == nil else { return }
+                state.snapshot.agentTerminals[index].firstPrompt = prompt
+            }
             session.onAgentTitle = { [weak self, weak state] title in
                 guard let self, let state,
                       let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }),

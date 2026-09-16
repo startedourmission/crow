@@ -8,6 +8,75 @@ import Observation
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testHistoryDeletionWaitsForTerminalProcessToExit() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-exit-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ready = root.appendingPathComponent("ready"), finished = root.appendingPathComponent("finished")
+        let session = TerminalSession(id: UUID(), workspace: .init(name: "Fixture", kind: .local, connection: .local), directory: root.path, remote: nil, fontSize: 14)
+        session.shellEnvironment = ["PATH=/usr/bin:/bin", "HOME=" + root.path, "ZDOTDIR=" + root.path]
+        let flush = "trap '' TERM HUP; sleep 0.2; touch " + TerminalCommand.quote(finished.path) + "; exit"
+        session.launchCommand = "exec /bin/sh -c " + TerminalCommand.quote("trap " + TerminalCommand.quote(flush) + " TERM HUP; touch " + TerminalCommand.quote(ready.path) + "; while :; do sleep 0.05; done")
+        session.start()
+        defer { session.stop() }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: ready.path) { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
+        session.stop()
+        try await session.waitUntilStopped()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: finished.path), "Wait for the agent's final history flush, not just its tab closing")
+    }
+
+    @MainActor func testNewAgentHistoryBindingRejectsOldAndAmbiguousConversations() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-binding-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let id = try XCTUnwrap(model.newAgentTerminal(.codex))
+        let state = model.current, index = try XCTUnwrap(state.snapshot.agentTerminals.firstIndex { $0.id == id })
+        state.snapshot.agentTerminals[index].firstPrompt = "Fix the editor"
+        let serverNow = Date().timeIntervalSince1970 + 3600
+        func entry(_ id: String, started: Double) -> AgentHistoryEntry {
+            .init(id: id, provider: .codex, path: "/history/" + id, title: "Fix the editor", modified: serverNow,
+                  size: 100, first: .init(role: "user", text: "Fix the editor"), recent: [], tokens: nil, started: started)
+        }
+        let old = entry("old", started: serverNow - 600), fresh = entry("fresh", started: serverNow)
+        model.reconcileAgentHistory([old], source: state, path: state.snapshot.agentTerminals[index].directory, serverTime: serverNow)
+        XCTAssertNil(state.snapshot.agentTerminals[index].currentSessionID)
+        model.reconcileAgentHistory([fresh, entry("ambiguous", started: serverNow)], source: state,
+                                    path: state.snapshot.agentTerminals[index].directory, serverTime: serverNow)
+        XCTAssertNil(state.snapshot.agentTerminals[index].currentSessionID)
+        model.reconcileAgentHistory([old, fresh], source: state, path: state.snapshot.agentTerminals[index].directory, serverTime: serverNow)
+        XCTAssertEqual(state.snapshot.agentTerminals[index].currentSessionID, "fresh")
+        XCTAssertEqual(model.closeAgentHistoryTabs(fresh, source: state), 1)
+        XCTAssertFalse(state.snapshot.terminalIDs.contains(id))
+    }
+
+    @MainActor func testDeletingHistoryClosesMatchingTabsAcrossWorkspacesButNotOtherHostsOrForks() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-close-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let firstHost = HostID(rawValue: UUID()), otherHost = HostID(rawValue: UUID())
+        let source = WorkspaceState(.init(workspace: .init(name: "Source", kind: .remote(hostID: firstHost, path: "/project"), connection: .disconnected), rootPath: "/project"))
+        let other = WorkspaceState(.init(workspace: .init(name: "Other", kind: .remote(hostID: otherHost, path: "/project"), connection: .disconnected), rootPath: "/project"))
+        model.states.append(contentsOf: [source, other])
+        func add(_ state: WorkspaceState, provider: AgentProvider = .codex, reverse: HostID? = nil, fork: Bool = false) -> UUID {
+            var agent = AgentTerminal(provider: provider, directory: "/project")
+            agent.sessionID = "session"; agent.reverseHostID = reverse; agent.forkSession = fork
+            state.snapshot.agentTerminals.append(agent); state.snapshot.terminalIDs.append(agent.id)
+            return agent.id
+        }
+        let remote = add(source), reverse = add(model.current, reverse: firstHost)
+        let unrelated = add(other), fork = add(source, fork: true), claude = add(source, provider: .claude)
+        let entry = AgentHistoryEntry(id: "session", provider: .codex, path: "/history", title: "Conversation", modified: 0,
+                                      size: 1, first: .init(role: "user", text: "Prompt"), recent: [], tokens: nil)
+        XCTAssertEqual(model.closeAgentHistoryTabs(entry, source: source), 2)
+        XCTAssertFalse(source.snapshot.terminalIDs.contains(remote))
+        XCTAssertFalse(model.current.snapshot.terminalIDs.contains(reverse))
+        XCTAssertTrue(other.snapshot.terminalIDs.contains(unrelated))
+        XCTAssertTrue(source.snapshot.terminalIDs.contains(fork))
+        XCTAssertTrue(source.snapshot.terminalIDs.contains(claude))
+        XCTAssertNil(model.terminalCloseRequest, "The history deletion confirmation already covers closing the tabs")
+    }
+
     @MainActor func testReverseAgentKeepsLocalContextAndRoutesHistoryToServer() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-context-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

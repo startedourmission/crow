@@ -57,6 +57,36 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertTrue(other.exists())
 
+    def test_unchanged_history_does_not_reparse_conversations_and_new_messages_invalidate(self):
+        path = self.homes["claude"] / "projects/project" / (self.session_id + ".jsonl")
+        prompt = {"type": "user", "sessionId": self.session_id, "cwd": self.workspace,
+                  "timestamp": "2026-09-16T10:00:00Z", "message": {"content": "First prompt"}}
+        self.write(path, [prompt])
+        with patch.object(history, "homes", return_value=self.homes):
+            first = history.list_sessions(self.workspace)
+            self.assertEqual(len(first["sessions"]), 1)
+            with patch.object(history, "conversation", side_effect=AssertionError("Unchanged logs must not be read")):
+                unchanged = history.list_sessions(self.workspace, first["signature"])
+            self.assertTrue(unchanged["unchanged"])
+            with path.open("a") as stream:
+                stream.write(json.dumps({"type": "assistant", "message": {"content": "New answer"}}) + "\n")
+            updated = history.list_sessions(self.workspace, first["signature"])
+        self.assertNotEqual(first["signature"], updated["signature"])
+        self.assertEqual(updated["sessions"][0]["recent"][-1]["text"], "New answer")
+
+    def test_closed_tab_deletion_accepts_final_flush_but_still_checks_session_identity(self):
+        path = self.homes["claude"] / "projects/project" / (self.session_id + ".jsonl")
+        prompt = {"type": "user", "sessionId": self.session_id, "cwd": self.workspace, "message": {"content": "Prompt"}}
+        self.write(path, [prompt])
+        expected = history.conversation("claude", path, self.workspace, self.homes["claude"])
+        with path.open("a") as stream:
+            stream.write(json.dumps({"type": "assistant", "message": {"content": "Final answer"}}) + "\n")
+        with patch.object(history, "homes", return_value=self.homes):
+            with self.assertRaisesRegex(ValueError, "selected workspace"):
+                history.delete_session(self.workspace, dict(expected, id="22222222-2222-4222-8222-222222222222"), closed_tab=True)
+            history.delete_session(self.workspace, expected, closed_tab=True)
+        self.assertFalse(path.exists())
+
     def test_grok_uses_summary_cwd_and_skips_synthetic_context(self):
         home = self.homes["grok"]
         path = home / "sessions/project" / self.session_id / "chat_history.jsonl"

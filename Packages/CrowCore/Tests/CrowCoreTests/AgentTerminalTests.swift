@@ -2,6 +2,20 @@ import XCTest
 @testable import CrowCore
 
 final class AgentTerminalTests: XCTestCase {
+    func testRecordedConversationResumesTheActualSessionInsteadOfForkingItsParentAgain() throws {
+        for provider in AgentProvider.allCases {
+            var agent = AgentTerminal(provider: provider, directory: "/project")
+            agent.sessionID = "parent"; agent.forkSession = true
+            XCTAssertNil(agent.currentSessionID)
+            agent.historySessionID = "child"
+            XCTAssertEqual(agent.currentSessionID, "child")
+            XCTAssertTrue(agent.command.contains("'child'"))
+            XCTAssertFalse(agent.command.contains("'parent'"))
+            XCTAssertFalse(agent.command.contains("'fork'") || agent.command.contains("--fork-session"))
+            let restored = try JSONDecoder().decode(AgentTerminal.self, from: JSONEncoder().encode(agent))
+            XCTAssertEqual(restored.currentSessionID, "child")
+        }
+    }
     func testAgentPreferencesPreserveLegacyDefaultsDisabledIDsAndAllOff() throws {
         let legacy = try JSONEncoder().encode(EditorSettings())
         var settings = try JSONDecoder().decode(EditorSettings.self, from: legacy)

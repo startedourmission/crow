@@ -159,7 +159,8 @@ extension AppModel {
         let agent = current.snapshot.agentTerminals.first { $0.id == terminalID }
         reverseAgentRequest = ReverseAgentRequest(workspaceID: current.id, paneID: paneID,
             directory: agent?.directory ?? current.agentHistoryPath, provider: agent?.provider ?? .claude,
-            hostID: agent?.reverseHostID, sessionID: agent?.sessionID, replacingTerminalID: terminalID)
+            hostID: agent?.reverseHostID, sessionID: agent?.historySessionID ?? agent?.sessionID,
+            fork: agent?.historySessionID == nil && agent?.forkSession == true, replacingTerminalID: terminalID)
     }
 
     func agentHistorySource(for state: WorkspaceState) throws -> (WorkspaceState, String) {
@@ -258,6 +259,11 @@ extension AppModel {
         session.systemSSH = source.systemSSH
         session.launchCommand = TerminalCommand.environment + prepared.command
         session.agentProvider = request.provider
+        session.onFirstAgentPrompt = { [weak owner] prompt in
+            guard let owner, let index = owner.snapshot.agentTerminals.firstIndex(where: { $0.id == agent.id }),
+                  owner.snapshot.agentTerminals[index].firstPrompt == nil else { return }
+            owner.snapshot.agentTerminals[index].firstPrompt = prompt
+        }
         session.onAgentTitle = { [weak self, weak owner] title in
             guard let self, let owner, let index = owner.snapshot.agentTerminals.firstIndex(where: { $0.id == agent.id }) else { return }
             owner.snapshot.agentTerminals[index].conversationTitle = title; self.schedulePersist()

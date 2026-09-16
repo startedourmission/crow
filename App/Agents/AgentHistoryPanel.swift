@@ -1,12 +1,12 @@
 import CrowCore
 import SwiftUI
 
-struct AgentHistoryMessage: Codable, Sendable {
+struct AgentHistoryMessage: Codable, Sendable, Equatable {
     let role: String
     let text: String
 }
 
-struct AgentHistoryEntry: Codable, Identifiable, Sendable {
+struct AgentHistoryEntry: Codable, Identifiable, Sendable, Equatable {
     let id: String
     let provider: AgentProvider
     let path: String
@@ -16,12 +16,16 @@ struct AgentHistoryEntry: Codable, Identifiable, Sendable {
     let first: AgentHistoryMessage
     let recent: [AgentHistoryMessage]
     let tokens: Int?
+    var started: Double? = nil
     var key: String { provider.rawValue + ":" + id }
 }
 
 struct AgentHistoryResult: Decodable {
     let sessions: [AgentHistoryEntry]
     let warnings: [String]
+    var signature: String? = nil
+    var unchanged: Bool? = nil
+    var server_time: Double? = nil
 }
 
 @MainActor enum AgentHistoryService {
@@ -46,12 +50,63 @@ struct AgentHistoryResult: Decodable {
         #endif
         return Data(output.utf8)
     }
-    static func list(in state: WorkspaceState, workspacePath: String? = nil) async throws -> AgentHistoryResult {
-        try JSONDecoder().decode(AgentHistoryResult.self, from: await run(["workspace": workspacePath ?? state.agentHistoryPath], in: state))
+    static func list(in state: WorkspaceState, workspacePath: String? = nil, knownSignature: String? = nil) async throws -> AgentHistoryResult {
+        var request: [String: Any] = ["workspace": workspacePath ?? state.agentHistoryPath]
+        if let knownSignature { request["known_signature"] = knownSignature }
+        return try JSONDecoder().decode(AgentHistoryResult.self, from: await run(request, in: state))
     }
-    static func delete(_ entry: AgentHistoryEntry, in state: WorkspaceState, workspacePath: String? = nil) async throws {
+    static func delete(_ entry: AgentHistoryEntry, in state: WorkspaceState, workspacePath: String? = nil, closedTab: Bool = false) async throws {
         let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry))
-        _ = try await run(["workspace": workspacePath ?? state.agentHistoryPath, "action": "delete", "session": value], in: state)
+        _ = try await run(["workspace": workspacePath ?? state.agentHistoryPath, "action": "delete", "session": value, "closed_tab": closedTab], in: state)
+    }
+}
+
+extension AppModel {
+    /// Bind a newly created CLI record only when both sides are unambiguous.
+    /// Start time excludes old conversations that happen to have the same prompt.
+    func reconcileAgentHistory(_ entries: [AgentHistoryEntry], source: WorkspaceState, path: String, serverTime: Double) {
+        var matches: [(WorkspaceState, Int, String)] = []
+        let clockOffset = serverTime - Date().timeIntervalSince1970
+        let hostID = source.snapshot.workspace.hostID
+        for state in states {
+            for (index, agent) in state.snapshot.agentTerminals.enumerated() {
+                guard agent.currentSessionID == nil, state.snapshot.terminalIDs.contains(agent.id),
+                      (agent.reverseHostID ?? state.snapshot.workspace.hostID) == hostID,
+                      (agent.reverseServerDirectory ?? agent.directory) == path,
+                      let created = agent.createdAt,
+                      let prompt = agent.firstPrompt, !prompt.isEmpty else { continue }
+                let candidates = entries.filter { entry in
+                    guard entry.provider == agent.provider, let started = entry.started,
+                          started >= created.timeIntervalSince1970 + clockOffset - 2 else { return false }
+                    return entry.first.text.trimmingCharacters(in: .whitespacesAndNewlines) == prompt
+                }
+                if candidates.count == 1 { matches.append((state, index, candidates[0].id)) }
+            }
+        }
+        var changed = false
+        for (state, index, id) in matches {
+            let provider = state.snapshot.agentTerminals[index].provider
+            guard matches.filter({ $0.2 == id && $0.0.snapshot.agentTerminals[$0.1].provider == provider }).count == 1,
+                  !states.contains(where: { owner in owner.snapshot.agentTerminals.contains {
+                      $0.provider == provider && $0.currentSessionID == id && ($0.reverseHostID ?? owner.snapshot.workspace.hostID) == hostID
+                  } }) else { continue }
+            state.snapshot.agentTerminals[index].historySessionID = id; changed = true
+        }
+        if changed { schedulePersist() }
+    }
+
+    func agentHistoryTabIDs(_ entry: AgentHistoryEntry, source: WorkspaceState) -> [UUID] {
+        let hostID = source.snapshot.workspace.hostID
+        return states.flatMap { state in state.snapshot.agentTerminals.filter {
+            $0.provider == entry.provider && $0.currentSessionID == entry.id
+                && ($0.reverseHostID ?? state.snapshot.workspace.hostID) == hostID
+                && state.snapshot.terminalIDs.contains($0.id)
+        }.map(\.id) }
+    }
+    @discardableResult func closeAgentHistoryTabs(_ entry: AgentHistoryEntry, source: WorkspaceState) -> Int {
+        let ids = agentHistoryTabIDs(entry, source: source)
+        for id in ids { closeTerminal(id) }
+        return ids.count
     }
 }
 
@@ -71,7 +126,13 @@ struct AgentHistoryPanel: View {
     @State private var loadedExecutionState: WorkspaceState?
     @State private var loadedExecutionPath: String?
     @State private var loadedReverseHost: HostID?
-    private var scope: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(refreshID)" }
+    @State private var loadedContext: String?
+    @State private var historySignature: String?
+    @State private var automaticRefreshPaused = false
+    private var focusedAgent: AgentTerminal? { model.current.snapshot.agentTerminals.first { $0.id == model.current.snapshot.selectedTerminalID } }
+    private var focusedTerminal: TerminalSession? { model.current.snapshot.selectedTerminalID.flatMap { model.current.terminals[$0] } }
+    private var context: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.aiUsageSource.state?.remote?.isConnected == true)" }
+    private var scope: String { context + "-\(refreshID)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -82,7 +143,7 @@ struct AgentHistoryPanel: View {
                 Button { refreshID += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
                     .buttonStyle(CrowButtonStyle()).windowDragExcluded()
                     .accessibilityLabel("Refresh agent sessions")
-                    .help("Refresh agent sessions").disabled(loading || deleting)
+                    .help(automaticRefreshPaused ? "Refresh agent sessions · automatic refresh paused for this slow source" : "Refresh agent sessions").disabled(loading || deleting)
                     .accessibilityIdentifier("crow.history.refresh")
             }.padding(.horizontal, 12).padding(.top, 12)
             TextField("Search sessions", text: $search).textFieldStyle(.roundedBorder).padding(.horizontal, 12)
@@ -101,26 +162,55 @@ struct AgentHistoryPanel: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .windowDragExcluded()
             .accessibilityIdentifier("crow.history.panel")
+            .onChange(of: focusedAgent?.firstPrompt) { _, prompt in
+                if prompt != nil, !automaticRefreshPaused { refreshID += 1 }
+            }
+            .onChange(of: focusedTerminal?.agentActivity) { before, after in
+                if !automaticRefreshPaused, before == .working, after == .idle || after == .needsInput { refreshID += 1 }
+            }
             .task(id: scope) {
+                guard !deleting else { return }
                 let state = model.current, path = model.current.agentHistoryPath
-                loadedPath = path; loadedState = state; entries = []; error = nil; warnings = []; expanded = []; deletion = nil; loading = true
-                loadedExecutionState = nil; loadedExecutionPath = nil; loadedReverseHost = nil
-                while !Task.isCancelled {
+                if loadedContext != context {
+                    loadedContext = context; historySignature = nil
+                    loadedPath = path; loadedState = state; entries = []; warnings = []; expanded = []; deletion = nil
+                    loadedExecutionState = nil; loadedExecutionPath = nil; loadedReverseHost = nil
+                }
+                error = nil; loading = entries.isEmpty
+                // No continuous timer: only panel/folder changes, a first prompt,
+                // a finished turn or explicit Refresh trigger a read. Allow two
+                // short retries for the CLI to save its first conversation record.
+                let retries = focusedAgent?.firstPrompt != nil && focusedAgent?.currentSessionID == nil ? 3 : 1
+                for attempt in 0..<retries {
+                    do { try await Task.sleep(for: .milliseconds(attempt == 0 ? 500 : 2000)) } catch { return }
+                    guard !deleting else { return }
                     do {
                         let (source, sourcePath) = try model.agentHistorySource(for: state)
-                        let result = try await AgentHistoryService.list(in: source, workspacePath: sourcePath); try Task.checkCancellation()
+                        let started = ContinuousClock.now
+                        let result = try await AgentHistoryService.list(in: source, workspacePath: sourcePath, knownSignature: historySignature); try Task.checkCancellation()
+                        guard !deleting else { return }
+                        automaticRefreshPaused = started.duration(to: .now) > .milliseconds(1500)
                         loadedExecutionState = source; loadedExecutionPath = sourcePath
                         loadedReverseHost = source === state ? nil : source.snapshot.workspace.hostID
-                        entries = result.sessions; warnings = result.warnings; error = nil
-                    } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+                        historySignature = result.signature
+                        if result.unchanged != true {
+                            if entries != result.sessions { entries = result.sessions }
+                            warnings = result.warnings
+                        }
+                        model.reconcileAgentHistory(entries, source: source, path: sourcePath, serverTime: result.server_time ?? Date().timeIntervalSince1970)
+                        error = nil
+                    } catch {
+                        if !Task.isCancelled { self.error = error.localizedDescription; loading = false }
+                        return
+                    }
                     if !Task.isCancelled { loading = false }
-                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    if automaticRefreshPaused || focusedAgent?.currentSessionID != nil { break }
                 }
             }
             .alert("Delete saved session?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), presenting: deletion) { entry in
                 Button("Delete Session", role: .destructive) { delete(entry) }
                 Button("Cancel", role: .cancel) {}
-            } message: { entry in Text("Delete “\(entry.title)” from \(entry.provider.title)'s saved conversation history. Project files are kept.") }
+            } message: { entry in Text("Delete “\(entry.title)” from \(entry.provider.title)'s saved conversation history and close its open agent tabs. Running work in those tabs will stop. Project files are kept.") }
     }
 
     private func sessionRow(_ entry: AgentHistoryEntry) -> some View {
@@ -172,7 +262,7 @@ struct AgentHistoryPanel: View {
                 directory: path, provider: entry.provider, hostID: hostID, sessionID: entry.id, fork: fork)
             return
         }
-        if !fork, let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.sessionID == entry.id && $0.forkSession != true }), state.terminals[agent.id]?.running == true {
+        if !fork, let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.currentSessionID == entry.id }), state.terminals[agent.id]?.running == true {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
         guard let id = model.newAgentTerminal(entry.provider, directory: path), let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }) else { return }
@@ -186,16 +276,17 @@ struct AgentHistoryPanel: View {
     private func delete(_ entry: AgentHistoryEntry) {
         guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
         guard let source = loadedExecutionState, let sourcePath = loadedExecutionPath else { return }
-        guard !state.snapshot.agentTerminals.contains(where: { $0.provider == entry.provider && $0.sessionID == entry.id && state.terminals[$0.id]?.running == true }) else {
-            error = "Close this session's terminal before deleting its history."; return
-        }
         deleting = true; error = nil
+        let ids = Set(model.agentHistoryTabIDs(entry, source: source))
+        let sessions = model.states.flatMap { state in state.terminals.filter { ids.contains($0.key) }.map(\.value) }
+        let closed = model.closeAgentHistoryTabs(entry, source: source)
         Task {
-            defer { deleting = false }
+            defer { deleting = false; historySignature = nil; refreshID += 1 }
             do {
-                try await AgentHistoryService.delete(entry, in: source, workspacePath: sourcePath)
-                if state === loadedState, loadedPath == path { entries.removeAll { $0.key == entry.key }; refreshID += 1 }
-            } catch { if state === loadedState, loadedPath == path { self.error = error.localizedDescription } }
+                for session in sessions { try await session.waitUntilStopped() }
+                try await AgentHistoryService.delete(entry, in: source, workspacePath: sourcePath, closedTab: closed > 0)
+                if state === loadedState, loadedPath == path { entries.removeAll { $0.key == entry.key } }
+            } catch { model.report(error) }
         }
     }
 }

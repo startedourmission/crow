@@ -71,6 +71,7 @@ def conversation(provider, path, workspace, home):
     cwd = None
     title = ""
     tokens = None
+    started = None
     if provider == "grok":
         metadata = json.loads((path.parent / "summary.json").read_text())
         session_id = metadata.get("info", {}).get("id", path.parent.name)
@@ -79,6 +80,11 @@ def conversation(provider, path, workspace, home):
     seen = set()
     for item in records(path):
         kind = item.get("type")
+        if started is None and isinstance(item.get("timestamp"), str):
+            try:
+                started = datetime.datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
         role, text = None, ""
         if provider == "codex":
             payload = item.get("payload") or {}
@@ -125,7 +131,8 @@ def conversation(provider, path, workspace, home):
         return None
     stat = path.stat()
     return {"id": session_id, "provider": provider, "path": str(path), "title": (title or first["text"].split("\n")[0])[:150],
-            "modified": stat.st_mtime, "size": stat.st_size, "first": first, "recent": list(recent), "tokens": tokens}
+            "modified": stat.st_mtime, "size": stat.st_size, "first": first, "recent": list(recent), "tokens": tokens,
+            "started": started if started is not None else getattr(stat, "st_birthtime", None)}
 
 
 def candidates(provider, home, workspace):
@@ -145,10 +152,42 @@ def homes():
             "grok": pathlib.Path(os.environ.get("GROK_HOME", "~/.grok")).expanduser()}
 
 
-def list_sessions(workspace):
+def list_sessions(workspace, known_signature=None):
     result, warnings = [], []
-    deadline = time.monotonic() + 7
+    sources = []
+    fingerprint = hashlib.sha256(canonical(workspace).encode())
     for provider, home in homes().items():
+        paths = []
+        for path in candidates(provider, home, workspace):
+            try:
+                if safe_file(path, home):
+                    stat = path.stat()
+                    paths.append((path, stat))
+            except OSError:
+                continue
+        paths.sort(key=lambda item: item[1].st_mtime, reverse=True)
+        count = len(paths)
+        paths = paths[:2000]
+        for path, stat in paths:
+            fingerprint.update(f"{provider}:{path}:{stat.st_mtime_ns}:{stat.st_size}".encode())
+            if provider == "grok":
+                try:
+                    summary = (path.parent / "summary.json").stat()
+                    fingerprint.update(f"{summary.st_mtime_ns}:{summary.st_size}".encode())
+                except OSError:
+                    pass
+        try:
+            index_stat = (home / "session_index.jsonl").stat()
+            fingerprint.update(f"{provider}:{index_stat.st_mtime_ns}:{index_stat.st_size}".encode())
+        except OSError:
+            pass
+        sources.append((provider, home, [path for path, _ in paths], count))
+    signature = fingerprint.hexdigest()
+    if signature == known_signature:
+        return {"sessions": [], "warnings": [], "signature": signature, "unchanged": True, "server_time": time.time()}
+    deadline = time.monotonic() + 7
+    complete = True
+    for provider, home, paths, count in sources:
         names = {}
         index = home / "session_index.jsonl"
         if provider == "codex" and index.is_file():
@@ -156,10 +195,9 @@ def list_sessions(workspace):
                 names = {row.get("id"): row["thread_name"] for row in records(index) if row.get("thread_name")}
             except OSError:
                 pass
-        paths = [p for p in candidates(provider, home, workspace) if safe_file(p, home)]
-        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        for path in paths[:2000]:
+        for path in paths:
             if time.monotonic() > deadline:
+                complete = False
                 warnings.append("History scan reached its time limit. Showing sessions read so far.")
                 break
             try:
@@ -173,10 +211,10 @@ def list_sessions(workspace):
                     break
             except (OSError, ValueError, TypeError):
                 continue
-        if len(paths) > 2000:
+        if count > 2000:
             warnings.append(provider.title() + ": checked the 2,000 most recently changed records.")
     result.sort(key=lambda item: item["modified"], reverse=True)
-    return {"sessions": result[:100], "warnings": sorted(set(warnings))}
+    return {"sessions": result[:100], "warnings": sorted(set(warnings)), "signature": signature if complete else None, "server_time": time.time()}
 
 
 def codex_rpc(method, params):
@@ -225,7 +263,7 @@ def codex_rpc(method, params):
         process.stdout.close()
 
 
-def delete_session(workspace, expected):
+def delete_session(workspace, expected, closed_tab=False):
     provider, path = expected["provider"], pathlib.Path(expected["path"])
     home = homes().get(provider)
     if home is None or not safe_file(path, home):
@@ -233,7 +271,7 @@ def delete_session(workspace, expected):
     current = conversation(provider, path, workspace, home)
     if not current or current["id"] != expected["id"]:
         raise ValueError("This session no longer belongs to the selected workspace.")
-    if current["modified"] != expected["modified"] or current["size"] != expected["size"]:
+    if not closed_tab and (current["modified"] != expected["modified"] or current["size"] != expected["size"]):
         raise ValueError("This session changed. Refresh before deleting it.")
     if provider == "codex":
         codex_rpc("thread/delete", {"threadId": current["id"]})
@@ -704,9 +742,9 @@ def main():
     if action == "skills":
         return list_skills(workspace, request.get("providers"))
     if action == "list":
-        return list_sessions(workspace)
+        return list_sessions(workspace, request.get("known_signature"))
     if action == "delete":
-        return delete_session(workspace, request["session"])
+        return delete_session(workspace, request["session"], request.get("closed_tab", False))
     if action == "codex-usage":
         return codex_rpc("account/rateLimits/read", {})
     if action == "usage":

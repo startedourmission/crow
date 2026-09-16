@@ -36,6 +36,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var agentProvider: AgentProvider?
     var agentConversationTitle: String?
     @ObservationIgnored var onAgentTitle: ((String) -> Void)?
+    @ObservationIgnored var onFirstAgentPrompt: ((String) -> Void)?
+    @ObservationIgnored private var submittedFirstAgentPrompt = false
     private(set) var agentActivity: AgentActivity = .unknown
     @ObservationIgnored private var activityTask: Task<Void, Never>?
     @ObservationIgnored private var lastAgentOutput = Date.distantPast
@@ -72,8 +74,10 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var systemSSH: SystemSSHSpec?
     var shellEnvironment: [String]?
     @ObservationIgnored private var imageKeyMonitor: Any?
+    private var stoppingProcessID: pid_t?
     #endif
     private var shellTask: Task<Void, Never>?
+    private var remoteShellFinished = true
     private var inputTask: Task<Void, Never>?
     private var writer: RemoteWriter?
 
@@ -187,8 +191,10 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             let initialCommand = TerminalCommand.utf8Environment + "\n" + (launchCommand.map { "exec sh -lc " + TerminalCommand.quote($0) + "\n" }
                 ?? (SSHCommand.remoteDirectoryCommand(directory) + "\n" + SSHCommand.directoryTrackingCommand + "\n"))
             let startup = SSHStartupOutput()
+            remoteShellFinished = false
             shellTask = Task { [weak self] in
                 guard let self else { return }
+                defer { remoteShellFinished = true }
                 let timeout = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
                     guard let self, !self.running else { return }
@@ -233,13 +239,34 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         #endif
         shellTask?.cancel(); shellTask = nil; inputTask?.cancel(); inputTask = nil; writer = nil
         #if os(macOS)
-        (view as? LocalProcessTerminalView)?.terminate()
+        if let local = view as? LocalProcessTerminalView {
+            if local.process.running, local.process.shellPid > 0 { stoppingProcessID = local.process.shellPid }
+            local.terminate()
+        }
         #endif
         running = false; shellWorking = false; status = "Closed"
     }
 
     private func connected(_ writer: RemoteWriter) {
         self.writer = writer; running = true; status = "Connected"
+    }
+    func waitUntilStopped() async throws {
+        for _ in 0..<100 {
+            #if os(macOS)
+            if let local = view as? LocalProcessTerminalView {
+                // SwiftTerm clears `running` when sending SIGTERM, before exit.
+                if let pid = stoppingProcessID {
+                    var exitStatus: Int32 = 0
+                    let reaped = waitpid(pid, &exitStatus, WNOHANG)
+                    if reaped == pid || (reaped == -1 && errno == ECHILD) { return }
+                } else if !local.process.running { return }
+            } else if remoteShellFinished { return }
+            #else
+            if remoteShellFinished { return }
+            #endif
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw CommandError("The agent is still stopping. Retry deleting its saved session in a moment.")
     }
     private func receive(_ bytes: [UInt8]) { view.feedProcessOutput(bytes[...]); agentDidReceiveOutput() }
 
@@ -316,7 +343,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         onBytes?(bytes)
         // Use the submitted composer, not raw keystrokes (which may include
         // password entry, terminal shortcuts, or edits to an unfinished draft).
-        if running, let provider = agentProvider, agentConversationTitle == nil,
+        if running, let provider = agentProvider, !submittedFirstAgentPrompt,
            bytes == [13] || bytes == [10] {
             let lines = agentScreenLines(), cursor = view.getTerminal().getCursorLocation()
             if lines.indices.contains(cursor.y), cursor.x > 2 {
@@ -325,7 +352,9 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                 if ["❯ ", "› ", "> "].contains(where: { line.hasPrefix($0) }),
                    !prompt.isEmpty, !prompt.hasPrefix("/"),
                    AgentActivityDetector.detect(provider: provider, lines: lines, cursorRow: cursor.y, outputIsRecent: false) == .idle {
-                    recordAgentTitle(prompt)
+                    submittedFirstAgentPrompt = true
+                    if agentConversationTitle == nil { recordAgentTitle(prompt) }
+                    onFirstAgentPrompt?(prompt)
                 }
             }
         }
