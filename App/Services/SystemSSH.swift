@@ -26,11 +26,11 @@ struct SystemSSHSpec: Sendable {
     private var owned: [SystemSSHSpec] = []
     var onConnection: ((SystemSSHSpec) -> Void)?
 
-    init() throws {
+    init(startupDirectory: String? = nil) throws {
         root = URL(fileURLWithPath: "/tmp/crw-" + String(UUID().uuidString.prefix(12)))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700])
-        let original = ProcessInfo.processInfo.environment["ZDOTDIR"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let original = startupDirectory ?? ProcessInfo.processInfo.environment["ZDOTDIR"] ?? FileManager.default.homeDirectoryForCurrentUser.path
         for file in [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"] {
             var text = "export ZDOTDIR=\(Self.quote(original))\n[[ -r \(Self.quote(original + "/" + file)) ]] && source \(Self.quote(original + "/" + file))\n"
             if file == ".zshrc" {
@@ -52,8 +52,8 @@ struct SystemSSHSpec: Sendable {
                 }
 
                 """
-                text += SSHCommand.directoryTrackingCommand + "\n"
             }
+            if file == ".zshrc" || file == ".zlogin" { text += SSHCommand.directoryTrackingCommand + "\n" }
             // Keep startup routing in our private directory even if user rc files set ZDOTDIR.
             text += "export ZDOTDIR=\(Self.quote(root.path))\n"
             try Data(text.utf8).write(to: root.appendingPathComponent(file))

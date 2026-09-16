@@ -139,11 +139,12 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             if let launchCommand {
                 args = ["-tt"] + systemSSH.multiplexArguments + ["sh -lc " + TerminalCommand.quote(TerminalCommand.utf8Environment + launchCommand)]
             } else if FileManager.default.fileExists(atPath: systemSSH.socket) {
-                let command = TerminalCommand.utf8Environment + SSHCommand.remoteDirectoryCommand(directory) + " && exec \"${SHELL:-/bin/sh}\" -l"
+                let command = TerminalCommand.utf8Environment + SSHCommand.interactiveShellCommand(directory: directory)
                 args = ["-tt"] + systemSSH.multiplexArguments + ["sh -c " + TerminalCommand.quote(command)]
             } else {
                 // The authentication terminal stays interactive until the master is established.
-                args = systemSSH.initialArguments
+                let command = TerminalCommand.utf8Environment + SSHCommand.interactiveShellCommand(directory: directory)
+                args = ["-tt"] + systemSSH.initialArguments + ["sh -c " + TerminalCommand.quote(command)]
             }
             // SwiftTerm's default environment drops SSH_AUTH_SOCK and PATH.
             // Preserve the app's inherited agent/proxy environment for OpenSSH.

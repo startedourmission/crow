@@ -98,13 +98,61 @@ public struct SSHCommand: Equatable, Sendable {
         p=${p//\%/%25}; p=${p// /%20}; p=${p//\#/%23}; p=${p//\?/%3F};
         p=${p//$'\n'/%0A}; p=${p//$'\r'/%0D}; p=${p//$'\t'/%09}; p=${p//$'\e'/%1B}; p=${p//$'\a'/%07};
         printf '\e]7;file://localhost%s\a' "$p"; return "$x"; };
-        if [ -n "${ZSH_VERSION-}" ]; then typeset -ga precmd_functions; precmd_functions=(_crow_cwd "${precmd_functions[@]}");
+        if [ -n "${ZSH_VERSION-}" ]; then typeset -ga precmd_functions; precmd_functions=(_crow_cwd "${(@)precmd_functions:#_crow_cwd}");
         else case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
         'declare -a'*) PROMPT_COMMAND=(_crow_cwd "${PROMPT_COMMAND[@]}");;
         *) PROMPT_COMMAND="_crow_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}";; esac; fi; _crow_cwd
         """##.replacingOccurrences(of: "\n", with: " ")
         let quoted = "'" + script.replacingOccurrences(of: "'", with: "'\\''") + "'"
         return "if [ -n \"${BASH_VERSION-}${ZSH_VERSION-}\" ]; then eval " + quoted + "; fi"
+    }
+
+    /// Install tracking after the user's startup files, without changing those files
+    /// or sending setup commands through an authentication prompt.
+    public static func interactiveShellCommand(directory: String) -> String {
+        let hook = directoryTrackingCommand
+        let zshFiles = [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"].map { file in
+            let tracking = [".zshrc", ".zlogin"].contains(file) ? hook : ""
+            return """
+            cat > "$crow_init/\(file)" <<'CROW_SHELL_RC'
+            export ZDOTDIR="$CROW_USER_ZDOTDIR"
+            [[ -r "$ZDOTDIR/\(file)" ]] && source "$ZDOTDIR/\(file)"
+            CROW_USER_ZDOTDIR="${ZDOTDIR:-$HOME}"
+            \(tracking)
+            export ZDOTDIR="$CROW_SHELL_INIT"
+            CROW_SHELL_RC
+            """
+        }.joined(separator: "\n")
+        return """
+        \(remoteDirectoryCommand(directory)) || exit
+        crow_shell=${SHELL:-/bin/sh}
+        case "$crow_shell" in
+        */zsh|*/bash) ;;
+        *) exec "$crow_shell" -l ;;
+        esac
+        crow_init=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/crow-shell.XXXXXXXX") || exit
+        trap 'rm -rf -- "$crow_init"' EXIT
+        export CROW_SHELL_INIT="$crow_init" CROW_USER_ZDOTDIR="${ZDOTDIR:-$HOME}"
+        case "$crow_shell" in
+        */zsh)
+        \(zshFiles)
+        ZDOTDIR="$crow_init" "$crow_shell" -il
+        ;;
+        */bash)
+        cat > "$crow_init/bashrc" <<'CROW_SHELL_RC'
+        [ -r /etc/profile ] && . /etc/profile
+        if [ -r "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile"
+        elif [ -r "$HOME/.bash_login" ]; then . "$HOME/.bash_login"
+        elif [ -r "$HOME/.profile" ]; then . "$HOME/.profile"
+        elif [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
+        \(hook)
+        CROW_SHELL_RC
+        "$crow_shell" --rcfile "$crow_init/bashrc" -i
+        ;;
+        esac
+        crow_status=$?
+        exit "$crow_status"
+        """
     }
 
     public static func terminalDirectory(_ report: String?) -> String? {

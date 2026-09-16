@@ -2,6 +2,7 @@ import XCTest
 import CrowCore
 import SwiftTerm
 import SwiftUI
+import Observation
 @testable import Crow
 #if os(macOS)
 import AppKit
@@ -180,6 +181,56 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(resumed.workingDirectory, path, "An agent has the right initial path even before it emits OSC 7")
         XCTAssertEqual(state.agentHistoryPath, path)
         XCTAssertEqual(state.snapshot.rootPath, root.path)
+    }
+
+    @MainActor func testRealShellCdUpdatesObservedHistoryScopeWithoutTabChange() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-live-cwd-" + UUID().uuidString)
+        let folder = root.appendingPathComponent("한글 # percent% folder")
+        let rc = root.appendingPathComponent("rc")
+        for directory in [root, folder, rc] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        // A login startup file can replace prompt hooks after .zshrc has run.
+        try Data("precmd_functions=()\n".utf8).write(to: rc.appendingPathComponent(".zlogin"))
+        let bridge = try SystemSSHBridge(startupDirectory: rc.path)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.newTerminal()
+        let state = model.current, id = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let session = model.terminal(id, in: state)
+        session.shellEnvironment = bridge.environment
+        session.start()
+        for _ in 0..<100 where session.currentDirectory == nil { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertNotNil(session.currentDirectory)
+        let changed = expectation(description: "History path observation invalidates on cd")
+        withObservationTracking { _ = state.agentHistoryPath } onChange: { changed.fulfill() }
+        session.view.send(txt: "cd -- " + TerminalCommand.quote(folder.path) + "\r")
+        await fulfillment(of: [changed], timeout: 3)
+        for _ in 0..<100 where state.agentHistoryPath != folder.path { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertEqual(state.agentHistoryPath, folder.path)
+        XCTAssertEqual(state.snapshot.selectedTerminalID, id)
+        XCTAssertEqual(state.snapshot.rootPath, root.path)
+    }
+
+    @MainActor func testSSHInteractiveStartupReportsRealCdForBashAndZsh() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-ssh-cwd-" + UUID().uuidString)
+        let folder = root.appendingPathComponent("한글 ' # % folder"), rc = root.appendingPathComponent("rc")
+        for directory in [root, folder, rc] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("precmd_functions=()\n".utf8).write(to: rc.appendingPathComponent(".zlogin"))
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Fixture", kind: .local, connection: .local), directory: root.path, remote: nil, fontSize: 14)
+            session.shellEnvironment = ["PATH=/usr/bin:/bin", "HOME=" + rc.path, "ZDOTDIR=" + rc.path, "SHELL=" + shell]
+            session.launchCommand = "exec /bin/sh -c " + TerminalCommand.quote(SSHCommand.interactiveShellCommand(directory: root.path))
+            session.start()
+            defer { session.stop() }
+            for _ in 0..<100 where session.currentDirectory == nil { try await Task.sleep(for: .milliseconds(30)) }
+            XCTAssertEqual(session.currentDirectory, root.path, shell)
+            session.view.send(txt: "cd -- " + TerminalCommand.quote(folder.path) + "\r")
+            for _ in 0..<100 where session.currentDirectory != folder.path { try await Task.sleep(for: .milliseconds(30)) }
+            XCTAssertEqual(session.currentDirectory, folder.path, shell)
+            session.view.send(txt: "exit\r")
+            for _ in 0..<100 where session.running { try await Task.sleep(for: .milliseconds(30)) }
+            XCTAssertFalse(session.running, "Startup wrapper must exit with the shell")
+        }
     }
 
     @MainActor func testTmuxFocusUpdatesFolderWithoutChangingSavedWorkspace() throws {
