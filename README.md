@@ -104,8 +104,13 @@ tmux가 없는 호스트에는 설치 버튼이 나타나며 해당 호스트의
 최대 100개를 표시하고 스캔 제한에 도달하면 안내합니다. Codex·Grok 삭제는 해당 CLI의 기본 삭제 기능을 사용합니다.
 
 바로 옆 **Skills** 아이콘은 포커싱한 터미널의 현재 경로(선택한 tmux pane 포함)에 해당하는 스킬을 표시합니다.
+**Settings → Agents**에서 사용할 Claude·Codex·Grok을 켜고 끌 수 있습니다. 선택은 새 탭,
+역방향 에이전트 생성, 스킬 필터, 사용량 표시에 적용되며 꺼둔 에이전트의 스킬·사용량 조회도 생략합니다.
+기본값은 모두 켜짐이며, 기존 터미널과 대화 기록은 유지합니다. Skills 상단의 에이전트 아이콘을
+누르면 해당 종류만 조회하며, 새로고침과 검색도 선택한 에이전트에 적용됩니다.
 Claude·Codex 아이콘, 이름, 설명, 출처를 보여주며 검색·새로고침과 `SKILL.md` 열기를 지원합니다. 로컬과 SSH에서 같은 방식으로 동작합니다.
 Codex는 해당 호스트 CLI의 `skills/list`로 활성 스킬을 조회합니다. Claude는 [스킬 경로·우선순위](https://code.claude.com/docs/en/skills)에 따라 프로젝트·사용자·관리 폴더와 활성 설치 플러그인의 파일을 읽습니다. Claude 내장 명령, 계정 동기화 스킬, 실행 시 `--add-dir`·`--plugin-dir` 등의 추가 경로는 이 파일 목록에 포함하지 않습니다.
+Grok은 [`grok inspect --json`](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md)의 현재 폴더 보고서를 사용하며, 비활성 스킬은 제외합니다. 해당 명령을 지원하는 CLI가 필요합니다.
 탭을 열거나 경로를 바꾸거나 새로고침할 때만 조회하며 최대 500개를 표시합니다. 스킬 본문과 스크립트를 실행하지 않고 상시 색인도 만들지 않습니다.
 
 왼쪽 **Automations**는 현재 기기의 사용자 crontab과 macOS launchd 정의·실행 상태를 읽습니다.

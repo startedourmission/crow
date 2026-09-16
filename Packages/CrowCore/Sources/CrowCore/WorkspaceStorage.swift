@@ -85,6 +85,17 @@ public struct EditorSettings: Codable, Equatable, Sendable {
     public var keyboardBarItems: [KeyboardBarKey]?
     public var textSnippets: [TextSnippet]?
     public var showHiddenFiles: Bool?
+    /// Raw IDs preserve preferences for providers unknown to an older app version.
+    public var disabledAgentProviders: [String]?
+    public var enabledAgentProviders: [AgentProvider] {
+        AgentProvider.allCases.filter { !(disabledAgentProviders ?? []).contains($0.rawValue) }
+    }
+    public mutating func setAgentProvider(_ provider: AgentProvider, enabled: Bool) {
+        var disabled = disabledAgentProviders ?? []
+        disabled.removeAll { $0 == provider.rawValue }
+        if !enabled { disabled.append(provider.rawValue) }
+        disabledAgentProviders = disabled
+    }
     public var noteLinksEnabled: Bool?
     public var effectiveNoteLinksEnabled: Bool { noteLinksEnabled ?? false }
     public var markdownPreviewEnabled: Bool?

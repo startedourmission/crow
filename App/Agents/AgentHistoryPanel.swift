@@ -216,6 +216,7 @@ struct AgentSkillsResult: Decodable {
 
 struct AgentSkillsPanel: View {
     @Environment(AppModel.self) private var model
+    @SceneStorage("crow.skills.provider") private var providerID = AgentProvider.claude.rawValue
     @State private var entries: [AgentSkillEntry] = []
     @State private var warnings: [String] = []
     @State private var search = ""
@@ -223,12 +224,16 @@ struct AgentSkillsPanel: View {
     @State private var error: String?
     @State private var refreshID = 0
     @State private var loadedScope = ""
+    private var providers: [AgentProvider] { model.settings.enabledAgentProviders }
+    private var selectedProvider: AgentProvider? {
+        providers.first { $0.rawValue == providerID } ?? providers.first
+    }
     private var scope: String {
-        "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(refreshID)"
+        "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(selectedProvider?.rawValue ?? "none")-\(refreshID)"
     }
     private var visibleEntries: [AgentSkillEntry] {
         guard loadedScope == scope else { return [] }
-        return entries.filter { search.isEmpty || ($0.name + " " + $0.description + " " + $0.provider.title).localizedCaseInsensitiveContains(search) }
+        return entries.filter { $0.provider == selectedProvider && (search.isEmpty || ($0.name + " " + $0.description).localizedCaseInsensitiveContains(search)) }
     }
 
     var body: some View {
@@ -239,8 +244,21 @@ struct AgentSkillsPanel: View {
                     .help(model.current.agentHistoryPath)
                 Spacer(minLength: 0)
                 if loading { ProgressView().controlSize(.small) }
+                HStack(spacing: 2) {
+                    ForEach(providers) { provider in
+                        Button { providerID = provider.rawValue } label: {
+                            AgentProviderIcon(provider: provider, size: 14)
+                                .frame(width: 28, height: 28)
+                                .background(selectedProvider == provider ? CrowTheme.bg3 : .clear, in: RoundedRectangle(cornerRadius: 5))
+                                .opacity(selectedProvider == provider ? 1 : 0.5)
+                        }.buttonStyle(CrowButtonStyle())
+                            .help("\(provider.title) skills").accessibilityLabel("\(provider.title) skills")
+                            .accessibilityAddTraits(selectedProvider == provider ? .isSelected : [])
+                            .accessibilityIdentifier("crow.skills.provider." + provider.rawValue)
+                    }
+                }
                 Button { refreshID += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
-                    .buttonStyle(CrowButtonStyle()).disabled(loading)
+                    .buttonStyle(CrowButtonStyle()).disabled(loading || selectedProvider == nil)
                     .help("Refresh skills").accessibilityLabel("Refresh skills")
                     .accessibilityIdentifier("crow.skills.refresh")
             }.padding(.horizontal, 12).padding(.top, 12)
@@ -252,7 +270,7 @@ struct AgentSkillsPanel: View {
                 Text($0).font(.caption).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12)
             }
             if visibleEntries.isEmpty && !loading && error == nil {
-                Text(search.isEmpty ? "No skills found for this folder." : "No matching skills.")
+                Text(selectedProvider == nil ? "Enable an agent in Settings to view skills." : search.isEmpty ? "No skills found for this folder." : "No matching skills.")
                     .font(.system(size: 12)).foregroundStyle(CrowTheme.textDim).padding(12)
             }
             ScrollView {
@@ -260,7 +278,7 @@ struct AgentSkillsPanel: View {
                     ForEach(visibleEntries) { entry in
                         Button {
                             guard loadedScope == scope else { return }
-                            model.openFile(FileEntry(name: "SKILL.md", path: entry.path, isDirectory: false))
+                            model.openFile(FileEntry(name: (entry.path as NSString).lastPathComponent, path: entry.path, isDirectory: false))
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
                                 AgentProviderIcon(provider: entry.provider, size: 14).padding(.top, 1)
@@ -291,10 +309,11 @@ struct AgentSkillsPanel: View {
         .task(id: scope) {
             let requestScope = scope, state = model.current, path = model.current.agentHistoryPath
             entries = []; warnings = []; error = nil; loading = true; loadedScope = ""
+            guard let selectedProvider else { loading = false; loadedScope = requestScope; return }
             do {
                 // Debounce prompt/cwd updates; no scanner or agent process stays running.
                 try await Task.sleep(for: .milliseconds(180))
-                let data = try await AgentHistoryService.run(["action": "skills", "workspace": path], in: state, operation: "Agent skills")
+                let data = try await AgentHistoryService.run(["action": "skills", "workspace": path, "providers": [selectedProvider.rawValue]], in: state, operation: "Agent skills")
                 let result = try JSONDecoder().decode(AgentSkillsResult.self, from: data)
                 try Task.checkCancellation()
                 guard scope == requestScope else { return }
@@ -319,6 +338,9 @@ struct ReverseAgentSheet: View {
     @State private var error: String?
     @State private var launchTask: Task<Void, Never>?
     private var busy: Bool { launchTask != nil }
+    private var providers: [AgentProvider] {
+        request.sessionID != nil || request.replacingTerminalID != nil ? [request.provider] : model.settings.enabledAgentProviders
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -333,7 +355,7 @@ struct ReverseAgentSheet: View {
                 if model.hosts.isEmpty { Text("Add an SSH host in Workspaces first.").font(.caption).foregroundStyle(CrowTheme.textDim) }
             }
             HStack(spacing: 8) {
-                ForEach(AgentProvider.allCases) { value in
+                ForEach(providers) { value in
                     Button { provider = value } label: {
                         HStack(spacing: 7) { AgentProviderIcon(provider: value, size: 16); Text(value.title) }
                             .padding(.horizontal, 10).padding(.vertical, 7)
@@ -349,15 +371,18 @@ struct ReverseAgentSheet: View {
                 Spacer()
                 Button("Cancel") { launchTask?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Open Agent") { launch() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(busy || hostID == nil)
+                    .disabled(busy || hostID == nil || !providers.contains(provider))
             }
         }.padding(22).frame(width: 480).background(CrowTheme.bg0)
             .onAppear {
-                provider = request.provider
+                provider = providers.contains(request.provider) ? request.provider : providers.first ?? request.provider
                 let previous = UserDefaults.standard.string(forKey: "crow.reverse-agent-last-host").flatMap(UUID.init(uuidString:)).map(HostID.init(rawValue:))
                 hostID = request.hostID ?? model.hosts.first(where: { $0.id == previous })?.id ?? model.hosts.first?.id
             }
             .onDisappear { launchTask?.cancel() }
+            .onChange(of: providers) { _, values in
+                if !values.contains(provider), let first = values.first { provider = first }
+            }
             .interactiveDismissDisabled(busy)
     }
 

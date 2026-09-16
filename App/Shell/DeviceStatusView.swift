@@ -57,18 +57,19 @@ private struct AIUsageResponse: Decodable { let providers: [AIProviderUsage] }
     }
     #endif
 
-    func refreshUsage(in state: WorkspaceState, force: Bool = false) async {
-        let host = state.snapshot.workspace.hostID?.rawValue.uuidString ?? "local"
+    func refreshUsage(in state: WorkspaceState, providers enabled: [AgentProvider] = AgentProvider.allCases, force: Bool = false) async {
+        let host = (state.snapshot.workspace.hostID?.rawValue.uuidString ?? "local") + ":" + enabled.map(\.rawValue).joined(separator: ",")
         if usageHost == host, !force, let usageDate, Date().timeIntervalSince(usageDate) < 300 { return }
         let generation = UUID(); usageGeneration = generation
         if usageHost != host { usage = []; usageDate = nil }
         usageHost = host; usageLoading = true
         defer { if usageGeneration == generation { usageLoading = false } }
+        guard !enabled.isEmpty else { usage = []; usageDate = nil; return }
         do {
-            let data = try await AgentHistoryService.run(["workspace": state.snapshot.rootPath, "action": "usage"], in: state)
+            let data = try await AgentHistoryService.run(["workspace": state.snapshot.rootPath, "action": "usage", "providers": enabled.map(\.rawValue)], in: state)
             var providers = try JSONDecoder().decode(AIUsageResponse.self, from: data).providers
             #if os(macOS)
-            if !state.snapshot.workspace.isRemote, providers.first(where: { $0.provider == .claude })?.windows.isEmpty != false,
+            if enabled.contains(.claude), !state.snapshot.workspace.isRemote, providers.first(where: { $0.provider == .claude })?.windows.isEmpty != false,
                let claude = await claudeKeychainUsage(allowPrompt: force) {
                 providers.removeAll { $0.provider == .claude }; providers.insert(claude, at: 0)
             }
@@ -78,7 +79,7 @@ private struct AIUsageResponse: Decodable { let providers: [AIProviderUsage] }
             usage = providers; usageDate = Date()
         } catch {
             guard !Task.isCancelled, usageGeneration == generation else { return }
-            usage = AgentProvider.allCases.map { AIProviderUsage(provider: $0, windows: [], error: error.localizedDescription) }
+            usage = enabled.map { AIProviderUsage(provider: $0, windows: [], error: error.localizedDescription) }
             usageDate = Date()
         }
     }
@@ -159,19 +160,21 @@ struct DeviceStatusView: View {
                 Text(String(format: "%.0f%%", status.cpu))
             }.monospacedDigit().foregroundStyle(CrowTheme.textDim).help("Crow process · memory and CPU (100% = one core).")
             #endif
-            Button { showingUsage.toggle() } label: {
-                HStack(spacing: 9) {
-                    ForEach([AgentProvider.claude, .codex, .grok]) { provider in
-                        HStack(spacing: 4) {
-                            AgentProviderIcon(provider: provider, size: 12)
-                            if let value = status.usage.first(where: { $0.provider == provider })?.windows.first {
-                                Text(String(format: "%.0f%%", value.used)).monospacedDigit()
-                            } else { Text(status.usageLoading ? "…" : "—").foregroundStyle(CrowTheme.textDim) }
+            if !model.settings.enabledAgentProviders.isEmpty {
+                Button { showingUsage.toggle() } label: {
+                    HStack(spacing: 9) {
+                        ForEach(model.settings.enabledAgentProviders) { provider in
+                            HStack(spacing: 4) {
+                                AgentProviderIcon(provider: provider, size: 12)
+                                if let value = status.usage.first(where: { $0.provider == provider })?.windows.first {
+                                    Text(String(format: "%.0f%%", value.used)).monospacedDigit()
+                                } else { Text(status.usageLoading ? "…" : "—").foregroundStyle(CrowTheme.textDim) }
+                            }
                         }
                     }
-                }
-            }.help("AI account usage limits").accessibilityLabel("AI account usage").accessibilityIdentifier("crow.status.ai-usage")
-                .popover(isPresented: $showingUsage) { usageDetails }
+                }.help("AI account usage limits").accessibilityLabel("AI account usage").accessibilityIdentifier("crow.status.ai-usage")
+                    .popover(isPresented: $showingUsage) { usageDetails }
+            }
         }.buttonStyle(.plain).font(.system(size: 11)).fixedSize().windowDragExcluded()
             .task {
                 #if os(macOS)
@@ -181,9 +184,9 @@ struct DeviceStatusView: View {
                 }
                 #endif
             }
-            .task(id: host + "\(model.current.remote?.isConnected == true)") {
+            .task(id: host + "\(model.current.remote?.isConnected == true)-\(model.settings.enabledAgentProviders)") {
                 while !Task.isCancelled {
-                    await status.refreshUsage(in: model.current)
+                    await status.refreshUsage(in: model.current, providers: model.settings.enabledAgentProviders)
                     do { try await Task.sleep(for: .seconds(300)) } catch { return }
                 }
             }
@@ -193,11 +196,11 @@ struct DeviceStatusView: View {
             HStack {
                 Text("AI Account Usage").font(.headline)
                 Spacer()
-                Button { Task { await status.refreshUsage(in: model.current, force: true) } } label: { Image(systemName: "arrow.clockwise") }.disabled(status.usageLoading)
+                Button { Task { await status.refreshUsage(in: model.current, providers: model.settings.enabledAgentProviders, force: true) } } label: { Image(systemName: "arrow.clockwise") }.disabled(status.usageLoading)
             }
             Text(model.current.snapshot.workspace.isRemote ? "Accounts on the selected SSH host" : "Accounts signed in through the local CLIs")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)
-            ForEach([AgentProvider.claude, .codex, .grok]) { provider in
+            ForEach(model.settings.enabledAgentProviders) { provider in
                 VStack(alignment: .leading, spacing: 6) {
                     Label { Text(provider.title).font(.subheadline.bold()) } icon: { AgentProviderIcon(provider: provider, size: 14) }
                     if let value = status.usage.first(where: { $0.provider == provider }) {

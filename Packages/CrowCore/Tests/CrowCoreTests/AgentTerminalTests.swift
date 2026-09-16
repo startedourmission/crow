@@ -2,6 +2,23 @@ import XCTest
 @testable import CrowCore
 
 final class AgentTerminalTests: XCTestCase {
+    func testAgentPreferencesPreserveLegacyDefaultsDisabledIDsAndAllOff() throws {
+        let legacy = try JSONEncoder().encode(EditorSettings())
+        var settings = try JSONDecoder().decode(EditorSettings.self, from: legacy)
+        XCTAssertEqual(settings.enabledAgentProviders, AgentProvider.allCases)
+        settings.disabledAgentProviders = ["future-provider"]
+        settings.setAgentProvider(.grok, enabled: false)
+        settings.setAgentProvider(.grok, enabled: false)
+        settings = try JSONDecoder().decode(EditorSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(settings.enabledAgentProviders, [.codex, .claude])
+        XCTAssertEqual(settings.disabledAgentProviders, ["future-provider", "grok"])
+        for provider in AgentProvider.allCases { settings.setAgentProvider(provider, enabled: false) }
+        XCTAssertTrue(settings.enabledAgentProviders.isEmpty)
+        settings.setAgentProvider(.codex, enabled: true)
+        XCTAssertEqual(settings.enabledAgentProviders, [.codex])
+        XCTAssertTrue(settings.disabledAgentProviders!.contains("future-provider"))
+    }
+
     func testResumeAndForkKeepCliHistoryAndSurviveRestoration() throws {
         for provider in AgentProvider.allCases {
             var session = AgentTerminal(provider: provider, directory: "/tmp/project ' name")

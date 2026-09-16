@@ -265,7 +265,7 @@ struct NewTabPopover: View {
             CrowPopupAction(title: "Terminal", symbol: "terminal") {
                 dismiss(); model.activatePane(paneID); model.newTerminal()
             }
-            ForEach(AgentProvider.allCases) { provider in
+            ForEach(model.settings.enabledAgentProviders) { provider in
                 Button {
                     dismiss(); model.newAgentTerminal(provider, in: paneID)
                 } label: {
@@ -278,11 +278,13 @@ struct NewTabPopover: View {
                     .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
             }
             #if os(macOS)
-            CrowPopupAction(title: "Reverse Agent…", symbol: "arrow.uturn.backward") {
-                dismiss(); model.requestReverseAgent(in: paneID)
-            }.disabled(model.selectedWorkspace.isRemote)
-                .help("Run an agent on an SSH server to work in this local folder")
-                .accessibilityIdentifier("crow.new-tab.reverse-agent")
+            if !model.settings.enabledAgentProviders.isEmpty {
+                CrowPopupAction(title: "Reverse Agent…", symbol: "arrow.uturn.backward") {
+                    dismiss(); model.requestReverseAgent(in: paneID)
+                }.disabled(model.selectedWorkspace.isRemote)
+                    .help("Run an agent on an SSH server to work in this local folder")
+                    .accessibilityIdentifier("crow.new-tab.reverse-agent")
+            }
             #endif
             CrowDivider().padding(.vertical, 3)
             CrowPopupAction(title: "Web Browser", symbol: "globe") {
@@ -306,19 +308,21 @@ struct NewTabPage: View {
                     Text("New Tab").font(.system(size: 22, weight: .semibold))
                     Text(model.workspaceTitle).font(.system(size: 12)).crowForeground(CrowTheme.textDim)
                         .lineLimit(1).truncationMode(.middle).padding(.bottom, 8)
-                    Text("Agents").font(.system(size: 11, weight: .semibold)).crowForeground(CrowTheme.textDim)
-                    ForEach(AgentProvider.allCases) { provider in
-                        Button { model.newAgentTerminal(provider, in: paneID) } label: {
-                            HStack(spacing: 10) {
-                                AgentProviderIcon(provider: provider, size: 20)
-                                Text(provider.title).font(.system(size: 13))
-                                Spacer()
-                                Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
-                            }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).padding(8)
-                                .background(CrowTheme.bg1, in: RoundedRectangle(cornerRadius: 5))
-                                .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(CrowTheme.border) }
-                        }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
-                            .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
+                    if !model.settings.enabledAgentProviders.isEmpty {
+                        Text("Agents").font(.system(size: 11, weight: .semibold)).crowForeground(CrowTheme.textDim)
+                        ForEach(model.settings.enabledAgentProviders) { provider in
+                            Button { model.newAgentTerminal(provider, in: paneID) } label: {
+                                HStack(spacing: 10) {
+                                    AgentProviderIcon(provider: provider, size: 20)
+                                    Text(provider.title).font(.system(size: 13))
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(CrowTheme.textDim)
+                                }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).padding(8)
+                                    .background(CrowTheme.bg1, in: RoundedRectangle(cornerRadius: 5))
+                                    .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(CrowTheme.border) }
+                            }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                                .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
+                        }
                     }
                     CrowDivider().padding(.vertical, 8)
                     action("New Terminal", symbol: "terminal") {

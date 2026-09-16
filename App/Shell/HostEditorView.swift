@@ -219,6 +219,25 @@ struct CrowSettingsView: View {
 
     @ViewBuilder private var settingsContent: some View {
         @Bindable var model = model
+        CrowSettingsSection("Agents") {
+            CrowSettingsCard {
+                ForEach(AgentProvider.allCases) { provider in
+                    if provider != AgentProvider.allCases.first { Divider() }
+                    HStack(spacing: 10) {
+                        AgentProviderIcon(provider: provider, size: 16)
+                        Text(provider.title)
+                        Spacer()
+                        Toggle(provider.title, isOn: Binding(
+                            get: { model.settings.enabledAgentProviders.contains(provider) },
+                            set: { model.settings.setAgentProvider(provider, enabled: $0) }
+                        )).labelsHidden().accessibilityIdentifier("crow.settings.agent." + provider.rawValue)
+                    }.frame(minHeight: 32).padding(.vertical, 6)
+                        .toggleStyle(.switch).controlSize(.small)
+                }
+            }
+            Text("Choose which agents appear in new tabs, skills, and usage. Existing sessions are kept.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+        }
         CrowSettingsSection("Editor") {
             CrowSettingsCard {
                 CrowSettingsRow("Font") {

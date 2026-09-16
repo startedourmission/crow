@@ -104,6 +104,42 @@ class HistoryTests(unittest.TestCase):
 
 
 class SkillTests(unittest.TestCase):
+    def test_provider_filter_never_queries_disabled_agents(self):
+        self.skill(self.project / ".claude/skills", "claude-only")
+        with patch.object(history, "codex_rpc", return_value={"data": []}) as codex, patch.object(history, "grok_skills") as grok:
+            self.assertEqual([s["provider"] for s in history.list_skills(str(self.child), ["claude"])["skills"]], ["claude"])
+            self.assertEqual(history.list_skills(str(self.child), []), {"skills": [], "warnings": []})
+            codex.assert_not_called(); grok.assert_not_called()
+        with patch.object(history, "claude_skills") as claude, patch.object(history, "codex_rpc", return_value={"data": []}) as codex:
+            self.assertEqual(history.list_skills(str(self.child), ["codex"])["skills"], [])
+            claude.assert_not_called(); codex.assert_called_once()
+
+    def test_usage_only_queries_enabled_providers_and_handles_all_off(self):
+        for selected in [[], ["codex"], ["claude", "grok"]]:
+            request = {"action": "usage", "workspace": str(self.child), "providers": selected}
+            with patch.object(history.sys, "argv", ["history", json.dumps(request)]), patch.object(history, "provider_usage", side_effect=lambda p: {"provider": p}) as usage:
+                self.assertEqual(history.main(), {"providers": [{"provider": p} for p in selected]})
+                self.assertCountEqual([call.args[0] for call in usage.call_args_list], selected)
+
+    def test_grok_inspect_omits_disabled_and_uses_active_plugin_metadata(self):
+        skill = {"name": "review", "description": "Review code", "source": {"type": "plugin", "path": "/skills/review/SKILL.md"}, "invocableAs": "team:review"}
+        report = {"cwd": str(self.child), "skills": [skill, dict(skill, disabled=True), dict(skill, compatibilityStatus="disabled"), dict(skill, source={"type": "builtin"})]}
+        from types import SimpleNamespace
+        with patch.object(history.shutil, "which", return_value="/bin/grok"), patch.object(history.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(report))) as run:
+            result = history.list_skills(str(self.child), ["grok"])
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(len(result["skills"]), 1)
+        self.assertEqual(result["skills"][0]["name"], "team:review")
+        self.assertEqual(result["skills"][0]["scope"], "Plugin")
+        self.assertEqual(run.call_args.args[0], ["/bin/grok", "inspect", "--json"])
+        self.assertEqual(run.call_args.kwargs["cwd"], str(self.child))
+
+    def test_provider_input_rejects_unknown_values_and_deduplicates(self):
+        self.assertEqual(history.selected_providers(["codex", "codex"]), ["codex"])
+        for value in ["codex", ["unknown"], [None]]:
+            with self.assertRaises(ValueError):
+                history.selected_providers(value)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temp.name).resolve()

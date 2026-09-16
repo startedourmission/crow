@@ -388,26 +388,70 @@ def claude_skills(workspace, warnings):
     return result
 
 
-def list_skills(workspace):
-    warnings = []
-    result = claude_skills(workspace, warnings)
+def selected_providers(value, default=("claude", "codex", "grok")):
+    if value is None:
+        return list(default)
+    if not isinstance(value, list) or any(item not in ("claude", "codex", "grok") for item in value):
+        raise ValueError("Invalid agent providers.")
+    return list(dict.fromkeys(value))
+
+
+def grok_skills(workspace, warnings):
+    # The CLI's report includes trust, plugin, compatibility and disabled-skill
+    # decisions. Do not guess availability by scanning vendor directories.
+    # https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md
+    executable = shutil.which("grok")
+    if not executable:
+        warnings.append("Grok CLI is not installed on this host.")
+        return []
     try:
-        response = codex_rpc("skills/list", {"cwds": [workspace], "forceReload": True})
-        for group in response.get("data", []):
-            if canonical(group.get("cwd", "")) != canonical(workspace):
+        response = subprocess.run([executable, "inspect", "--json"], cwd=workspace,
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=8)
+        if response.returncode:
+            raise ValueError("Could not inspect skills. Check the Grok configuration or update its CLI.")
+        report = json.loads(response.stdout)
+        if canonical(report.get("cwd", "")) != canonical(workspace):
+            raise ValueError("Grok returned skills for a different folder.")
+        result = []
+        for item in report.get("skills", [])[:1000]:
+            source = item.get("source") or {}
+            path = source.get("path")
+            if item.get("disabled") or item.get("compatibilityStatus") == "disabled" or not isinstance(path, str):
                 continue
-            for item in group.get("skills", [])[:1000]:
-                if item.get("enabled") is False or not isinstance(item.get("path"), str):
+            result.append({"provider": "grok", "name": item.get("invocableAs") or item.get("name") or pathlib.Path(path).parent.name,
+                           "description": item.get("description") or "", "path": canonical(os.path.join(workspace, path)),
+                           "scope": {"configToml": "Config", "plugin": "Plugin", "project": "Project", "user": "User",
+                                     "bundled": "Bundled", "server": "Server", "managed": "Managed"}.get(source.get("type"), "Project")})
+        return result
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired) as error:
+        warnings.append("Grok skill discovery unavailable: " + str(error))
+        return []
+
+
+def list_skills(workspace, providers=None):
+    providers = selected_providers(providers, ("claude", "codex"))
+    warnings = []
+    result = claude_skills(workspace, warnings) if "claude" in providers else []
+    if "codex" in providers:
+        try:
+            response = codex_rpc("skills/list", {"cwds": [workspace], "forceReload": True})
+            for group in response.get("data", []):
+                if canonical(group.get("cwd", "")) != canonical(workspace):
                     continue
-                interface = item.get("interface") or {}
-                result.append({"provider": "codex", "name": interface.get("displayName") or item.get("name") or pathlib.Path(item["path"]).parent.name,
-                               "description": interface.get("shortDescription") or item.get("description") or "",
-                               "path": item["path"], "scope": "Plugin" if item.get("pluginId") else
-                               {"repo": "Project", "user": "User", "system": "System", "admin": "Managed"}.get(item.get("scope"), "Project")})
-            for error in group.get("errors", []):
-                warnings.append("Codex: " + str(error.get("message", "Could not load a skill.")))
-    except (OSError, ValueError, TypeError, AttributeError) as error:
-        warnings.append("Codex skill discovery unavailable: " + str(error))
+                for item in group.get("skills", [])[:1000]:
+                    if item.get("enabled") is False or not isinstance(item.get("path"), str):
+                        continue
+                    interface = item.get("interface") or {}
+                    result.append({"provider": "codex", "name": interface.get("displayName") or item.get("name") or pathlib.Path(item["path"]).parent.name,
+                                   "description": interface.get("shortDescription") or item.get("description") or "",
+                                   "path": item["path"], "scope": "Plugin" if item.get("pluginId") else
+                                   {"repo": "Project", "user": "User", "system": "System", "admin": "Managed"}.get(item.get("scope"), "Project")})
+                for error in group.get("errors", []):
+                    warnings.append("Codex: " + str(error.get("message", "Could not load a skill.")))
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            warnings.append("Codex skill discovery unavailable: " + str(error))
+    if "grok" in providers:
+        result += grok_skills(workspace, warnings)
     seen = set()
     unique = []
     for item in sorted(result, key=lambda item: (item["provider"], item["name"].casefold(), item["path"])):
@@ -658,7 +702,7 @@ def main():
     if action == "reverse-launch":
         return reverse_launch(request)
     if action == "skills":
-        return list_skills(workspace)
+        return list_skills(workspace, request.get("providers"))
     if action == "list":
         return list_sessions(workspace)
     if action == "delete":
@@ -666,8 +710,11 @@ def main():
     if action == "codex-usage":
         return codex_rpc("account/rateLimits/read", {})
     if action == "usage":
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            return {"providers": list(executor.map(provider_usage, ("claude", "codex", "grok")))}
+        providers = selected_providers(request.get("providers"))
+        if not providers:
+            return {"providers": []}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(providers)) as executor:
+            return {"providers": list(executor.map(provider_usage, providers))}
     raise ValueError("Unknown history action.")
 
 
