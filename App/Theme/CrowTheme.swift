@@ -59,11 +59,11 @@ struct CrowPopupPanel<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(CrowTheme.textDim)
-                .lineLimit(1).truncationMode(.middle).padding(.horizontal, 10).padding(.vertical, 8)
+                .lineLimit(1).truncationMode(.middle).padding(.horizontal, 8).padding(.vertical, 5)
             content
-        }.padding(8).frame(width: 280).background(CrowTheme.bg0)
+        }.padding(5).frame(width: 240).background(CrowTheme.bg0)
             .foregroundStyle(CrowTheme.text).clipShape(RoundedRectangle(cornerRadius: 12))
             .windowDragExcluded().presentationCompactAdaptation(.popover)
     }
@@ -77,8 +77,8 @@ struct CrowPopupAction: View {
 
     var body: some View {
         Button(role: role, action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: symbol).frame(width: 20).foregroundStyle(role == .destructive ? CrowTheme.danger : CrowTheme.textDim)
+            HStack(spacing: 7) {
+                Image(systemName: symbol).frame(width: 18).foregroundStyle(role == .destructive ? CrowTheme.danger : CrowTheme.textDim)
                 Text(title)
                 Spacer(minLength: 0)
             }
@@ -97,9 +97,9 @@ struct CrowPopupButtonStyle: ButtonStyle {
         let configuration: ButtonStyleConfiguration
 
         var body: some View {
-            configuration.label.font(.system(size: 13))
+            configuration.label.font(.system(size: 12))
                 .foregroundStyle(configuration.role == .destructive ? CrowTheme.danger : CrowTheme.text)
-                .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 4)
                 .background(enabled && (hovered || configuration.isPressed) ? CrowTheme.bg2 : .clear,
                             in: RoundedRectangle(cornerRadius: 6))
                 .opacity(enabled ? 1 : 0.4).contentShape(Rectangle())

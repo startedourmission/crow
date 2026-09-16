@@ -245,6 +245,7 @@ struct AgentWorkspaceBrowser: View {
     @State private var folderSource: WorkspaceID?
     @State private var cloneHost: String?
     @State private var hostMenu: String?
+    @State private var sessionMenu: WorkspaceID?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
         model.alphabetizedWorkspaces(on: hostID).filter { state in
@@ -451,7 +452,7 @@ struct AgentWorkspaceBrowser: View {
                     hostMenu = nil; cloneHost = host.id.rawValue.uuidString
                 }.disabled(!connected)
                 #if os(macOS)
-                CrowDivider().padding(.vertical, 5)
+                CrowDivider().padding(.vertical, 3)
                 ReverseSSHHostControl(host: host)
                 if model.reverseSSHConnections[host.id]?.connectCommand != nil {
                     CrowPopupAction(title: "Copy Reverse SSH Command", symbol: "doc.on.doc") {
@@ -459,7 +460,7 @@ struct AgentWorkspaceBrowser: View {
                     }
                 }
                 #endif
-                CrowDivider().padding(.vertical, 5)
+                CrowDivider().padding(.vertical, 3)
                 CrowPopupAction(title: "Edit Host…", symbol: "pencil") {
                     hostMenu = nil; model.editHost(host)
                 }
@@ -540,23 +541,32 @@ struct AgentWorkspaceBrowser: View {
     }
 
     private func newSessionMenu(_ state: WorkspaceState) -> some View {
-        Menu {
-            Button("Web Browser") {
-                model.activateWorkspace(state.id); model.newBrowser(); onOpen?()
-            }
-            Button("New Terminal") {
-                model.activateWorkspace(state.id); model.newTerminal(); model.compactSurface = .terminal; onOpen?()
-            }
-            ForEach(AgentProvider.allCases) { provider in
-                Button("New \(provider.title)") {
-                    model.activateWorkspace(state.id)
-                    if model.newAgentTerminal(provider) != nil { onOpen?() }
-                }
-            }
-        } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        Button { sessionMenu = state.id } label: {
+            Image(systemName: "plus").frame(width: 24, height: 24).contentShape(Rectangle())
+        }.buttonStyle(CrowButtonStyle())
             .disabled(state.snapshot.workspace.isRemote && state.remote?.isConnected != true)
-            .accessibilityLabel("New session")
+            .accessibilityLabel("New session").help("New session")
+            .accessibilityIdentifier("crow.workspaces.new-session." + state.id.rawValue.uuidString)
+            .popover(isPresented: Binding(get: { sessionMenu == state.id }, set: { if !$0, sessionMenu == state.id { sessionMenu = nil } }), arrowEdge: .trailing) {
+                CrowPopupPanel(title: state.snapshot.workspace.name) {
+                    Button("Web Browser") {
+                        sessionMenu = nil
+                        model.activateWorkspace(state.id); model.newBrowser(); onOpen?()
+                    }.buttonStyle(CrowPopupButtonStyle())
+                    Button("New Terminal") {
+                        sessionMenu = nil
+                        model.activateWorkspace(state.id); model.newTerminal(); model.compactSurface = .terminal; onOpen?()
+                    }.buttonStyle(CrowPopupButtonStyle())
+                    CrowDivider().padding(.vertical, 3)
+                    ForEach(AgentProvider.allCases) { provider in
+                        Button("New \(provider.title)") {
+                            sessionMenu = nil
+                            model.activateWorkspace(state.id)
+                            if model.newAgentTerminal(provider) != nil { onOpen?() }
+                        }.buttonStyle(CrowPopupButtonStyle())
+                    }
+                }.accessibilityIdentifier("crow.workspaces.new-session-menu")
+            }
     }
 
     private func sessionRow(_ id: UUID, state: WorkspaceState) -> some View {

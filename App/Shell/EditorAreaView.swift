@@ -265,23 +265,20 @@ struct NewTabPopover: View {
                 Button {
                     dismiss(); model.newAgentTerminal(provider, in: paneID)
                 } label: {
-                    HStack(spacing: 10) {
-                        AgentProviderIcon(provider: provider, size: 16).frame(width: 20)
+                    HStack(spacing: 7) {
+                        AgentProviderIcon(provider: provider, size: 14).frame(width: 18)
                         Text(provider.title)
                         Spacer(minLength: 0)
                     }
                 }.buttonStyle(CrowPopupButtonStyle()).disabled(!connected)
                     .accessibilityIdentifier("crow.new-tab.agent.\(provider.rawValue)")
             }
-            CrowDivider().padding(.vertical, 5)
+            CrowDivider().padding(.vertical, 3)
             CrowPopupAction(title: "Web Browser", symbol: "globe") {
                 dismiss(); model.newBrowser(in: paneID)
             }
             CrowPopupAction(title: "Browse Files", symbol: "folder") {
                 dismiss(); model.activatePane(paneID); model.showFileExplorer()
-            }
-            CrowPopupAction(title: "SSH Hosts", symbol: "network") {
-                dismiss(); model.activatePane(paneID); model.showHosts()
             }
         }.accessibilityIdentifier("crow.new-tab-popover")
     }

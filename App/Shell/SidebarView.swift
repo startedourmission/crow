@@ -446,28 +446,20 @@ struct ReverseSSHHostControl: View {
     private var session: ReverseSSHSession? { model.reverseSSHConnections[host.id] }
     private var enabled: Bool { session?.isEnabled == true }
     private var preparing: Bool { enabled && session?.connectCommand == nil }
-    private var helpText: String {
-        "Reverse SSH (macOS only) · " + (session?.status ?? "Off") + " — "
-            + (enabled ? "click to turn off" : "turn on and copy access command")
-    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Toggle(isOn: Binding(get: { enabled }, set: { model.setReverseSSH($0, for: host) })) {
-                HStack(spacing: 10) {
-                    Image(systemName: "arrow.uturn.backward").frame(width: 20).foregroundStyle(CrowTheme.textDim)
-                    Text("Reverse SSH").font(.system(size: 13))
-                    if preparing { ProgressView().controlSize(.mini) }
-                }
-            }.toggleStyle(.switch).controlSize(.small)
-                .disabled(!enabled && (supportsReverseSSH == false || model.connectionState(for: host) != .connected))
-                .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
-                .accessibilityValue(session?.status ?? "Off")
-            Text(supportsReverseSSH == false ? "Available on macOS hosts only."
-                 : enabled ? (session?.status ?? "On") : "Turn on to copy the connection command.")
-                .font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 30)
-        }.padding(.horizontal, 10).padding(.vertical, 7).help(helpText)
+        Toggle(isOn: Binding(get: { enabled }, set: { model.setReverseSSH($0, for: host) })) {
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.uturn.backward").frame(width: 18).foregroundStyle(CrowTheme.textDim)
+                Text("Reverse SSH").font(.system(size: 12))
+                if preparing { ProgressView().controlSize(.mini) }
+            }
+        }.toggleStyle(.switch).controlSize(.small)
+            .disabled(!enabled && (supportsReverseSSH == false || model.connectionState(for: host) != .connected))
+            .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
+            .accessibilityValue(session?.status ?? "Off")
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .help(session?.status ?? "Reverse SSH")
         .task(id: connection?.socket ?? (nativeConnection == nil ? "disconnected" : "native")) {
             supportsReverseSSH = nil
             do {
