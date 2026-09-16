@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: SPARKLE_PUBLIC_ED_KEY=... [NOTARY_PROFILE=oh-my-opensnap] $0 <version> [output-directory]" >&2
+  echo "Usage: BUILD_NUMBER=... SPARKLE_PUBLIC_ED_KEY=... [NOTARY_PROFILE=oh-my-opensnap] $0 <version> [output-directory]" >&2
 }
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -26,6 +26,24 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid version '$version'. Expected a semantic version such as 0.1.0." >&2
   exit 64
 fi
+
+# Sparkle compares build numbers, not just the visible marketing version.
+# Validate before archiving, notarizing, or removing any previous artifacts.
+build_number="${BUILD_NUMBER:-}"
+python3 - "$build_number" "$project_root/appcast.xml" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+number, feed = sys.argv[1:]
+if not re.fullmatch(r"[1-9][0-9]*", number):
+    raise SystemExit("Set BUILD_NUMBER to a positive integer greater than the last published build.")
+versions = ET.parse(feed).findall(".//{http://www.andymatuschak.org/xml-namespaces/sparkle}version")
+published = [int(item.text) for item in versions]
+latest = max(published, default=0)
+if int(number) <= latest:
+    raise SystemExit(f"BUILD_NUMBER={number} must be greater than published build {latest}; otherwise Sparkle will not offer this update.")
+PY
 
 for command_name in xcodebuild xcrun ditto codesign spctl shasum hdiutil; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -98,8 +116,6 @@ rm -f \
   "$output_directory/$artifact_name.sha256" \
   "$output_directory/$dmg_name" \
   "$output_directory/$dmg_name.sha256"
-
-build_number="${BUILD_NUMBER:-1}"
 
 echo "Archiving Crow $version ($build_number) for arm64 and x86_64..."
 xcodebuild archive \

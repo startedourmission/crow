@@ -28,9 +28,15 @@ SPARKLE_PUBLIC_ED_KEY="$(build/SourcePackages/artifacts/sparkle/Sparkle/bin/gene
   --account startedourmission-crow -p)" \
 NOTARY_PROFILE=oh-my-opensnap \
 APPLE_TEAM_ID=M7NU9F8CZN \
-BUILD_NUMBER=2 \
-scripts/release-macos.sh 0.1.1 dist
+BUILD_NUMBER=4 \
+scripts/release-macos.sh 0.1.3 dist
 ```
+
+위 버전·빌드 번호는 다음 배포 예시입니다. `BUILD_NUMBER`는 반드시 명시하고,
+저장소를 최신 상태로 갱신한 뒤 `appcast.xml`의 기존 번호보다 큰 정수를 사용합니다.
+스크립트는 번호 누락·중복·역행을 배포 작업 전에 차단합니다.
+Git 푸시만으로는 앱 업데이트가 배포되지 않으며, 아래의 appcast·Release 갱신도 필요합니다.
+공개키를 넣지 않은 로컬 개발 빌드에서는 업데이트 확인을 의도적으로 비활성화합니다.
 
 스크립트는 다음을 수행합니다.
 
