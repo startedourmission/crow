@@ -395,6 +395,7 @@ final class EditorIntegrationTests: XCTestCase {
         let folder = root.appendingPathComponent("Destination")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         await model.current.explorer.refresh()
+        model.showFileExplorer()
         let hosting = NSHostingView(rootView: CrowRootView().environment(model))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -645,23 +646,23 @@ final class EditorIntegrationTests: XCTestCase {
         window.contentView = NSHostingView(rootView: CrowRootView().environment(model))
         window.makeKeyAndOrderFront(nil)
         defer {
-            (window.attachedSheet as? NSOpenPanel)?.cancel(nil)
+            model.folderSelectionPanel?.cancel(nil)
             window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root)
         }
         pump(for: 0.3)
         model.folderImporterVisible = true
         for _ in 0..<60 {
-            if window.attachedSheet is NSOpenPanel { break }
+            if model.folderSelectionPanel != nil { break }
             pump(for: 0.05)
         }
-        let panel = try XCTUnwrap(window.attachedSheet as? NSOpenPanel)
+        let panel = try XCTUnwrap(model.folderSelectionPanel)
         XCTAssertTrue(panel.canChooseDirectories)
         XCTAssertFalse(panel.canChooseFiles)
         // Confirmation in macOS service-backed panels requires real UI events;
         // URL handling and restoration are covered separately in CrowAppTests.
         panel.cancel(nil)
         for _ in 0..<60 {
-            if !model.folderImporterVisible && window.attachedSheet == nil { break }
+            if !model.folderImporterVisible && model.folderSelectionPanel == nil { break }
             pump(for: 0.05)
         }
         XCTAssertFalse(model.folderImporterVisible)
@@ -701,6 +702,7 @@ final class EditorIntegrationTests: XCTestCase {
         await model.current.explorer.reveal(.init(name: "ContentView.swift",
             path: nested.appendingPathComponent("ContentView.swift").path, isDirectory: false))
         XCTAssertTrue(model.current.explorer.rows.contains { $0.entry.name == "ContentView.swift" && $0.depth == 2 })
+        model.showFileExplorer()
         let hosting = NSHostingView(rootView: CrowRootView().environment(model).preferredColorScheme(.light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
