@@ -448,18 +448,26 @@ struct ReverseSSHHostControl: View {
     private var preparing: Bool { enabled && session?.connectCommand == nil }
 
     var body: some View {
-        Toggle(isOn: Binding(get: { enabled }, set: { model.setReverseSSH($0, for: host) })) {
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.uturn.backward").frame(width: 18).foregroundStyle(CrowTheme.textDim)
-                Text("Reverse SSH").font(.system(size: 12))
-                if preparing { ProgressView().controlSize(.mini) }
-            }
-        }.toggleStyle(.switch).controlSize(.small)
-            .disabled(!enabled && (supportsReverseSSH == false || model.connectionState(for: host) != .connected))
-            .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
-            .accessibilityValue(session?.status ?? "Off")
+        HStack(spacing: 7) {
+            Image(systemName: "arrow.uturn.backward").frame(width: 18).foregroundStyle(CrowTheme.textDim)
+            Text("Reverse SSH").font(.system(size: 12)).fixedSize()
+            Spacer(minLength: 0)
+            Button { model.copyReverseSSHCommand(for: host) } label: {
+                Group {
+                    if preparing { ProgressView().controlSize(.mini) }
+                    else { Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(CrowTheme.textDim) }
+                }.frame(width: 20, height: 20).contentShape(Rectangle())
+            }.buttonStyle(CrowButtonStyle())
+                .disabled(session?.connectCommand == nil)
+                .accessibilityLabel("Copy Reverse SSH Command")
+                .accessibilityIdentifier("crow.reverse-ssh.copy.\(host.id)")
+            Toggle("Reverse SSH", isOn: Binding(get: { enabled }, set: { model.setReverseSSH($0, for: host) }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small).fixedSize()
+                .disabled(!enabled && (supportsReverseSSH == false || model.connectionState(for: host) != .connected))
+                .accessibilityIdentifier("crow.reverse-ssh.\(host.id)")
+                .accessibilityValue(session?.status ?? "Off")
+        }.frame(maxWidth: .infinity)
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .help(session?.status ?? "Reverse SSH")
         .task(id: connection?.socket ?? (nativeConnection == nil ? "disconnected" : "native")) {
             supportsReverseSSH = nil
             do {

@@ -246,6 +246,9 @@ struct AgentWorkspaceBrowser: View {
     @State private var cloneHost: String?
     @State private var hostMenu: String?
     @State private var sessionMenu: WorkspaceID?
+    @SceneStorage("crow.workspaces.localHeight") private var localHeight = 220.0
+    @State private var localDragStart: CGFloat?
+    @State private var liveLocalHeight: CGFloat?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
         model.alphabetizedWorkspaces(on: hostID).filter { state in
@@ -306,15 +309,7 @@ struct AgentWorkspaceBrowser: View {
                 .accessibilityIdentifier("crow.agents.search")
                 .onAppear { searchFocused = true }
             }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if matchesHost(nil, id: nil) { hostGroup(nil, id: nil) }
-                    ForEach(model.workspaceHostIDs, id: \.self) { id in
-                        let host = model.hosts.first { $0.id == id }
-                        if matchesHost(host, id: id) { hostGroup(host, id: id) }
-                    }
-                }.padding(.vertical, 8)
-            }
+            hostLists
         }.background(CrowTheme.bg1).foregroundStyle(CrowTheme.text)
             .accessibilityIdentifier("crow.agents.browser")
             .sheet(isPresented: Binding(get: { cloneHost != nil }, set: { if !$0 { cloneHost = nil } })) {
@@ -342,6 +337,51 @@ struct AgentWorkspaceBrowser: View {
 
     private var allHostsCollapsed: Bool {
         Set(["local"] + model.workspaceHostIDs.map { $0.rawValue.uuidString }).isSubset(of: collapsedHosts)
+    }
+
+    private var hostLists: some View {
+        let showLocal = matchesHost(nil, id: nil)
+        let remoteIDs = model.workspaceHostIDs.filter { id in
+            matchesHost(model.hosts.first { $0.id == id }, id: id)
+        }
+        return GeometryReader { geometry in
+            VStack(spacing: 0) {
+                if showLocal && !remoteIDs.isEmpty {
+                    let available = max(0, geometry.size.height - ResizeHandle.thickness)
+                    let minimum = min(60, available / 2)
+                    let height = min(max(minimum, liveLocalHeight ?? localHeight), available - minimum)
+                    localHostList.frame(height: height)
+                    ResizeHandle(axis: .vertical, label: "Resize Local and SSH host lists", onDrag: { translation in
+                        if localDragStart == nil { localDragStart = height }
+                        liveLocalHeight = min(max(minimum, (localDragStart ?? height) + translation), available - minimum)
+                    }, onEnd: {
+                        if let height = liveLocalHeight { localHeight = height }
+                        localDragStart = nil; liveLocalHeight = nil
+                    }).windowDragExcluded().accessibilityIdentifier("crow.workspaces.resize-local")
+                    remoteHostList(remoteIDs)
+                } else if showLocal {
+                    localHostList
+                } else {
+                    remoteHostList(remoteIDs)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var localHostList: some View {
+        ScrollView {
+            hostGroup(nil, id: nil).padding(.vertical, 8)
+        }.accessibilityIdentifier("crow.workspaces.local-list")
+    }
+
+    private func remoteHostList(_ ids: [HostID]) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                ForEach(ids, id: \.self) { id in
+                    hostGroup(model.hosts.first { $0.id == id }, id: id)
+                }
+            }.padding(.vertical, 8)
+        }.accessibilityIdentifier("crow.workspaces.remote-list")
     }
 
     private var addWorkspaceMenu: some View {
@@ -377,8 +417,8 @@ struct AgentWorkspaceBrowser: View {
                 if let host {
                     HostConnectionButton(host: host)
                 } else {
-                    Image(systemName: id == nil ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(id == nil ? CrowTheme.ok : CrowTheme.textDim)
+                    Image(systemName: id == nil ? "laptopcomputer" : "circle")
+                        .foregroundStyle(CrowTheme.textDim)
                         .frame(width: 24, height: 28)
                         .accessibilityLabel(id == nil ? "Local device" : "Disconnected")
                 }
@@ -454,11 +494,6 @@ struct AgentWorkspaceBrowser: View {
                 #if os(macOS)
                 CrowDivider().padding(.vertical, 3)
                 ReverseSSHHostControl(host: host)
-                if model.reverseSSHConnections[host.id]?.connectCommand != nil {
-                    CrowPopupAction(title: "Copy Reverse SSH Command", symbol: "doc.on.doc") {
-                        model.copyReverseSSHCommand(for: host); hostMenu = nil
-                    }
-                }
                 #endif
                 CrowDivider().padding(.vertical, 3)
                 CrowPopupAction(title: "Edit Host…", symbol: "pencil") {

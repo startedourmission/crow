@@ -17,6 +17,7 @@ struct TmuxPanel: View {
     @State private var renaming: TmuxSession?
     @State private var name = ""
     @State private var closing: CloseTarget?
+    @State private var installWorkspace: WorkspaceState?
     private var collapsedSessions: Set<String> {
         get { model.tmuxExpansionStates[expansionKey]?.collapsedSessions ?? [] }
         nonmutating set { model.tmuxExpansionStates[expansionKey, default: .init()].collapsedSessions = newValue }
@@ -66,11 +67,9 @@ struct TmuxPanel: View {
                 HStack(alignment: .center, spacing: 8) {
                     Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
                     if error.contains("tmux is not installed") {
-                        Button {
-                            model.activateWorkspace(target.id, reconnect: false)
-                            model.openCommandTerminal(command: Self.installCommand)
-                            onAttach?()
-                        } label: { Image(systemName: "arrow.down.circle").font(.system(size: 16)) }
+                        Button { installWorkspace = target } label: {
+                            Text("Download").underline().font(.caption).fixedSize()
+                        }.buttonStyle(.plain)
                             .help("Install tmux on this host").accessibilityLabel("Install tmux")
                             .accessibilityIdentifier("crow.tmux.install")
                     }
@@ -89,6 +88,21 @@ struct TmuxPanel: View {
             .accessibilityIdentifier("crow.tmux.panel")
             .windowDragExcluded()
             .onDisappear { task?.cancel() }
+            .alert("Install tmux?", isPresented: Binding(get: { installWorkspace != nil }, set: { if !$0 { installWorkspace = nil } }), presenting: installWorkspace) { state in
+                Button("Install") {
+                    guard model.states.contains(where: { $0 === state }) else { return }
+                    guard !state.snapshot.workspace.isRemote || state.remote?.isConnected == true else {
+                        error = "Connect this host before installing tmux."; return
+                    }
+                    model.activateWorkspace(state.id, reconnect: false)
+                    model.openCommandTerminal(command: Self.installCommand)
+                    onAttach?()
+                }.keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) { installWorkspace = nil }
+            } message: { state in
+                let device = state.snapshot.workspace.hostID.flatMap { id in model.hosts.first { $0.id == id }?.userAtHost } ?? "Local"
+                Text("Install tmux on \(device) using its package manager?")
+            }
             .alert(renaming == nil ? "New tmux session" : "Rename tmux session", isPresented: $editing) {
                 TextField("Session name", text: $name)
                 Button("Save") {
