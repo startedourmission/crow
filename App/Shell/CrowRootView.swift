@@ -330,7 +330,7 @@ struct CompactWorkspaceView: View {
             } else {
                 ZStack {
                     if model.compactSurface == .hosts || model.compactSurface == .files {
-                        SidebarView(filesOnly: model.compactSurface == .files && model.sidebarPane != .automation)
+                        SidebarView()
                     }
                     if model.hasWorkspace {
                         EditorAreaView()
@@ -588,6 +588,9 @@ private struct PhoneWorkspaceBar: View {
         Button("Web Browser", systemImage: "globe") { model.newBrowser() }.disabled(!model.hasWorkspace)
         Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             .accessibilityIdentifier("crow.phone.workspaces")
+        Button("Git", systemImage: "point.3.connected.trianglepath.dotted") {
+            model.compactSurface = .files; model.sidebarPane = .git; model.sidebarVisible = true
+        }.accessibilityIdentifier("crow.phone.git")
         Button("Automations", systemImage: "clock.arrow.2.circlepath") {
             model.compactSurface = .files; model.sidebarPane = .automation; model.sidebarVisible = true
         }.accessibilityIdentifier("crow.phone.automation")

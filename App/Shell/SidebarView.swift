@@ -77,10 +77,11 @@ struct SidebarView: View {
     @FocusState private var searchFocused: Bool
 
     private var explorer: FileExplorer { model.current.explorer }
+    private var showsFiles: Bool { filesOnly || model.sidebarPane == .files }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if filesOnly { sidebarHeader }
+            if showsFiles { sidebarHeader }
             #if !os(macOS)
             CrowDivider()
             #endif
@@ -88,6 +89,8 @@ struct SidebarView: View {
                 AgentWorkspaceBrowser()
             } else if !filesOnly && model.sidebarPane == .automation {
                 AutomationPanel()
+            } else if !filesOnly && model.sidebarPane == .git {
+                GitSidebarPanel()
             } else if model.hasWorkspace {
                 filesList
             } else {
@@ -98,13 +101,13 @@ struct SidebarView: View {
         .background(CrowTheme.bg1)
         .windowDragBackground()
         .crowForeground(CrowTheme.text)
-        .task(id: "\(model.selectedWorkspaceID)-\(explorer.searchVisible)-\(model.fileSearchFocusRequest)") {
+        .task(id: "\(model.selectedWorkspaceID)-\(showsFiles)-\(explorer.searchVisible)-\(model.fileSearchFocusRequest)") {
             await Task.yield()
             guard !Task.isCancelled else { return }
-            searchFocused = filesOnly && explorer.searchVisible
+            searchFocused = showsFiles && explorer.searchVisible
         }
-        .task(id: model.selectedWorkspaceID.rawValue.uuidString + String(filesOnly) + model.current.contextRootPath) {
-            guard filesOnly else { return }
+        .task(id: model.selectedWorkspaceID.rawValue.uuidString + String(showsFiles) + model.current.contextRootPath) {
+            guard showsFiles else { return }
             let tree = explorer
             model.refreshFiles()
             defer { tree.stop() }

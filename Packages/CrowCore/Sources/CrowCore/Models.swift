@@ -289,6 +289,7 @@ public struct IMEProbe: Equatable, Sendable {
 public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
     case files
     case workspaces
+    case git
     case automation
 
     public init(from decoder: Decoder) throws {
@@ -296,6 +297,7 @@ public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
         let value = try container.decode(String.self)
         switch value {
         case "files": self = .files
+        case "git": self = .git
         case "automation": self = .automation
         case "workspaces", "hosts", "agents", "tmux": self = .workspaces
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown sidebar pane")

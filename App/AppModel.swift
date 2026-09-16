@@ -46,7 +46,7 @@ final class AppModel {
     var settings = EditorSettings() { didSet { schedulePersist() } }
     var sidebarPane: SidebarPane = .workspaces
     var inspectorVisible = true
-    var inspectorTab = "Files"
+    var inspectorTab = "Agents"
     var editorLocationBufferID: BufferID?
     var editorLocationRequest: EditorLocationRequest?
     var documentFindRequest = 0
@@ -58,7 +58,7 @@ final class AppModel {
     var fileSearchFocusRequest = 0
 
     func showFileExplorer() {
-        inspectorTab = "Files"; inspectorVisible = true
+        sidebarPane = .files; sidebarVisible = true
         #if os(iOS)
         compactSurface = .files
         #endif
@@ -88,7 +88,7 @@ final class AppModel {
     var compactSurface: CompactSurface = .editor {
         didSet {
             if compactSurface == .hosts { sidebarPane = .workspaces }
-            if compactSurface == .files { sidebarPane = .workspaces; inspectorTab = "Files" }
+            if compactSurface == .files { sidebarPane = .files }
         }
     }
     var statusMessage = "Ready"
@@ -475,6 +475,7 @@ final class AppModel {
             externallyChangedBuffers.remove(buffer.id)
         }
         states.remove(at: index)
+        stopUnusedReverseSSH(for: Set(state.snapshot.agentTerminals.compactMap(\.reverseHostID)))
         if selectedWorkspaceID == id {
             selectedWorkspaceID = states.isEmpty ? emptyState.id : states[min(index, states.count - 1)].id
             refreshFiles()
@@ -1613,12 +1614,26 @@ final class AppModel {
     func closeTerminal(_ id: UUID) {
         if terminalCloseRequest == id { terminalCloseRequest = nil }
         guard let state = states.first(where: { $0.snapshot.terminalIDs.contains(id) }) else { return }
+        let reverseHostID = state.snapshot.agentTerminals.first { $0.id == id }?.reverseHostID
         state.terminals[id]?.stop(); state.terminals[id] = nil; state.snapshot.terminalIDs.removeAll { $0 == id }
         state.snapshot.layout?.remove(.terminal(id))
         state.snapshot.agentTerminals.removeAll { $0.id == id }
+        if let reverseHostID { stopUnusedReverseSSH(for: [reverseHostID]) }
         state.terminalGeneration += 1
         if state.snapshot.selectedTerminalID == id { state.snapshot.selectedTerminalID = state.snapshot.terminalIDs.last }
         schedulePersist()
+    }
+    private func stopUnusedReverseSSH(for hostIDs: Set<HostID>) {
+        #if os(macOS)
+        for hostID in hostIDs {
+            let hasAgentTab = states.contains { state in
+                state.snapshot.agentTerminals.contains {
+                    $0.reverseHostID == hostID && state.snapshot.terminalIDs.contains($0.id)
+                }
+            }
+            if !hasAgentTab { reverseSSHConnections[hostID]?.stop() }
+        }
+        #endif
     }
     func schedulePersist() {
         persistenceTask?.cancel()

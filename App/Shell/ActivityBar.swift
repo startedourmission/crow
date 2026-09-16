@@ -7,6 +7,8 @@ struct ActivityBar: View {
     var body: some View {
         VStack(spacing: 4) {
             paneButton(.workspaces, symbol: "square.stack.3d.up")
+            paneButton(.files, symbol: "folder")
+            paneButton(.git, symbol: "")
             paneButton(.automation, symbol: "clock")
             Button { model.screenRequest = ScreenRequest(id: model.selectedWorkspaceID) } label: {
                 Image(systemName: "desktopcomputer")
@@ -52,7 +54,10 @@ struct ActivityBar: View {
                 model.sidebarVisible = true
             }
         } label: {
-            Image(systemName: symbol)
+            Group {
+                if pane == .git { GitBranchIcon(selected: model.sidebarPane == pane && model.sidebarVisible) }
+                else { Image(systemName: symbol) }
+            }
                 .font(.system(size: 18, weight: .regular))
                 .crowForeground(model.sidebarPane == pane && model.sidebarVisible ? CrowTheme.accent : CrowTheme.textDim)
                 .frame(width: CrowTheme.activityWidth, height: 40)
@@ -66,8 +71,8 @@ struct ActivityBar: View {
         }
         .buttonStyle(CrowButtonStyle())
         .windowDragExcluded()
-        .help(pane == .files ? "Files" : pane == .automation ? "Automations" : "Workspaces")
-        .accessibilityLabel(pane == .files ? "Files" : pane == .automation ? "Automations" : "Workspaces")
+        .help(pane == .files ? "Files" : pane == .git ? "Git" : pane == .automation ? "Automations" : "Workspaces")
+        .accessibilityLabel(pane == .files ? "Files" : pane == .git ? "Git" : pane == .automation ? "Automations" : "Workspaces")
         .accessibilityIdentifier("crow.activity." + pane.rawValue)
     }
 }

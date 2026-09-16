@@ -20,7 +20,7 @@ struct FloatingWorkspaceView: View {
             .padding(.horizontal, 8).frame(height: 36).background(CrowTheme.bg1).windowDragBackground()
             CrowDivider()
             ZStack {
-                if model.compactSurface == .files || model.compactSurface == .hosts { SidebarView(filesOnly: model.compactSurface == .files && model.sidebarPane != .automation) }
+                if model.compactSurface == .files || model.compactSurface == .hosts { SidebarView() }
                 if model.hasWorkspace {
                     EditorAreaView()
                         .opacity(model.compactSurface == .editor ? 1 : 0)
@@ -63,6 +63,7 @@ struct FloatingWorkspaceView: View {
                         Button("Save File") { model.saveSelectedBuffer() }.disabled(model.selectedBuffer == nil)
                     }
                     Divider()
+                    Button("Git") { model.compactSurface = .files; model.sidebarPane = .git }
                     Button("SSH Keys…") { model.sshKeysVisible = true }
                     Button("Settings…") { model.settingsVisible = true }
                 } label: { Image(systemName: "square.grid.2x2").frame(width: 32, height: 36) }

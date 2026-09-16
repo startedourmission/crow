@@ -235,24 +235,23 @@ final class CrowAppTests: XCTestCase {
         model.showHosts()
         XCTAssertEqual(model.sidebarPane, .workspaces)
         model.compactSurface = .files
-        XCTAssertEqual(model.sidebarPane, .workspaces)
-        XCTAssertEqual(model.inspectorTab, "Files")
+        XCTAssertEqual(model.sidebarPane, .files)
+        XCTAssertEqual(model.inspectorTab, "Agents")
         model.showHosts()
         model.selectWorkspace(model.selectedWorkspaceID)
         #if os(iOS)
         XCTAssertEqual(model.compactSurface, .files)
         #endif
-        XCTAssertEqual(model.sidebarPane, .workspaces)
-        XCTAssertEqual(model.inspectorTab, "Files")
+        XCTAssertEqual(model.sidebarPane, .files)
+        XCTAssertEqual(model.inspectorTab, "Agents")
         model.sidebarPane = .automation
         model.inspectorVisible = false; model.inspectorTab = "Agents"
         model.focusFileSearch()
-        XCTAssertTrue(model.inspectorVisible)
-        XCTAssertEqual(model.inspectorTab, "Files")
+        XCTAssertFalse(model.inspectorVisible)
+        XCTAssertEqual(model.inspectorTab, "Agents")
+        XCTAssertTrue(model.sidebarVisible)
         XCTAssertTrue(model.current.explorer.searchVisible)
-        #if os(macOS)
-        XCTAssertEqual(model.sidebarPane, .automation, "File search opens on the right without replacing the left panel")
-        #endif
+        XCTAssertEqual(model.sidebarPane, .files, "File search opens the left explorer without changing the right panel")
     }
 
     #if os(iOS)
@@ -618,9 +617,9 @@ final class CrowAppTests: XCTestCase {
         restored.openFolder(directory)
         XCTAssertEqual(restored.workspaces.count, count)
         XCTAssertEqual(restored.selectedWorkspaceID, workspaceID)
-        XCTAssertEqual(restored.sidebarPane, .workspaces)
-        XCTAssertFalse(restored.sidebarVisible)
-        XCTAssertEqual(restored.inspectorTab, "Files")
+        XCTAssertEqual(restored.sidebarPane, .files)
+        XCTAssertTrue(restored.sidebarVisible)
+        XCTAssertEqual(restored.inspectorTab, "Agents")
         XCTAssertTrue(restored.inspectorVisible)
     }
 

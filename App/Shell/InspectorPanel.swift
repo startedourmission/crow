@@ -7,24 +7,8 @@ struct InspectorPanel: View {
     @State private var outline: [OutlineItem] = []
     @State private var outlineBufferID: BufferID?
     @State private var outlineSource = ""
-    @State private var projects: [String] = []
-    @State private var selectedProject: String?
-    @State private var projectScope: String?
-    @State private var projectError: String?
-    @State private var projectWarning: String?
-    @State private var discovering = false
-    @State private var discoveryGeneration = UUID()
-    @State private var refreshID = UUID()
-
-    private var gitScopeID: String { "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)" }
-    private var activeProject: String? { projectScope == gitScopeID ? selectedProject : nil }
-
-    private var gitTaskID: String {
-        "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)-\(model.selectedWorkspace.connection)-\(tab)-\(refreshID)"
-    }
-
     private var buffer: OpenBuffer? { model.inspectedBuffer }
-    private let tabs = ["Files", "Agents", "Skills", "Summary", "Git"]
+    private let tabs = ["Agents", "Skills", "Summary"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,18 +18,12 @@ struct InspectorPanel: View {
                 #else
                 let leading: CGFloat = 12, trailing: CGFloat = 12, maximumSpacing: CGFloat = 10
                 #endif
-                // Five tabs, the close button and a spacer must fit even at 200 pt.
+                // Keep the tabs and close button inside narrow panels.
                 let spacing = min(maximumSpacing, max(0, (geometry.size.width - leading - trailing - 28 * CGFloat(tabs.count + 1)) / CGFloat(tabs.count + 1)))
                 HStack(spacing: spacing) {
                     ForEach(tabs, id: \.self) { item in
                         Button { model.inspectorTab = item } label: {
-                            Group {
-                                if item == "Git" {
-                                    GitBranchIcon(selected: tab == item)
-                                } else {
-                                    Image(systemName: item == "Files" ? "folder" : item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
-                                }
-                            }
+                            Image(systemName: item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
                                 .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
                                 .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
                                 .frame(width: 28, height: 28)
@@ -66,11 +44,9 @@ struct InspectorPanel: View {
                 .windowDragBackground()
             }.frame(height: 36)
             CrowDivider()
-            if tab == "Files" { SidebarView(filesOnly: true) }
-            else if tab == "Agents" { AgentHistoryPanel() }
+            if tab == "Agents" { AgentHistoryPanel() }
             else if tab == "Skills" { AgentSkillsPanel() }
-            else if tab == "Summary" { summary }
-            else { git }
+            else { summary }
         }
         .background(CrowTheme.bg1)
         .crowForeground(CrowTheme.text)
@@ -83,45 +59,6 @@ struct InspectorPanel: View {
                 try Task.checkCancellation()
                 outline = items; outlineSource = buffer.text
             } catch {}
-        }
-        .task(id: gitTaskID) {
-            let generation = UUID(); discoveryGeneration = generation
-            if projectScope != gitScopeID {
-                projectScope = gitScopeID; projects = []; selectedProject = nil
-            }
-            projectError = nil; projectWarning = nil; discovering = false
-            guard tab == "Git", model.hasWorkspace else { return }
-            let state = model.current, path = state.contextRootPath
-            #if os(iOS)
-            guard state.snapshot.workspace.isRemote else {
-                projectError = "Open an SSH workspace to view Git projects on iPad and iPhone."; return
-            }
-            #endif
-            discovering = true
-            defer { if discoveryGeneration == generation { discovering = false } }
-            do {
-                let result: GitProjectList
-                #if os(macOS)
-                if let remote = state.systemSSH {
-                    result = try await GitRepository.projects(path: path, remote: remote)
-                } else if !state.snapshot.workspace.isRemote {
-                    result = try await GitRepository.projects(path: path)
-                } else {
-                    guard let remote = state.remote else { throw FileFailure.disconnected }
-                    result = try await remote.gitProjects(path: path)
-                }
-                #else
-                guard let remote = state.remote else { throw FileFailure.disconnected }
-                result = try await remote.gitProjects(path: path)
-                #endif
-                try Task.checkCancellation()
-                projects = result.paths; projectWarning = result.warning
-                if let selectedProject, !result.paths.contains(selectedProject) { self.selectedProject = nil }
-            } catch is CancellationError { return }
-            catch {
-                guard !Task.isCancelled else { return }
-                projects = []; selectedProject = nil; projectError = error.localizedDescription
-            }
         }
     }
 
@@ -173,6 +110,71 @@ struct InspectorPanel: View {
                 Spacer()
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+}
+
+struct GitSidebarPanel: View {
+    @Environment(AppModel.self) private var model
+    @State private var projects: [String] = []
+    @State private var selectedProject: String?
+    @State private var projectScope: String?
+    @State private var projectError: String?
+    @State private var projectWarning: String?
+    @State private var discovering = false
+    @State private var discoveryGeneration = UUID()
+    @State private var refreshID = UUID()
+
+    private var gitScopeID: String { "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)" }
+    private var activeProject: String? { projectScope == gitScopeID ? selectedProject : nil }
+
+    private var gitTaskID: String {
+        "\(model.selectedWorkspaceID)-\(model.current.contextRootPath)-\(model.selectedWorkspace.connection)-\(refreshID)"
+    }
+
+    var body: some View {
+        git
+            .background(CrowTheme.bg1)
+            .crowForeground(CrowTheme.text)
+        .task(id: gitTaskID) {
+            let generation = UUID(); discoveryGeneration = generation
+            if projectScope != gitScopeID {
+                projectScope = gitScopeID; projects = []; selectedProject = nil
+            }
+            projectError = nil; projectWarning = nil; discovering = false
+            guard model.hasWorkspace else { return }
+            let state = model.current, path = state.contextRootPath
+            #if os(iOS)
+            guard state.snapshot.workspace.isRemote else {
+                projectError = "Open an SSH workspace to view Git projects on iPad and iPhone."; return
+            }
+            #endif
+            discovering = true
+            defer { if discoveryGeneration == generation { discovering = false } }
+            do {
+                let result: GitProjectList
+                #if os(macOS)
+                if let remote = state.systemSSH {
+                    result = try await GitRepository.projects(path: path, remote: remote)
+                } else if !state.snapshot.workspace.isRemote {
+                    result = try await GitRepository.projects(path: path)
+                } else {
+                    guard let remote = state.remote else { throw FileFailure.disconnected }
+                    result = try await remote.gitProjects(path: path)
+                }
+                #else
+                guard let remote = state.remote else { throw FileFailure.disconnected }
+                result = try await remote.gitProjects(path: path)
+                #endif
+                try Task.checkCancellation()
+                projects = result.paths; projectWarning = result.warning
+                if let selectedProject, !result.paths.contains(selectedProject) { self.selectedProject = nil }
+            } catch is CancellationError { return }
+            catch {
+                guard !Task.isCancelled else { return }
+                projects = []; selectedProject = nil; projectError = error.localizedDescription
+            }
+        }
     }
 
     private var git: some View {
@@ -248,16 +250,17 @@ struct InspectorPanel: View {
     }
 }
 
-private struct GitBranchIcon: View {
+struct GitBranchIcon: View {
     @Environment(\.crowControlHovered) private var hovered
     let selected: Bool
+    var size: CGFloat = 18
 
     var body: some View {
         let color = selected ? CrowTheme.accent : CrowTheme.textDim
         GitBranchShape()
             .stroke(hovered ? CrowTheme.hoveredForeground(color) : color,
-                    style: StrokeStyle(lineWidth: selected ? 1.2 : 1, lineCap: .round, lineJoin: .round))
-            .frame(width: 13, height: 13)
+                    style: StrokeStyle(lineWidth: size / 13, lineCap: .round, lineJoin: .round))
+            .frame(width: size, height: size)
     }
 }
 

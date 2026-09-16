@@ -492,6 +492,35 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         await session.stopAndWait()
     }
 
+    @MainActor func testLastReverseAgentTabStopsOnlyItsHostAcrossWorkspaces() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-lifetime-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let host = SSHHost(name: "First", hostname: "192.0.2.1", username: "first")
+        let other = SSHHost(name: "Second", hostname: "192.0.2.1", username: "second")
+        let manual = SSHHost(name: "Manual", hostname: "192.0.2.2", username: "fixture")
+        for host in [host, other, manual] { model.setReverseSSH(true, for: host) }
+        let first = model.current
+        let second = WorkspaceState(.init(workspace: Workspace(name: "Second", kind: .local, connection: .local), rootPath: root.path))
+        model.states.append(second)
+        func add(_ host: SSHHost, to state: WorkspaceState) -> UUID {
+            var agent = AgentTerminal(provider: .codex, directory: root.path)
+            agent.reverseHostID = host.id
+            state.snapshot.agentTerminals.append(agent); state.snapshot.terminalIDs.append(agent.id)
+            return agent.id
+        }
+        let a = add(host, to: first), b = add(host, to: second)
+        _ = add(other, to: second)
+        model.closeTerminal(a)
+        XCTAssertEqual(model.reverseSSHConnections[host.id]?.isEnabled, true, "Another workspace still uses this server")
+        model.closeTerminal(b)
+        XCTAssertEqual(model.reverseSSHConnections[host.id]?.isEnabled, false)
+        XCTAssertEqual(model.reverseSSHConnections[other.id]?.isEnabled, true, "Same IP with a different account is independent")
+        XCTAssertTrue(model.removeWorkspace(second.id))
+        XCTAssertEqual(model.reverseSSHConnections[other.id]?.isEnabled, false, "Removing a workspace also closes its last agent")
+        XCTAssertEqual(model.reverseSSHConnections[manual.id]?.isEnabled, true, "Manual tunnels without agent tabs stay enabled")
+    }
+
     @MainActor func testWorkspaceListSortsHostsByConnectionAndProjectsByName() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-sort-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
