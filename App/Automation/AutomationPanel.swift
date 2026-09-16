@@ -36,6 +36,7 @@ struct AutomationPanel: View {
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
                 Button { revision += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
+                    .buttonStyle(CrowButtonStyle())
                     .help("Refresh automations").disabled(loading)
                     .windowDragExcluded().accessibilityIdentifier("crow.automation.refresh")
             }.padding(12)
@@ -49,9 +50,11 @@ struct AutomationPanel: View {
                             Text("CRON").font(.system(size: 11, weight: .semibold)).foregroundStyle(CrowTheme.textDim)
                             Spacer()
                             Button { editing = edit(snapshot, cron: .init(id: 0, schedule: "0 9 * * *", command: "", enabled: true), isNew: true) } label: { PanelActionIcon(symbol: "plus") }
+                                .buttonStyle(CrowButtonStyle())
                                 .help("New cron job").disabled(!snapshot.cronAvailable)
                                 .windowDragExcluded().accessibilityIdentifier("crow.automation.new-cron")
                             Button { editing = edit(snapshot) } label: { PanelActionIcon(symbol: "curlybraces") }
+                                .buttonStyle(CrowButtonStyle())
                                 .help("Edit full crontab").disabled(!snapshot.cronAvailable)
                                 .windowDragExcluded().accessibilityIdentifier("crow.automation.edit-cron")
                         }.padding(.top, 4)
