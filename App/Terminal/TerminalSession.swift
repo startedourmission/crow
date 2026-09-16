@@ -33,6 +33,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var tmuxCurrentDirectory: String?
     var workingDirectory: String { currentDirectory ?? directory }
     var agentProvider: AgentProvider?
+    var agentConversationTitle: String?
+    @ObservationIgnored var onAgentTitle: ((String) -> Void)?
     private(set) var agentActivity: AgentActivity = .unknown
     @ObservationIgnored private var activityTask: Task<Void, Never>?
     @ObservationIgnored private var lastAgentOutput = Date.distantPast
@@ -245,19 +247,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     func updateAgentActivity(outputIsRecent: Bool? = nil) {
         guard let provider = agentProvider, running else { agentActivity = .unknown; return }
         let terminal = view.getTerminal()
-        // SwiftTerm exposes indexed buffer access but no active-screen origin.
-        // Find the live tail without reading scrollback or moving the viewport.
-        var lower = 0, upper = max(1, terminal.rows)
-        while terminal.bufferLine(atRow: upper) != nil { lower = upper; upper *= 2 }
-        while lower < upper {
-            let middle = lower + (upper - lower) / 2
-            if terminal.bufferLine(atRow: middle) == nil { upper = middle } else { lower = middle + 1 }
-        }
-        let screenStart = max(0, lower - terminal.rows)
-        let lines = (0..<terminal.rows).map { row in
-            terminal.bufferLine(atRow: screenStart + row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true,
-                characterProvider: terminal.getCharacter(for:)) ?? ""
-        }
+        let lines = agentScreenLines()
         let cursorRow = terminal.getCursorLocation().y
         var hasher = Hasher()
         for (row, line) in lines.enumerated() {
@@ -275,6 +265,23 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             cursorRow: cursorRow, outputIsRecent: recent)
     }
 
+    private func agentScreenLines() -> [String] {
+        let terminal = view.getTerminal()
+        // SwiftTerm exposes indexed buffer access but no active-screen origin.
+        // Find the live tail without reading scrollback or moving the viewport.
+        var lower = 0, upper = max(1, terminal.rows)
+        while terminal.bufferLine(atRow: upper) != nil { lower = upper; upper *= 2 }
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if terminal.bufferLine(atRow: middle) == nil { upper = middle } else { lower = middle + 1 }
+        }
+        let screenStart = max(0, lower - terminal.rows)
+        return (0..<terminal.rows).map { row in
+            terminal.bufferLine(atRow: screenStart + row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true,
+                characterProvider: terminal.getCharacter(for:)) ?? ""
+        }
+    }
+
     func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
         receivedInput(Array(data))
         guard let writer else { return }
@@ -289,6 +296,21 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
 
     private func receivedInput(_ bytes: [UInt8]) {
         onBytes?(bytes)
+        // Use the submitted composer, not raw keystrokes (which may include
+        // password entry, terminal shortcuts, or edits to an unfinished draft).
+        if running, let provider = agentProvider, agentConversationTitle == nil,
+           bytes == [13] || bytes == [10] {
+            let lines = agentScreenLines(), cursor = view.getTerminal().getCursorLocation()
+            if lines.indices.contains(cursor.y), cursor.x > 2 {
+                let line = lines[cursor.y].trimmingCharacters(in: .whitespaces)
+                let prompt = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+                if ["❯ ", "› ", "> "].contains(where: { line.hasPrefix($0) }),
+                   !prompt.isEmpty, !prompt.hasPrefix("/"),
+                   AgentActivityDetector.detect(provider: provider, lines: lines, cursorRow: cursor.y, outputIsRecent: false) == .idle {
+                    recordAgentTitle(prompt)
+                }
+            }
+        }
         if running, agentProvider == nil, currentDirectory != nil, bytes.contains(13) || bytes.contains(10) {
             shellWorking = true
         }
@@ -329,7 +351,29 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         guard let writer else { return }
         Task { try? await writer.value.changeSize(cols: newCols, rows: newRows, pixelWidth: 0, pixelHeight: 0) }
     }
-    func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) { self.title = title }
+    private func recordAgentTitle(_ value: String) {
+        let value = String(value.split(whereSeparator: { $0.isNewline }).joined(separator: " ").prefix(150))
+        guard !value.isEmpty, agentConversationTitle != value else { return }
+        agentConversationTitle = value
+        onAgentTitle?(value)
+    }
+    private func receiveTerminalTitle(_ value: String) {
+        title = value
+        guard let provider = agentProvider else { return }
+        var name = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        name = name.trimmingCharacters(in: CharacterSet(charactersIn: "✳✻✽✶✢·⠂⠐⠒⠲⠴⠦⠖⠆⠄● "))
+        for prefix in [provider.title + ": ", provider.title + " - ", provider.title + " — "] {
+            if name.lowercased().hasPrefix(prefix.lowercased()) { name = String(name.dropFirst(prefix.count)) }
+        }
+        for suffix in [" | " + provider.title, " - " + provider.title, " — " + provider.title] {
+            if name.lowercased().hasSuffix(suffix.lowercased()) { name = String(name.dropLast(suffix.count)) }
+        }
+        guard !["terminal", "zsh", "bash", "sh", "claude code", provider.rawValue].contains(name.lowercased()),
+              !name.lowercased().hasPrefix(provider.rawValue + " --"),
+              name != workspace.name, name != directory, !name.isEmpty else { return }
+        recordAgentTitle(name)
+    }
+    func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) { receiveTerminalTitle(title) }
     func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
         currentDirectory = SSHCommand.terminalDirectory(directory)
         if currentDirectory != nil { shellWorking = false }
@@ -448,7 +492,7 @@ private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteT
 
 extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) { self.title = title }
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) { receiveTerminalTitle(title) }
     func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) {
         running = false; status = "Exited (\(exitCode.map(String.init) ?? "unknown"))"
     }

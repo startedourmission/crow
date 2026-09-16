@@ -1447,6 +1447,14 @@ final class AppModel {
         if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }) {
             session.launchCommand = agent.command
             session.agentProvider = agent.provider
+            session.agentConversationTitle = agent.conversationTitle
+            session.onAgentTitle = { [weak self, weak state] title in
+                guard let self, let state,
+                      let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }),
+                      state.snapshot.agentTerminals[index].conversationTitle != title else { return }
+                state.snapshot.agentTerminals[index].conversationTitle = title
+                self.schedulePersist()
+            }
             if agent.isManagedReverse == true {
                 session.startupUnavailableMessage = "Isolated reverse agents were removed. Open a new agent tab and enable Reverse SSH on the host."
             }

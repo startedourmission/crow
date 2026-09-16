@@ -164,7 +164,7 @@ struct AgentHistoryPanel: View {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
         guard let id = model.newAgentTerminal(entry.provider, directory: path), let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }) else { return }
-        state.snapshot.agentTerminals[index].name = entry.title
+        state.snapshot.agentTerminals[index].conversationTitle = entry.title
         state.snapshot.agentTerminals[index].sessionID = entry.id
         state.snapshot.agentTerminals[index].forkSession = fork
         // A session view may already have been created while opening the tab.

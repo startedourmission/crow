@@ -116,6 +116,39 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertFalse(model.current.snapshot.layout?.allTabs.contains(.terminal(agent.id)) ?? true)
     }
 
+    @MainActor func testAgentSessionTitlesFollowCLIAndPreserveCustomNames() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-agent-titles-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        for provider in AgentProvider.allCases {
+            let id = try XCTUnwrap(model.newAgentTerminal(provider))
+            let state = model.current
+            let session = model.terminal(id, in: state)
+            let index = try XCTUnwrap(state.snapshot.agentTerminals.firstIndex { $0.id == id })
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "New conversation")
+            session.view.feed(text: "\u{1b}]2;\(provider.title)\u{7}")
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "New conversation")
+            session.running = true
+            let marker = provider == .claude ? "❯" : "›"
+            session.view.feed(text: "\u{1b}[2J\u{1b}[H\(marker) /help")
+            session.send(source: session.view, data: [13][...])
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "New conversation", "Commands are not conversation titles")
+            session.view.feed(text: "\u{1b}[2J\u{1b}[H\(marker) 클립보드 동기화 수정")
+            session.send(source: session.view, data: [13][...])
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "클립보드 동기화 수정")
+            session.view.feed(text: "\u{1b}]2;\(provider.title): SSH 클립보드 수정\u{7}")
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "SSH 클립보드 수정")
+            session.view.feed(text: "\u{1b}]2;\(provider.title)\u{7}")
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "SSH 클립보드 수정", "A generic CLI title must not erase the conversation name")
+            model.renameAgentTerminal(id, workspaceID: state.id, name: "내 작업")
+            session.view.feed(text: "\u{1b}]2;Updated title\u{7}")
+            XCTAssertEqual(state.snapshot.agentTerminals[index].title, "내 작업")
+            let restored = try JSONDecoder().decode(AgentTerminal.self, from: JSONEncoder().encode(state.snapshot.agentTerminals[index]))
+            XCTAssertEqual(restored.conversationTitle, "Updated title")
+            XCTAssertEqual(restored.title, "내 작업")
+        }
+    }
+
     @MainActor func testAgentHistoryFollowsTerminalDirectoryAndTabFocus() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-cwd-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

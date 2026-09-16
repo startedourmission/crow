@@ -25,6 +25,7 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
     public var provider: AgentProvider
     public var directory: String
     public var name = ""
+    public var conversationTitle: String?
     public var isPinned = false
     public var sessionID: String?
     public var forkSession: Bool?
@@ -37,7 +38,7 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
         return TerminalCommand.environment + "cd " + TerminalCommand.path(directory) + " && exec "
             + ([provider.rawValue] + resume + provider.arguments).map(TerminalCommand.quote).joined(separator: " ")
     }
-    public var title: String { name.isEmpty ? provider.title : name }
+    public var title: String { name.isEmpty ? (conversationTitle ?? "New conversation") : name }
     public init(provider: AgentProvider, directory: String) { self.provider = provider; self.directory = directory }
 }
 
