@@ -2,6 +2,29 @@
 import Foundation
 import CrowCore
 
+struct SSHResolvedConfiguration: Sendable {
+    let host: SSHHost
+    let values: [String: [String]]
+
+    // These features require OpenSSH rather than Crow's direct SSH transport.
+    var requiresOpenSSH: Bool {
+        let options = ["proxycommand", "proxyjump", "localforward", "remoteforward", "dynamicforward",
+                       "remotecommand", "certificatefile", "identityagent", "controlpath", "localcommand"]
+        return options.contains { name in
+            values[name, default: []].contains { !["none", ""].contains($0) }
+        } || values["forwardagent"]?.first == "yes" || values["forwardx11"]?.first == "yes"
+          || values["pubkeyauthentication"]?.first == "false" || values["pubkeyauthentication"]?.first == "no"
+    }
+
+    func hasIdentityFile(directory: String) -> Bool {
+        values["identityfile", default: []].contains { path in
+            let expanded = (path as NSString).expandingTildeInPath
+            let absolute = expanded.hasPrefix("/") ? expanded : (directory as NSString).appendingPathComponent(expanded)
+            return FileManager.default.fileExists(atPath: absolute)
+        }
+    }
+}
+
 struct SystemSSHSpec: Sendable {
     let host: SSHHost
     let socket: String
@@ -126,6 +149,10 @@ struct SystemSSHSpec: Sendable {
     }
 
     nonisolated static func resolve(_ arguments: [String], directory: String) async throws -> SSHHost {
+        try await resolveConfiguration(arguments, directory: directory).host
+    }
+
+    nonisolated static func resolveConfiguration(_ arguments: [String], directory: String) async throws -> SSHResolvedConfiguration {
         try await Task.detached {
             let process = Process(), output = Pipe()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -138,15 +165,15 @@ struct SystemSSHSpec: Sendable {
             defer { timeout.cancel() }
             let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             guard process.terminationStatus == 0 else { throw CommandError("OpenSSH could not resolve this command. Check the host and options.") }
-            var config: [String: String] = [:]
+            var config: [String: [String]] = [:]
             for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
                 let pair = line.split(separator: " ", maxSplits: 1)
-                if pair.count == 2 { config[String(pair[0])] = String(pair[1]) }
+                if pair.count == 2 { config[String(pair[0]), default: []].append(String(pair[1])) }
             }
-            guard let hostname = config["hostname"], let username = config["user"], let port = config["port"].flatMap(Int.init) else {
+            guard let hostname = config["hostname"]?.first, let username = config["user"]?.first, let port = config["port"]?.first.flatMap(Int.init) else {
                 throw CommandError("OpenSSH did not return a hostname, username and port.")
             }
-            return SSHHost(name: config["host"] ?? hostname, hostname: hostname, port: port, username: username)
+            return SSHResolvedConfiguration(host: SSHHost(name: config["host"]?.first ?? hostname, hostname: hostname, port: port, username: username), values: config)
         }.value
     }
 

@@ -53,7 +53,7 @@ struct SSHCommandView: View {
                 if authentication == "password" { SecureField("Password", text: $password).textFieldStyle(.roundedBorder) }
                 #endif
                 #if os(macOS)
-                Text("Uses your OpenSSH config, keys and agent. Password and server verification prompts appear in the terminal.")
+                Text("Automatic uses this host’s saved login, or your only Crow key when no system key is configured. SSH options and configured system keys use OpenSSH.")
                     .font(.caption).foregroundStyle(.secondary)
                 #else
                 Text("Saved hosts reuse their credentials. For a new connection, choose a password or SSH key on the next screen.")

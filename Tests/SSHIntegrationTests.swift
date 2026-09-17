@@ -5,6 +5,51 @@ import SwiftTerm
 @testable import Crow
 
 final class SSHIntegrationTests: XCTestCase {
+    @MainActor private func verifyAutomaticSavedKeyConnection(host: SSHHost, credential: HostCredential, root: URL) async throws {
+        let model = AppModel(vaultURL: root.appendingPathComponent("automatic-vault"))
+        let key = try SSHKeyStore.shared.importKey(name: "Automatic loopback " + UUID().uuidString,
+            privateKey: credential.privateKey, passphrase: credential.passphrase)
+        var saved = host
+        saved.commandArguments = ["-p", String(host.port), host.userAtHost]
+        defer {
+            model.shutdown()
+            try? SecureStore.remove(saved.id.rawValue.uuidString)
+            try? SSHKeyStore.shared.remove(key.id, hosts: [])
+        }
+        try model.storeHost(saved, credential: HostCredential(keyID: key.id))
+        for attempt in 0..<2 {
+            if attempt == 0 { try await model.connectCommand("ssh -p \(host.port) \(host.userAtHost)") }
+            else { model.connect(try XCTUnwrap(model.hosts.first)) }
+            for _ in 0..<200 where model.connectionState(for: saved) == .connecting {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertEqual(model.connectionState(for: saved), .connected, model.errorMessage ?? "")
+            let state = try XCTUnwrap(model.states.first { $0.snapshot.workspace.hostID == saved.id })
+            XCTAssertNil(state.systemSSH, "Automatic must use the Crow key rather than an empty system SSH identity list")
+            let remote = try XCTUnwrap(state.remote)
+            let output = try await remote.workspaceCommand("printf AUTO_KEY_OK")
+            XCTAssertEqual(output, "AUTO_KEY_OK")
+            XCTAssertEqual(try SecureStore.credential(saved).keyID, key.id)
+            XCTAssertNil(model.hosts.first?.commandArguments)
+            model.disconnect(saved)
+        }
+    }
+
+    func testResolvedSSHConfigPreservesSystemKeysAndTransportFeatures() throws {
+        let host = SSHHost(name: "Config", hostname: "example.invalid", username: "user")
+        for option in ["proxycommand", "proxyjump", "localforward", "remoteforward", "dynamicforward",
+                       "identityagent", "certificatefile", "controlpath", "remotecommand"] {
+            XCTAssertTrue(SSHResolvedConfiguration(host: host, values: [option: ["configured"]]).requiresOpenSSH, option)
+        }
+        XCTAssertFalse(SSHResolvedConfiguration(host: host, values: ["proxycommand": ["none"], "forwardagent": ["no"]]).requiresOpenSSH)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-config-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("fixture".utf8).write(to: root.appendingPathComponent("key"))
+        let config = SSHResolvedConfiguration(host: host, values: ["identityfile": ["missing", "key"]])
+        XCTAssertTrue(config.hasIdentityFile(directory: root.path), "Check all configured identities, not only the last one")
+    }
+
     @MainActor private func verifyLaunchCommand(workspace: Workspace, directory: String, remote: RemoteConnection?, systemSSH: SystemSSHSpec? = nil) async throws {
         let session = TerminalSession(id: UUID(), workspace: workspace, directory: directory, remote: remote,
             fontSize: 16, useSystemSSH: systemSSH != nil)
@@ -209,6 +254,7 @@ final class SSHIntegrationTests: XCTestCase {
         let connection = RemoteConnection()
         try await connection.connect(host, credential: credential)
         defer { Task { await connection.disconnect() } }
+        try await verifyAutomaticSavedKeyConnection(host: host, credential: credential, root: root)
         try await verifyNativeReverseSSH(host: host, credential: credential, root: root)
         let commandOutput = try await connection.workspaceCommand("printf '__COMMAND_OK__'")
         XCTAssertEqual(commandOutput, "__COMMAND_OK__")

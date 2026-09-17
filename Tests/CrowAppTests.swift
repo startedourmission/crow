@@ -145,6 +145,75 @@ import CrowCore
 }
 
 final class CrowAppTests: XCTestCase {
+    @MainActor func testAutomaticSSHSelectsOnlyLibraryKeyAndPersistsReference() throws {
+        let model = fixture(), keys = SSHKeyStore(account: "test-auto-ssh-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        let proposed = SSHHost(name: "New account", hostname: "example.invalid", username: "new-user")
+        defer { try? SecureStore.remove(proposed.id.rawValue.uuidString) }
+        XCTAssertNil(try model.automaticSSHHost(proposed, keys: keys))
+        let key = try keys.generate(name: "Only key")
+        let selected = try XCTUnwrap(model.automaticSSHHost(proposed, keys: keys))
+        XCTAssertEqual(selected.authentication, .ed25519)
+        XCTAssertNil(selected.commandArguments)
+        let saved = try SecureStore.credential(selected)
+        XCTAssertEqual(saved.keyID, key.id)
+        XCTAssertTrue(saved.privateKey.isEmpty)
+        try saved.resolved(for: selected.authentication, keys: keys).validatePrivateKey(for: selected.authentication)
+    }
+
+    @MainActor func testAutomaticSSHUsesExactAccountAndSavedPasswordBeforeLibraryDefault() throws {
+        let model = fixture(), keys = SSHKeyStore(account: "test-auto-ssh-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        let firstKey = try keys.generate(name: "First"), secondKey = try keys.generate(name: "Second")
+        var first = SSHHost(name: "First user", hostname: "example.invalid", username: "first")
+        first.authentication = .ed25519
+        first.commandArguments = ["first@example.invalid"]
+        let second = SSHHost(name: "Second user", hostname: "example.invalid", username: "second")
+        let third = SSHHost(name: "Third user", hostname: "example.invalid", username: "third")
+        var otherPort = first; otherPort.id = HostID(); otherPort.port = 2222
+        defer { for host in [first, second, third, otherPort] { try? SecureStore.remove(host.id.rawValue.uuidString) } }
+        try model.storeHost(first, credential: HostCredential(keyID: secondKey.id))
+        try model.storeHost(second, credential: HostCredential(password: "fixture-password"))
+        let reused = try XCTUnwrap(model.automaticSSHHost(first, keys: keys))
+        XCTAssertEqual(reused.id, first.id)
+        XCTAssertNil(reused.commandArguments)
+        XCTAssertEqual(try SecureStore.credential(reused).keyID, secondKey.id)
+        XCTAssertNotEqual(try SecureStore.credential(reused).keyID, firstKey.id)
+        let password = try XCTUnwrap(model.automaticSSHHost(second, keys: keys))
+        XCTAssertEqual(password.authentication, .password)
+        XCTAssertEqual(try SecureStore.credential(password).password, "fixture-password")
+        XCTAssertThrowsError(try model.automaticSSHHost(third, keys: keys))
+        XCTAssertThrowsError(try model.automaticSSHHost(otherPort, keys: keys))
+        XCTAssertEqual(model.hosts.count, 2)
+    }
+
+    @MainActor func testAutomaticSSHDoesNotReplaceMissingSavedKeyOrConfiguredSystemIdentity() throws {
+        let model = fixture(), keys = SSHKeyStore(account: "test-auto-ssh-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        _ = try keys.generate(name: "Default")
+        var host = SSHHost(name: "Saved", hostname: "example.invalid", username: "user")
+        host.authentication = .ed25519
+        defer { try? SecureStore.remove(host.id.rawValue.uuidString) }
+        XCTAssertNil(try model.automaticSSHHost(host, allowSingleKey: false, keys: keys))
+        try model.storeHost(host, credential: HostCredential(keyID: UUID()))
+        XCTAssertThrowsError(try model.automaticSSHHost(host, keys: keys))
+    }
+
+    #if os(macOS)
+    @MainActor func testAutomaticSSHLeavesExplicitOptionsAndReverseCommandsWithOpenSSH() async throws {
+        let model = fixture(), keys = SSHKeyStore(account: "test-auto-ssh-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        _ = try keys.generate(name: "Default")
+        for line in ["ssh -i /explicit/key user@example.invalid", "ssh -F /custom/config alias",
+                     "ssh -J gateway user@example.invalid", "ssh -o PubkeyAuthentication=no user@example.invalid",
+                     "ssh -R 2222:localhost:22 user@example.invalid", "ssh -vvv user@example.invalid"] {
+            let result = try await model.automaticSSHHost(SSHCommand(line), directory: model.vaultURL.path, keys: keys)
+            XCTAssertNil(result, line)
+        }
+        XCTAssertTrue(model.hosts.isEmpty)
+    }
+    #endif
+
     // Generated solely for these tests; never used to access a server.
     private var hostEditorKey: String {
         """
