@@ -129,9 +129,9 @@ struct AgentHistoryPanel: View {
     @State private var loadedContext: String?
     @State private var historySignature: String?
     @State private var automaticRefreshPaused = false
-    private var focusedAgent: AgentTerminal? { model.current.snapshot.agentTerminals.first { $0.id == model.current.snapshot.selectedTerminalID } }
-    private var focusedTerminal: TerminalSession? { model.current.snapshot.selectedTerminalID.flatMap { model.current.terminals[$0] } }
-    private var context: String { "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.aiUsageSource.state?.remote?.isConnected == true)" }
+    private var focusedAgent: AgentTerminal? { model.current.snapshot.agentTerminals.first { $0.id == model.current.focusedTerminalID } }
+    private var focusedTerminal: TerminalSession? { model.current.focusedTerminalID.flatMap { model.current.terminals[$0] } }
+    private var context: String { "\(model.selectedWorkspaceID)-\(model.current.focusedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.aiUsageSource.state?.remote?.isConnected == true)" }
     private var scope: String { context + "-\(refreshID)" }
 
     var body: some View {
@@ -317,7 +317,7 @@ struct AgentSkillsPanel: View {
         providers.first { $0.rawValue == providerID } ?? providers.first
     }
     private var scope: String {
-        "\(model.selectedWorkspaceID)-\(model.current.snapshot.selectedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(selectedProvider?.rawValue ?? "none")-\(refreshID)"
+        "\(model.selectedWorkspaceID)-\(model.current.focusedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(selectedProvider?.rawValue ?? "none")-\(refreshID)"
     }
     private var visibleEntries: [AgentSkillEntry] {
         guard loadedScope == scope else { return [] }

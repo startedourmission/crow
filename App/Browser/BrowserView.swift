@@ -36,7 +36,10 @@ enum BrowserAddress {
     var canGoBack = false
     var canGoForward = false
     var webView: WKWebView?
-    @ObservationIgnored let tunnel = BrowserTunnel()
+    var popups: [BrowserSession] = []
+    @ObservationIgnored var onClose: (() -> Void)?
+    @ObservationIgnored let tunnel: BrowserTunnel
+    @ObservationIgnored private let ownsTunnel: Bool
     @ObservationIgnored private weak var workspace: WorkspaceState?
     @ObservationIgnored private var opening: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
@@ -44,17 +47,22 @@ enum BrowserAddress {
     @ObservationIgnored var onAddress: ((String) -> Void)?
     @ObservationIgnored private var closed = false
     @ObservationIgnored private let ruleID = "crow-browser-" + UUID().uuidString
-    init(workspace: WorkspaceState, address: String) {
+    init(workspace: WorkspaceState, address: String, tunnel: BrowserTunnel? = nil) {
         self.workspace = workspace; self.address = address
+        self.tunnel = tunnel ?? BrowserTunnel(); ownsTunnel = tunnel == nil
         super.init()
     }
     func prepare() async throws {
         guard webView == nil, workspace != nil, !closed else { return }
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
+        config.websiteDataStore = .default()
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
         try Task.checkCancellation()
         guard !closed else { throw CancellationError() }
         let view = WKWebView(frame: .zero, configuration: config)
+        attach(view)
+    }
+    private func attach(_ view: WKWebView) {
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
         view.isInspectable = true
@@ -125,7 +133,9 @@ enum BrowserAddress {
     }
     func disconnect() {
         generation = UUID()
-        opening?.cancel(); opening = nil; webView?.stopLoading(); tunnel.stop()
+        opening?.cancel(); opening = nil; webView?.stopLoading()
+        for popup in popups { popup.close() }; popups.removeAll()
+        if ownsTunnel { tunnel.stop() }
         observations.removeAll(); webView?.navigationDelegate = nil; webView?.uiDelegate = nil; webView = nil
         isLoading = false; canGoBack = false; canGoForward = false
         error = "SSH disconnected. Reconnect this workspace, then reload the page."
@@ -145,7 +155,7 @@ enum BrowserAddress {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         let scheme = url.scheme?.lowercased() ?? ""
-        if workspace?.snapshot.workspace.isRemote == true, BrowserAddress.isLoopback(url.host ?? ""),
+        if action.targetFrame != nil, workspace?.snapshot.workspace.isRemote == true, BrowserAddress.isLoopback(url.host ?? ""),
            tunnel.original(url) == url, ["http", "https"].contains(scheme), url.user == nil, url.password == nil {
             decisionHandler(.cancel)
             if action.targetFrame?.isMainFrame != false {
@@ -174,9 +184,21 @@ enum BrowserAddress {
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
         for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if action.targetFrame == nil, let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { open(url.absoluteString) }
-        return nil
+        guard action.targetFrame == nil, let workspace, !closed else { return nil }
+        // WebKit must create the browsing context with its supplied configuration.
+        // Loading the URL in the opener loses POST bodies and window.opener.
+        let popup = BrowserSession(workspace: workspace, address: "", tunnel: tunnel)
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        popup.attach(view)
+        popup.onClose = { [weak self, weak popup] in
+            guard let popup else { return }
+            popup.close()
+            self?.popups.removeAll { $0 === popup }
+        }
+        popups.append(popup)
+        return view
     }
+    func webViewDidClose(_ webView: WKWebView) { onClose?() }
 }
 
 struct BrowserView: View {
@@ -192,6 +214,9 @@ struct BrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
+                if let close = session.onClose {
+                    Button(action: close) { Image(systemName: "xmark") }.help("Close Popup")
+                }
                 Button { session.webView?.goBack() } label: { Image(systemName: "chevron.left") }.disabled(!session.canGoBack).help("Back")
                 Button { session.webView?.goForward() } label: { Image(systemName: "chevron.right") }.disabled(!session.canGoForward).help("Forward")
                 Button { if session.isLoading { session.stopLoading() } else { session.reload() } } label: {
@@ -209,21 +234,6 @@ struct BrowserView: View {
                     .accessibilityIdentifier("crow.browser.address")
                 Button { session.open(input); editing = false } label: { Image(systemName: "arrow.right") }.help("Open Address")
             }.buttonStyle(CrowButtonStyle()).padding(10).background(CrowTheme.bg1).windowDragExcluded()
-            HStack(spacing: 6) {
-                Image(systemName: workspace.snapshot.workspace.isRemote ? "network" : "desktopcomputer")
-                Text(workspace.snapshot.workspace.isRemote ? "localhost → \(hostLabel) via SSH" : "localhost → This device")
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Button {
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(session.address, forType: .string)
-                    #else
-                    UIPasteboard.general.string = session.address
-                    #endif
-                } label: { Image(systemName: "doc.on.doc") }
-                    .disabled(session.address.isEmpty).help("Copy URL")
-            }.font(.system(size: 11)).foregroundStyle(CrowTheme.textDim).buttonStyle(CrowButtonStyle())
-                .padding(.horizontal, 12).padding(.vertical, 5).windowDragExcluded()
             CrowDivider()
             if let error = session.error {
                 HStack(alignment: .top, spacing: 8) {
@@ -250,6 +260,11 @@ struct BrowserView: View {
             .onAppear { input = session.address; session.resume() }
             .onChange(of: session.address) { _, value in if !editing { input = value } }
             .accessibilityIdentifier("crow.browser")
+            .overlay {
+                if let popup = session.popups.last {
+                    AnyView(BrowserView(session: popup, workspace: workspace)).id(ObjectIdentifier(popup))
+                }
+            }
     }
 }
 

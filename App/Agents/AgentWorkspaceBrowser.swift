@@ -1,5 +1,7 @@
 import CrowCore
 import SwiftUI
+import UniformTypeIdentifiers
+import CoreTransferable
 
 struct GitCloneSheet: View {
     @Environment(AppModel.self) private var model
@@ -254,7 +256,7 @@ struct AgentWorkspaceBrowser: View {
     @State private var liveLocalHeight: CGFloat?
 
     private func workspaces(on hostID: HostID?) -> [WorkspaceState] {
-        model.alphabetizedWorkspaces(on: hostID).filter { state in
+        model.orderedWorkspaces(on: hostID).filter { state in
             search.isEmpty ||
                 ([state.snapshot.workspace.name, state.snapshot.rootPath, model.workspaceHostName(state)]
                  + state.snapshot.agentTerminals.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search)
@@ -540,11 +542,12 @@ struct AgentWorkspaceBrowser: View {
                     .disabled(agents.isEmpty).opacity(agents.isEmpty ? 0 : 1).accessibilityHidden(agents.isEmpty)
                 Button { model.activateWorkspace(state.id); onOpen?() } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "folder")
+                        Image(systemName: state.snapshot.isNoteVault ? "books.vertical" : "folder")
                         Text(state.snapshot.workspace.name).lineLimit(1)
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
                 }.accessibilityIdentifier("crow.workspaces.select." + state.id.rawValue.uuidString)
+                    .draggable(WorkspaceReorder(id: state.id))
             }.font(.system(size: 12)).padding(.horizontal, 6)
                 .crowContextMenu {
                     Button("Open Workspace") { model.activateWorkspace(state.id); onOpen?() }
@@ -554,12 +557,15 @@ struct AgentWorkspaceBrowser: View {
                         Button("Open in Finder") { model.openWorkspaceInFinder(state.id) }
                     }
                     #endif
+                    Button(state.snapshot.isNoteVault ? "Stop Using as Note Vault" : "Use as Note Vault") { model.setNoteVault(state.id, enabled: !state.snapshot.isNoteVault) }
+                    if state.snapshot.isNoteVault { Button("Refresh Note Index") { model.startNoteIndex(state, force: true) } }
                     Button(state.snapshot.isPinned ? "Unpin" : "Pin") { model.pinWorkspace(state.id) }
                     if state.snapshot.workspace.isRemote, state.remote?.isConnected == true {
                         Button("Open Another Folder…") { folderSource = state.id }
                     }
                     Button("Remove from List…", role: .destructive) { model.requestWorkspaceRemoval(state.id); onOpen?() }
                 }
+                .modifier(WorkspaceReorderTarget(model: model, id: state.id))
             if !collapsed.contains(state.id) {
                 ForEach(agents) { agent in sessionRow(agent.id, state: state) }
             }
@@ -635,5 +641,27 @@ private struct SessionActivityLight: View {
                     .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: rotating)
             } else { Circle().fill(color).padding(1) }
         }.frame(width: 8, height: 8).accessibilityHidden(true)
+    }
+}
+
+private struct WorkspaceReorder: Codable, Transferable {
+    let id: WorkspaceID
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .init(exportedAs: "app.crow.workspace-reorder"))
+    }
+}
+
+private struct WorkspaceReorderTarget: ViewModifier {
+    let model: AppModel
+    let id: WorkspaceID
+    @State private var targeted = false
+    func body(content: Content) -> some View {
+        content.overlay {
+            RoundedRectangle(cornerRadius: 4).stroke(targeted ? Color.accentColor : .clear, lineWidth: 1)
+                .allowsHitTesting(false)
+        }.dropDestination(for: WorkspaceReorder.self) { items, location in
+            guard let item = items.first else { return false }
+            return model.moveWorkspace(item.id, relativeTo: id, after: location.y > 20)
+        } isTargeted: { targeted = $0 }
     }
 }

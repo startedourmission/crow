@@ -26,7 +26,7 @@ struct ImagePreview: Sendable {
         return try decode(file.read(upToCount: sizeLimit + 1) ?? Data())
     }
 
-    static func decode(_ data: Data) throws -> ImagePreview {
+    static func decode(_ data: Data, maximumDimension: Int = 4096) throws -> ImagePreview {
         guard data.count <= sizeLimit else { throw Failure.tooLarge }
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -34,7 +34,7 @@ struct ImagePreview: Sendable {
               let height = properties[kCGImagePropertyPixelHeight] as? Int, width > 0, height > 0 else { throw Failure.invalid }
         // Decode off the main thread and bound decoded memory for large photos.
         let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 4096,
+            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: max(1, maximumDimension),
             kCGImageSourceShouldCacheImmediately: true]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { throw Failure.invalid }
         let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
@@ -42,6 +42,18 @@ struct ImagePreview: Sendable {
         let type = CGImageSourceGetType(source).flatMap { UTType($0 as String) }
         return ImagePreview(image: image, width: rotated ? height : width, height: rotated ? width : height,
             byteCount: data.count, format: type?.preferredFilenameExtension?.uppercased() ?? "Image")
+    }
+
+    /// Small, compressed Canvas previews. Encoding stays off the main actor too.
+    static func canvasThumbnail(_ data: Data) throws -> String {
+        let preview = try decode(data, maximumDimension: 768)
+        let transparent = [CGImageAlphaInfo.first, .last, .premultipliedFirst, .premultipliedLast].contains(preview.image.alphaInfo)
+        let type = transparent ? UTType.png : UTType.jpeg
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, type.identifier as CFString, 1, nil) else { throw Failure.invalid }
+        CGImageDestinationAddImage(destination, preview.image, [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw Failure.invalid }
+        return "data:" + (type.preferredMIMEType ?? "image/png") + ";base64," + (output as Data).base64EncodedString()
     }
 
     enum Failure: LocalizedError {

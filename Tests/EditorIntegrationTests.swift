@@ -241,7 +241,7 @@ final class EditorIntegrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-note-preview-" + UUID().uuidString)
         let model = AppModel(vaultURL: root), id = try XCTUnwrap(model.selectedBufferID)
         let prefix = "---\n# Preserve this comment\ntags: [work, notes]\ncompleted: false\ntitle: '<script>alert(1)</script>'\n---\n"
-        let original = prefix + "# Title\n\nSee [[Other|다른 노트]] and [website](https://example.com).\n\nEditable paragraph\n"
+        let original = prefix + "# Title\n\nSee [[Other|다른 노트]] and [website](https://example.com).\n\nEditable paragraph\n\n![[photo.png|Image]]\n"
         model.updateBufferText(id, original)
         let binding = Binding<String>(get: { model.locate(id)!.0.snapshot.buffers[model.locate(id)!.1].text }, set: { model.updateBufferText(id, $0) })
         var opened: [String] = []
@@ -253,10 +253,10 @@ final class EditorIntegrationTests: XCTestCase {
         let web = try XCTUnwrap(descendants(hosting, of: WKWebView.self).first)
         func js(_ script: String) async throws -> Any? { try await web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) }
         for _ in 0..<100 {
-            if (try? await js("return document.querySelectorAll('.frontmatter tbody tr').length")) as? Int == 3 { break }
+            if (try? await js("return document.querySelectorAll('.frontmatter-row').length")) as? Int == 3 { break }
             try await Task.sleep(for: .milliseconds(30))
         }
-        let rows = try await js("return document.querySelectorAll('.frontmatter tbody tr').length") as? Int
+        let rows = try await js("return document.querySelectorAll('.frontmatter-row').length") as? Int
         XCTAssertEqual(rows, 3)
         let scripts = try await js("return document.querySelectorAll('.frontmatter script').length") as? Int
         XCTAssertEqual(scripts, 0)
@@ -265,15 +265,81 @@ final class EditorIntegrationTests: XCTestCase {
         _ = try await js("document.querySelector('a[href=\"https://example.com\"]').click(); document.querySelector('a[data-wikilink]').click()")
         for _ in 0..<30 where opened.count < 2 { try await Task.sleep(for: .milliseconds(30)) }
         XCTAssertEqual(opened, ["https://example.com", "Other"])
+        _ = try await js("document.querySelector('a[href=\"photo.png\"]').click()")
+        for _ in 0..<30 where opened.count < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(opened.last, "photo.png")
         _ = try await js("""
         const paragraph=[...document.querySelectorAll('.tiptap p')].find(p=>p.textContent==='Editable paragraph');
         const range=document.createRange(); range.selectNodeContents(paragraph); range.collapse(false);
         const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-        document.querySelector('.tiptap').focus(); window.crowMarkdown.insertText(' edited');
+        document.querySelector('.tiptap').focus();
+        document.dispatchEvent(new Event('selectionchange'));
+        await new Promise(resolve=>setTimeout(resolve,20));
+        window.crowMarkdown.insertText(' edited');
         """)
         for _ in 0..<30 where model.selectedBuffer?.text == original { try await Task.sleep(for: .milliseconds(30)) }
         let edited = try XCTUnwrap(model.selectedBuffer).text
-        XCTAssertTrue(edited.hasPrefix(prefix)); XCTAssertTrue(edited.contains("[[Other|다른 노트]]")); XCTAssertTrue(edited.contains("Editable paragraph edited"))
+        XCTAssertTrue(edited.hasPrefix(prefix), edited); XCTAssertTrue(edited.contains("[[Other|다른 노트]]"), edited); XCTAssertTrue(edited.contains("Editable paragraph edited"), edited)
+        XCTAssertTrue(edited.contains("![[photo.png|Image]]"))
+        _ = try await js(#"""
+        const field=document.querySelector('[data-property-value="title"]');
+        field.value='42'; field.dispatchEvent(new Event('change'));
+        if(document.querySelector('[data-property-value="title"]')!==field)throw Error('A value edit replaced other property controls');
+        const kind=document.querySelector('[aria-label="Type of title"]');
+        kind.value='number'; kind.dispatchEvent(new Event('change'));
+        document.querySelector('[data-property-value="completed"]').click();
+        document.querySelector('.frontmatter-add').click();
+        document.querySelector('[aria-label="New property name"]').value='new';
+        document.querySelector('.frontmatter-new').requestSubmit();
+        const added=document.querySelector('[data-property-value="new"]');
+        added.value='한글 속성'; added.dispatchEvent(new Event('change'));
+        """#)
+        for _ in 0..<50 where model.selectedBuffer?.text.contains("한글 속성") != true { try await Task.sleep(for: .milliseconds(20)) }
+        let propertiesEdited = try XCTUnwrap(model.selectedBuffer).text
+        XCTAssertTrue(propertiesEdited.contains("title: 42")); XCTAssertTrue(propertiesEdited.contains("completed: true"))
+        XCTAssertTrue(propertiesEdited.contains("new: 한글 속성")); XCTAssertTrue(propertiesEdited.contains("# Preserve this comment"))
+        XCTAssertEqual(propertiesEdited.components(separatedBy: "---\n").last, edited.components(separatedBy: "---\n").last, "Property edits must preserve the exact Markdown body")
+        _ = try await js(#"""
+        window.crowMarkdown.setCatalog({paths:['Folder/한국어.md','Folder/Other.md','picture.png'],tags:['workflow','한글/태그','work']});
+        const list=document.querySelector('[data-property="tags"] .frontmatter-list');
+        if(!list || getComputedStyle(list).display!=='flex' || list.querySelector('textarea'))throw Error('List must render horizontally');
+        const add=list.querySelector('[aria-label="Add tag"]'); add.focus();add.value='workf';add.dispatchEvent(new Event('input'));
+        const suggestion=document.querySelector('.note-completion');
+        if(suggestion?.textContent!=='workflow')throw Error('Tag suggestions must filter the vault catalog');
+        suggestion.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+        """#)
+        for _ in 0..<50 where model.selectedBuffer?.text.contains("workflow") != true { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(model.selectedBuffer?.text.contains("workflow") == true)
+        _ = try await js(#"""
+        const paragraph=[...document.querySelectorAll('.tiptap p')].find(p=>p.textContent.includes('Editable paragraph'));
+        document.querySelector('.tiptap').focus();
+        const range=document.createRange();range.selectNodeContents(paragraph);range.collapse(false);
+        const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));await new Promise(resolve=>setTimeout(resolve,20));
+        window.crowMarkdown.insertText(' [[한국');
+        const suggestion=[...document.querySelectorAll('.note-completion')].find(n=>n.textContent==='Folder/한국어.md');
+        if(!suggestion)throw Error('Wiki-link typing must search document names');
+        suggestion.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+        """#)
+        for _ in 0..<50 where model.selectedBuffer?.text.contains("[[Folder/한국어]]") != true { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(model.selectedBuffer?.text.contains("[[Folder/한국어]]") == true)
+        _ = try await js(#"""
+        const value=document.querySelector('[data-property-value="new"]');
+        value.value='![[Attachments/한글 이미지.png|300]]';value.dispatchEvent(new Event('input'));value.dispatchEvent(new Event('change'));
+        const link=document.querySelector('[data-property="new"] .property-link');
+        if(link.hidden)throw Error('Image embed property must have an active link');link.click();
+        const item=document.querySelector('[data-property="tags"] .frontmatter-list-item input');
+        item.value='![[Attachments/list.png]]';item.dispatchEvent(new Event('change'));
+        document.querySelector('[data-property="tags"] .property-link').click();
+        """#)
+        for _ in 0..<30 where opened.last != "Attachments/list.png" { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(Array(opened.suffix(2)), ["Attachments/한글 이미지.png", "Attachments/list.png"])
+        let border = try await js("return getComputedStyle(document.querySelector('.frontmatter-row')).borderTopWidth") as? String
+        XCTAssertEqual(border,"0px")
+        let image = try await web.takeSnapshot(configuration: nil)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/crow-frontmatter-review.png"))
+
     }
 
     @MainActor func testLiveMarkdownEditsComposeUndoAndSaveWithoutReloading() async throws {

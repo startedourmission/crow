@@ -1,4 +1,5 @@
-import {parse} from 'yaml';
+import {NoteCompletions, setCatalog} from './note-completions.js';
+import {frontmatterView} from './frontmatter-editor.js';
 import { Editor, Extension, Node, createNodeFromContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
@@ -24,8 +25,42 @@ style.textContent = `
   .tiptap li[data-type=taskItem] > div { flex: 1; }
   .tiptap li[data-type=taskItem] label { user-select: none; }
   .frontmatter { margin-bottom: 24px; font-size: 13px; }
-  .frontmatter th { width: 28%; text-align: left; font-weight: 500; }
-  .frontmatter td { white-space: pre-wrap; }
+  .frontmatter { white-space: normal; padding: 4px 0 12px; }
+  .frontmatter h2 { margin: 0 0 12px; border: 0; font-size: 17px; font-weight: 600; }
+  .frontmatter-row { display: grid; grid-template-columns: 26px minmax(90px, 28%) minmax(0,1fr) 24px; align-items: center; gap: 8px; min-height: 38px; border-radius: 5px; }
+  .frontmatter-row:hover { background: #80808008; }
+  .frontmatter input,.frontmatter textarea,.frontmatter select,.frontmatter button { font: inherit; color: inherit; }
+  .frontmatter input:not([type=checkbox]),.frontmatter textarea { min-width: 0; width: 100%; padding: 5px 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; }
+  .frontmatter-linked-value { display: flex; align-items: center; min-width: 0; gap: 4px; }
+  .frontmatter .property-link { color: #527ba7; text-decoration: none; flex-shrink: 0; padding: 4px; }
+  .frontmatter textarea { resize: vertical; line-height: 1.5; }
+  .frontmatter input:focus,.frontmatter textarea:focus { outline: none; border-color: #a0a0a050; background: #80808008; }
+  .frontmatter .frontmatter-name { color: #85858b; }
+  .frontmatter input[type=checkbox] { justify-self: start; margin: 5px; accent-color: #5e6776; }
+  .frontmatter-type { display: grid; place-items: center; position: relative; width: 26px; height: 28px; color: #85858b; border-radius: 4px; }
+  .frontmatter-type:hover,.frontmatter-type:focus-within { background: #80808018; }
+  .frontmatter svg { width: 18px; height: 18px; }
+  .frontmatter-type select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+  .frontmatter button { border: 0; background: transparent; border-radius: 4px; cursor: pointer; }
+  .frontmatter button:hover { background: #80808015; }
+  .frontmatter-add { color: #85858b!important; padding: 8px 4px; margin-top: 8px; text-align: left; }
+  .frontmatter-remove { opacity: 0; padding: 2px; color: #85858b!important; }
+  .frontmatter-row:hover .frontmatter-remove,.frontmatter-row:focus-within .frontmatter-remove { opacity: 1; }
+  .frontmatter-error { color: #b34343; font-size: 12px; }
+  .frontmatter-error:empty { display: none; }
+  .frontmatter-list { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+  .frontmatter-list-item { display: inline-flex; align-items: center; gap: 2px; }
+  .frontmatter-list-item input { width: auto!important; min-width: 2ch!important; padding: 3px 0!important; }
+  .frontmatter-list-item button { color: #95959b; opacity: 0; padding: 0 2px; }
+  .frontmatter-list-item:hover button,.frontmatter-list-item:focus-within button { opacity: 1; }
+  .frontmatter-list>.frontmatter-list-add { width: 12ch!important; flex: 1; min-width: 8ch!important; padding: 3px 0!important; }
+  .note-completions { position: fixed; z-index: 10000; max-height: 250px; overflow: auto; width: 350px; max-width: calc(100vw - 16px); padding: 4px; border: 1px solid #dedee3; border-radius: 7px; background: #fff; color: #292930; box-shadow: 0 5px 20px #0002; font: 13px -apple-system, sans-serif; }
+  .note-completion { padding: 7px 9px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .note-completion[aria-selected=true] { background: #eeeef3; }
+  .frontmatter-new { display: flex; gap: 6px; margin-top: 8px; }
+  .frontmatter-new select { max-width: 110px; }
+  @media(pointer:coarse) { .frontmatter-remove { opacity: 1; } }
+
 `;
 document.head.append(style);
 let noteLinksEnabled = false;
@@ -40,17 +75,8 @@ const Frontmatter = Node.create({
   name: 'frontmatter', group: 'block', atom: true, selectable: false,
   addAttributes() { return {source: {default: ''}}; },
   parseHTML() { return [{tag: 'section[data-frontmatter]'}]; },
-  renderHTML({node}) {
-    const raw = node.attrs.source.replace(/^\uFEFF?---\r?\n/, '').replace(/\r?\n---[ \t]*(?:\r?\n|$)$/, '');
-    try {
-      const values = parse(raw, {maxAliasCount: 30, uniqueKeys: true}) ?? {};
-      if (!values || typeof values !== 'object' || Array.isArray(values)) throw Error('Properties must be a YAML map');
-      const rows = Object.entries(values).map(([key,value]) => ['tr', {}, ['th', {scope: 'row'}, key], ['td', {},
-        value == null ? '—' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)]]);
-      return ['section', {'data-frontmatter': '', contenteditable: 'false', class: 'frontmatter'},
-        ['table', {}, ['thead', {}, ['tr', {}, ['th', {}, 'Property'], ['th', {}, 'Value']]], ['tbody', {}, ...rows]]];
-    } catch { return ['section', {'data-frontmatter': '', contenteditable: 'false', class: 'frontmatter'}, ['pre', {}, raw]]; }
-  },
+  renderHTML() { return ['section', {'data-frontmatter':'', class:'frontmatter', contenteditable:'false'}]; },
+  addNodeView() { return frontmatterView; },
   renderMarkdown(node) { return node.attrs.source; }
 });
 const WikiLink = Node.create({
@@ -65,7 +91,7 @@ function wikiNodes(nodes, insideCode = false) {
     if (node.content) return [{...node, content: wikiNodes(node.content, insideCode || node.type === 'codeBlock' || node.type === 'frontmatter')}];
     if (!noteLinksEnabled || insideCode || node.type !== 'text' || node.marks?.some(mark => ['code','link'].includes(mark.type))) return [node];
     const output = []; let cursor = 0;
-    for (const match of node.text.matchAll(/(?<!!)\[\[([^\]\n]+)\]\]/g)) {
+    for (const match of node.text.matchAll(/!?\[\[([^\]\n]+)\]\]/g)) {
       if (match.index > cursor) output.push({...node, text: node.text.slice(cursor, match.index)});
       const [target, alias] = match[1].split('|');
       output.push({type: 'wikiLink', attrs: {source: match[0], target, label: alias || target}});
@@ -76,7 +102,7 @@ function wikiNodes(nodes, insideCode = false) {
     return output;
   });
 }
-const extensions = [Frontmatter, WikiLink, StarterKit.configure({ link: { openOnClick: false }, trailingNode: false }),
+const extensions = [Frontmatter, WikiLink, NoteCompletions, StarterKit.configure({ link: { openOnClick: false }, trailingNode: false }),
   Markdown, TableKit.configure({ table: { resizable: false } }), TaskList, TaskItem.configure({ nested: true }), shortcuts];
 const signature = nodes => JSON.stringify(nodes);
 const shape = nodes => JSON.stringify(nodes, (key, value) => key === 'text' ? '' : value);
@@ -126,7 +152,8 @@ function serialize() {
     }
     if (match) { used.add(match); pieces.push({text, original: true}); index += match.nodes.length; }
     else {
-      pieces.push({ text: editor.markdown.serialize({type: 'doc', content: [nodes[index++]]}), original: false });
+      const node = nodes[index++];
+      pieces.push({ text: editor.markdown.serialize({type: 'doc', content: [node]}), original: node.type === 'frontmatter' });
     }
   }
   let result = '';
@@ -193,6 +220,7 @@ function receive(value, blocks, fontSize, linksEnabled = false) {
   if (initialized && value === source && !linksChanged) return; // Never reset selection or IME on a binding echo.
   if (editor.view.composing) { pending = [value, blocks, fontSize, linksEnabled]; return; }
   noteLinksEnabled = linksEnabled;
+  document.documentElement.dataset.noteLinks = String(linksEnabled);
   loading = true;
   try {
     const nodes = []; records = [];
@@ -265,5 +293,5 @@ function keyboardKey(key) {
     insertText(key.shift ? name.toUpperCase() : name);
   }
 }
-window.crowMarkdown = { receive, jumpHeading, setFontSize, insertText, key: keyboardKey,
+window.crowMarkdown = { setCatalog, receive, jumpHeading, setFontSize, insertText, key: keyboardKey,
   setModifiers(control, shift) { modifiers = {control, shift}; } };

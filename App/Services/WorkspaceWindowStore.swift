@@ -46,7 +46,7 @@ final class WorkspaceWindowStore {
                     var seed = source.sessionSnapshot
                     seed.workspaces = seed.workspaces.map { previous in
                         var fresh = WorkspaceSnapshot(workspace: previous.workspace, rootPath: previous.rootPath, bookmark: previous.bookmark)
-                        fresh.isPinned = previous.isPinned; fresh.lastOpenedAt = previous.lastOpenedAt
+                        fresh.sortOrder = previous.sortOrder; fresh.isPinned = previous.isPinned; fresh.isNoteVault = previous.isNoteVault; fresh.lastOpenedAt = previous.lastOpenedAt
                         if fresh.workspace.isRemote { fresh.workspace.connection = .disconnected }
                         fresh.terminalIDs = []; fresh.selectedTerminalID = nil
                         fresh.layout = WorkspaceLayout(files: [], selectedFile: nil, terminals: [], selectedTerminal: nil)

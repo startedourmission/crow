@@ -16,7 +16,9 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     public var selectedTerminalID: UUID?
     public var terminalSplit = false
     public var layout: WorkspaceLayout?
+    public var sortOrder: Int?
     public var isPinned = false
+    public var isNoteVault = false
     public var lastOpenedAt: Date?
     public var agentTerminals: [AgentTerminal] = []
     public var browserAddresses: [UUID: String] = [:]
@@ -48,7 +50,7 @@ public struct WorkspaceSnapshot: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case workspace, rootPath, directoryPath, bookmark, buffers, selectedBufferID, splitBufferID
         case terminalIDs, selectedTerminalID, terminalSplit
-        case layout, agentTerminals, isPinned, lastOpenedAt, browserAddresses
+        case layout, agentTerminals, isPinned, lastOpenedAt, browserAddresses, isNoteVault, sortOrder
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -63,7 +65,9 @@ public struct WorkspaceSnapshot: Codable, Sendable {
         selectedTerminalID = try values.decodeIfPresent(UUID.self, forKey: .selectedTerminalID) ?? terminalIDs.first
         terminalSplit = try values.decodeIfPresent(Bool.self, forKey: .terminalSplit) ?? false
         layout = try values.decodeIfPresent(WorkspaceLayout.self, forKey: .layout)
+        sortOrder = try values.decodeIfPresent(Int.self, forKey: .sortOrder)
         isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isNoteVault = try values.decodeIfPresent(Bool.self, forKey: .isNoteVault) ?? false
         lastOpenedAt = try values.decodeIfPresent(Date.self, forKey: .lastOpenedAt)
         agentTerminals = try values.decodeIfPresent([AgentTerminal].self, forKey: .agentTerminals) ?? []
         browserAddresses = try values.decodeIfPresent([UUID: String].self, forKey: .browserAddresses) ?? [:]

@@ -310,17 +310,19 @@ final class AppModel {
     }
     func activatePane(_ paneID: UUID) {
         guard let pane = current.snapshot.layout?.panes.first(where: { $0.id == paneID }) else { return }
-        current.snapshot.layout?.activePaneID = paneID
         if let tab = pane.selected { selectTab(tab, in: paneID) }
+        else { current.snapshot.layout?.activePaneID = paneID }
     }
     func selectTab(_ tab: WorkspaceTab, in paneID: UUID) {
         guard current.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
+        let previousRoot = current.contextRootPath
         current.snapshot.layout?.select(tab, in: paneID)
         switch tab {
         case .file(let id): current.snapshot.selectedBufferID = id
         case .terminal(let id): current.snapshot.selectedTerminalID = id
         case .start, .browser: break
         }
+        if previousRoot != current.contextRootPath { refreshFiles() }
         schedulePersist()
     }
     func closeTab(_ tab: WorkspaceTab, in paneID: UUID) {
@@ -732,6 +734,10 @@ final class AppModel {
         guard let (state, index) = locate(id), !state.snapshot.buffers[index].isImage else { return }
         let wasDirty = state.snapshot.buffers[index].isDirty
         state.snapshot.buffers[index].text = text
+        if state.snapshot.isNoteVault || settings.effectiveNoteLinksEnabled {
+            let path = state.snapshot.buffers[index].path, root = state.snapshot.rootPath
+            if path.hasPrefix(root + "/") { state.noteCatalog.update(path: String(path.dropFirst(root.count + 1)), text: text) }
+        }
         state.snapshot.buffers[index].isDirty = text != state.snapshot.buffers[index].savedText
         if wasDirty && !state.snapshot.buffers[index].isDirty { observedFileRevisions.removeValue(forKey: id) }
         schedulePersist()
@@ -848,6 +854,7 @@ final class AppModel {
                 observedFileRevisions.removeValue(forKey: id)
                 externallyChangedBuffers.remove(id); externalFileErrors.removeValue(forKey: id)
             }
+            ObsidianFiles.updateCachedNote(buffer.path, text: buffer.text, in: state)
             statusMessage = "Saved \(buffer.title)"; schedulePersist()
             // A remote save can finish after another edit. Do not let a pending
             // Save-and-Close or Quit discard those newer, still-unsaved edits.
@@ -1631,6 +1638,7 @@ final class AppModel {
                 return try await remote.uploadClipboardImage(data)
             }
             #if os(macOS)
+            if context == "local:" + id.uuidString { return try ClipboardImage.saveLocally(data) }
             let bridge = try self.bridge()
             let spec = try await bridge.imagePasteConnection(socket: context)
             guard bridge.activeSocket(for: id) == context else { throw FileFailure.disconnected }
@@ -1660,7 +1668,7 @@ final class AppModel {
             return String(describing: ObjectIdentifier(remote))
         }
         #if os(macOS)
-        return sshBridge?.activeSocket(for: terminalID)
+        return sshBridge?.activeSocket(for: terminalID) ?? "local:" + terminalID.uuidString
         #else
         return nil
         #endif
@@ -1820,6 +1828,7 @@ final class AppModel {
         for state in states {
             state.explorer.stop()
             state.browsers.values.forEach { $0.close() }; state.browsers.removeAll()
+            state.noteIndexTask?.cancel(); state.noteIndexTask = nil
             state.stopTerminals(); state.connectionTask?.cancel()
             let remote = state.remote; Task { await remote?.disconnect() }
             state.accessURL?.stopAccessingSecurityScopedResource()

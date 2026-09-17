@@ -28,7 +28,7 @@ export function updateBaseView(source, index, changes) {
   if (!Array.isArray(value.views) || !Number.isInteger(index) || index < 0 || index > value.views.length) throw Error('Missing Base view.');
   if (index === value.views.length) doc.addIn(['views'], doc.createNode({type: 'table', name: 'New view', order: ['file.name']}));
   for (const [key, value] of Object.entries(changes)) {
-    if (!['name', 'type', 'order', 'filters', 'sort', 'groupBy'].includes(key)) throw Error('Unsupported view setting.');
+    if (!['name', 'type', 'order', 'filters', 'sort', 'groupBy', 'columnSize'].includes(key)) throw Error('Unsupported view setting.');
     if (value == null) doc.deleteIn(['views', index, key]);
     else doc.setIn(['views', index, key], value);
   }
@@ -241,6 +241,7 @@ export function record(file) {
   return value;
 }
 const collator = new Intl.Collator(undefined, {numeric:true});
+export const emptyValue = value => value == null || typeof value === 'string' && !value.trim() || Array.isArray(value) && value.length === 0;
 export function compare(a,b) { if(a==null)return b==null?0:1;if(b==null)return -1;return typeof a==='number'&&typeof b==='number'?a-b:collator.compare(display(a),display(b)); }
 export function base(source, files, path, viewIndex=0) {
   const doc=yaml(source);
@@ -258,7 +259,7 @@ export function base(source, files, path, viewIndex=0) {
   const read=(r,c)=>evaluate(expression(propertyExpression(c)),r);
   if(view.sort && !Array.isArray(view.sort)) throw Error('Invalid Base sort.');
   const sort=[...(view.groupBy?[view.groupBy]:[]),...(view.sort??[])];
-  rows.sort((a,b)=>{ for(const s of sort) { const v=compare(read(a,s.property),read(b,s.property))*(String(s.direction).toUpperCase()==='DESC'?-1:1); if(v)return v; } return compare(a.file.path,b.file.path); });
+  rows.sort((a,b)=>{ for(const s of sort) { const av=read(a,s.property), bv=read(b,s.property), ae=emptyValue(av), be=emptyValue(bv); if(ae!==be)return ae?1:-1; const v=ae?0:compare(av,bv)*(String(s.direction).toUpperCase()==='DESC'?-1:1); if(v)return v; } return compare(a.file.path,b.file.path); });
   const limited=Number.isInteger(view.limit)&&view.limit>=0?rows.slice(0,view.limit):rows;
   return {doc,view,columns,warnings,rows:limited.map(r=>({path:r.file.path,group:view.groupBy?read(r,view.groupBy.property):null,cells:columns.map(c=>read(r,c))})),total:rows.length};
 }

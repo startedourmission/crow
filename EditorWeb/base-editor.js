@@ -1,11 +1,15 @@
 import {base, yaml, record, noteProperty, updateBaseView, updateBaseFilters, updateBaseFormula} from './obsidian-model.js';
 import {el, button, icon, iconButton, field, input, select, dialog, actions, popover, closePopover} from './obsidian-ui.js';
 
+import {wikiTarget, attachPropertyLink} from './property-links.js';
+
 import {filterEditor} from './base-controls.js';
 
+const viewStates = new Map();
 let currentPath, viewIndex = 0, search = '';
+function rememberView(ctx) { viewStates.set(currentPath, {viewIndex,search}); ctx.selectView(viewIndex); }
 export function baseEditor(ctx) {
-  if (currentPath !== ctx.data.path) { currentPath = ctx.data.path; viewIndex = 0; search = ''; }
+  if (currentPath !== ctx.data.path) { currentPath = ctx.data.path; const saved = viewStates.get(currentPath); viewIndex = saved?.viewIndex ?? ctx.data.selectedView ?? 0; search = saved?.search ?? ''; }
   let doc = yaml(ctx.data.source);
   const path = ctx.data.path;
   viewIndex = Math.min(viewIndex, doc.views.length - 1);
@@ -13,13 +17,15 @@ export function baseEditor(ctx) {
   const header = el('header', null, 'document-toolbar base-toolbar'), body = el('div', null, 'base-body');
   const viewSelect = select(doc.views.map((v, i) => [String(i), v.name || 'View ' + (i + 1)]), String(viewIndex));
   viewSelect.className = 'view-select'; viewSelect.setAttribute('aria-label', 'Base view');
-  viewSelect.onchange = () => { closePopover(); viewIndex = Number(viewSelect.value); body.scrollTop=0; renderedRows=0; refresh(); };
+  viewSelect.onchange = () => { closePopover(); viewIndex = Number(viewSelect.value); rememberView(ctx); body.scrollTop=0; renderedRows=0; refresh(); };
   const count = el('span', '', 'base-count muted');
+  const cloudHint = el('span', '', 'base-cloud-hint muted'); cloudHint.hidden = true;
+  const results = el('span', null, 'base-results'); results.append(count, cloudHint);
   const sortButton = iconButton('sort', 'Sort', () => sorting(), 'Sort');
   const filterButton = iconButton('filter', 'Filter', () => filtering(), 'Filter');
   const propertiesButton = iconButton('properties', 'Properties', () => properties(), 'Properties');
   for (const control of [sortButton,filterButton,propertiesButton]) control.setAttribute('aria-haspopup','dialog');
-  header.append(viewSelect, count, el('span', null, 'toolbar-spacer'), sortButton, filterButton, propertiesButton,
+  header.append(viewSelect, results, el('span', null, 'toolbar-spacer'), sortButton, filterButton, propertiesButton,
     iconButton('plus', 'New note', () => dialog('New note', (form, close) => {
       const name = input(); name.placeholder = 'Untitled';
       form.append(field('Note name', name), el('p','Created beside this Base. Its properties must match the view’s filters to appear here.','muted'));
@@ -36,6 +42,7 @@ export function baseEditor(ctx) {
   ctx.tools(subhead); ctx.main.append(subhead);
   const warning = el('div', '', 'warning'); warning.hidden = true; ctx.main.append(warning, body);
   const displayName = column => doc.properties?.[column]?.displayName ?? column.replace(/^(note|file|formula)\./, '');
+  let pendingWrites = 0;
   let fileMap = new Map(), lastSource, lastFiles, lastLoading, lastWarning, pageRows = [], renderedRows = 0, appendRows;
   function columns() {
     const values = new Set(['file.name', ...result.columns, 'file.folder', 'file.ext', 'file.mtime', 'file.ctime', 'file.size']);
@@ -164,7 +171,7 @@ export function baseEditor(ctx) {
         const source = updateBaseView(ctx.data.source, index, patch);
         // Validate against real rows as well; an unknown function must not replace a working view.
         base(source, ctx.data.files ?? [], ctx.data.path, index);
-        viewIndex = index; ctx.change(source);
+        viewIndex = index; rememberView(ctx); ctx.change(source);
       }, adding ? 'Create view' : 'Apply');
     });
   }
@@ -173,8 +180,8 @@ export function baseEditor(ctx) {
     if (value && typeof value === 'object' && Object.hasOwn(value, 'link')) span.append(button(value.label ?? value.link, () => ctx.open(value.link), 'file-link'));
     else if (Array.isArray(value)) value.forEach(v => { const tag=el('span',null,'tag'); tag.append(valueView(v)); span.append(tag); });
     else if (value instanceof Date) span.textContent = value.toLocaleDateString();
-    else if (typeof value === 'string' && /^\[\[.*\]\]$/.test(value)) {
-      const [path, label] = value.slice(2,-2).split('|'); span.append(button(label ?? path, () => ctx.open(path), 'file-link'));
+    else if (wikiTarget(value)) {
+      const {target,label}=wikiTarget(value);span.append(button(label,()=>ctx.openWiki(target),'file-link'));
     } else if (typeof value === 'boolean') span.textContent = value ? '✓' : '—';
     else span.textContent = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
     return span;
@@ -186,62 +193,81 @@ export function baseEditor(ctx) {
   function propertyCell(holder, row, column, value) {
     holder.dataset.column = column; holder.dataset.path = row.path;
     if (column === 'file.name') { holder.append(button(value, () => ctx.open(row.path), 'file-link note-link')); return; }
-    const canEdit = editable(row, column);
+    if (!editable(row, column)) { holder.append(valueView(value)); return; }
+    holder.classList.add('editable-cell');
+    const label = displayName(column) + ' · ' + row.path;
     if (typeof value === 'boolean') {
-      const checkbox = input('', 'checkbox'); checkbox.checked = value; checkbox.disabled = !canEdit || ctx.busy;
-      checkbox.setAttribute('aria-label', displayName(column) + ' · ' + row.path);
+      const checkbox = input('', 'checkbox'); checkbox.checked = value; checkbox.setAttribute('aria-label',label);
       checkbox.onchange = async () => {
         checkbox.disabled = true;
         try { await ctx.property(row.path, column, checkbox.checked); }
         catch (e) { checkbox.checked = value; checkbox.disabled = false; ctx.notice(e.message, true); }
       };
-      holder.append(checkbox);
-    } else holder.append(valueView(value));
-    if (canEdit) {
-      holder.classList.add('editable-cell'); holder.tabIndex = 0;
-      const edit = iconButton('edit', 'Edit ' + displayName(column), () => editCell(holder, row, column, value)); edit.classList.add('cell-edit-trigger');
-      holder.append(edit); holder.ondblclick = () => editCell(holder, row, column, value);
-      holder.onkeydown = e => { if (e.key === 'Enter' && !e.target.closest('input,select,textarea,button')) { e.preventDefault(); editCell(holder, row, column, value); } };
+      holder.append(checkbox); return;
     }
-  }
-  function editCell(holder, row, column, value) {
-    if (ctx.busy || holder.querySelector('.property-editor')) return;
-    const wrapper = el('div', null, 'property-editor');
-    const initialKind = typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'number' : Array.isArray(value) ? 'list' : /^\d{4}-\d{2}-\d{2}$/.test(value ?? '') ? 'date' : 'text';
-    const kind = select([['text','Text'],['number','Number'],['boolean','Checkbox'],['list','List'],['date','Date']], initialKind);
-    kind.setAttribute('aria-label','Property type'); let editor, saving = false;
-    const mount = () => {
-      editor?.remove();
-      editor = kind.value === 'list' ? el('textarea') : input('', kind.value === 'boolean' ? 'checkbox' : kind.value === 'number' ? 'number' : kind.value === 'date' ? 'date' : 'text');
-      if (kind.value === 'boolean') editor.checked = !!value;
-      else editor.value = Array.isArray(value) ? value.join('\n') : value ?? '';
-      editor.setAttribute('aria-label', displayName(column)); editor.dataset.propertyEditor = column;
-      wrapper.insertBefore(editor, wrapper.firstChild);
-      editor.onkeydown = e => {
-        if (e.key === 'Escape') { e.preventDefault(); draw(); }
-        else if (e.key === 'Enter' && (kind.value !== 'list' || e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+    const list = Array.isArray(value), values = list ? [...value] : [value];
+    const fields = el('div',null,list ? 'cell-list' : 'cell-field'); holder.append(fields);
+    const mount = (item,index,adding=false) => {
+      const part=el('span',null,'cell-field'), text=item == null ? '' : typeof item==='object' ? JSON.stringify(item) : String(item);
+      const multiline=text.includes('\n'),field=multiline?el('textarea'):input();field.value=text;
+      if(multiline)field.rows=Math.min(5,text.split('\n').length);
+      field.className='cell-input'; field.dataset.propertyEditor=column; field.dataset.item=String(index);
+      field.setAttribute('aria-label',label + (list ? adding ? ' · Add item' : ' · Item '+(index+1) : ''));
+      field.spellcheck=false;
+      if(list){field.size=Math.max(2,[...field.value].length);if(adding){field.placeholder='+';field.size=2;}}
+      if(typeof item==='number')field.inputMode='decimal';
+      let saved=field.value, saving=false;
+      field.oninput=()=>{field.dataset.dirty=String(field.value!==saved);if(list)field.size=Math.max(2,[...field.value].length);};
+      const reset=()=>{field.value=saved;field.dataset.dirty='false';};
+      async function save() {
+        if(saving || field.value===saved)return;
+        const draft=field.value;let succeeded=false;
+        try {
+          let next=draft.trim() ? draft : null;
+          if(typeof item==='number' && next!==null){next=Number(draft);if(!Number.isFinite(next))throw Error('Enter a valid number.');}
+          else if(item && typeof item==='object')next=draft.trim()?JSON.parse(draft):null;
+          if(list){const replacement=next;next=current=>{const items=Array.isArray(current)?[...current]:[];if(adding){if(replacement!==null)items.push(replacement);}else{const at=items.indexOf(item);if(at<0)throw Error('This list item changed. Refresh and try again.');if(replacement===null)items.splice(at,1);else items[at]=replacement;}return items;};}
+          saving=true;pendingWrites++;field.dataset.dirty='false';field.classList.add('saving');
+          await ctx.property(row.path,column,next); saved=draft;succeeded=true;field.dataset.dirty=String(field.value!==saved);
+        } catch(e){field.dataset.dirty='true';ctx.notice(e.message,true);}
+        finally{if(saving)pendingWrites--;saving=false;field.classList.remove('saving');if(succeeded){if(field.value!==saved&&field!==document.activeElement)save();else refresh();}}
+      }
+      field.onblur=save;
+      field.onkeydown=e=>{
+        if(e.isComposing)return;
+        if(e.key==='Escape'){e.preventDefault();reset();field.blur();refresh();}
+        else if(e.key==='Enter'&&(!multiline||e.metaKey||e.ctrlKey)){e.preventDefault();field.blur();}
       };
-      editor.focus();
+      part.append(field);attachPropertyLink(part,field,()=>true,target=>ctx.openWiki(target));fields.append(part);
     };
-    async function save() {
-      if (saving) return;
-      try {
-        let next = editor.value;
-        if (kind.value === 'boolean') next = editor.checked;
-        else if (!next.trim()) next = null;
-        else if (kind.value === 'number') { next = Number(next); if (!Number.isFinite(next)) throw Error('Enter a valid number.'); }
-        else if (kind.value === 'list') next = next.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
-        saving = true; wrapper.classList.add('saving');
-        await ctx.property(row.path, column, next);
-      } catch (e) { saving = false; wrapper.classList.remove('saving'); ctx.notice(e.message, true); }
-    }
-    const controls = el('div', null, 'property-editor-actions');
-    controls.append(kind, button('Save', save, 'primary'), iconButton('close','Cancel edit',draw));
-    wrapper.append(controls); kind.onchange = mount;
-    holder.replaceChildren(wrapper); holder.ondblclick = null; mount();
+    values.forEach((item,index)=>mount(item,index));if(list)mount('',values.length,true);
+  }
+  function columnWidth(column) {
+    const width=result.view.columnSize?.[column];
+    return Number.isFinite(width) ? Math.max(72,Math.min(1200,width)) : column==='file.name' ? 240 : 180;
+  }
+  function resizeColumn(handle, column) {
+    const paint = width => {
+      body.querySelectorAll('col').forEach(col=>{if(col.dataset.column===column)col.style.width=width+'px';});
+      body.querySelectorAll('table').forEach(table=>{table.style.width=[...table.querySelectorAll('col')].reduce((sum,col)=>sum+parseFloat(col.style.width),0)+'px';});
+    };
+    const persist=width=>ctx.change(updateBaseView(ctx.data.source,viewIndex,{columnSize:{...result.view.columnSize,[column]:width}}));
+    handle.onpointerdown=e=>{
+      if(e.button!==0)return;e.preventDefault();e.stopPropagation();
+      const start=e.clientX,initial=columnWidth(column);let width=initial;
+      handle.setPointerCapture(e.pointerId);
+      handle.onpointermove=event=>{width=Math.round(Math.max(72,Math.min(1200,initial+event.clientX-start)));paint(width);};
+      const finish=event=>{handle.onpointermove=null;handle.onpointerup=null;handle.onpointercancel=null;if(handle.hasPointerCapture(event.pointerId))handle.releasePointerCapture(event.pointerId);if(event.type==='pointercancel')paint(initial);else if(width!==initial)persist(width);};
+      handle.onpointerup=finish;handle.onpointercancel=finish;
+    };
+    handle.onclick=e=>e.stopPropagation();
+    handle.onkeydown=e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();e.stopPropagation();persist(Math.max(72,Math.min(1200,columnWidth(column)+(e.key==='ArrowLeft'?-10:10))));}};
   }
   function draw() {
-    const visibleCount=Math.max(100,renderedRows), scrollTop=body.scrollTop;
+    if(pendingWrites || body.querySelector('.cell-input[data-dirty=true]'))return;
+    const active=document.activeElement, cell=active?.closest('[data-column][data-path]');
+    const focus=body.contains(active)&&active.matches('.cell-input') ? {path:cell.dataset.path,column:cell.dataset.column,item:active.dataset.item,start:active.selectionStart,end:active.selectionEnd} : null;
+    const visibleCount=Math.max(100,renderedRows), scrollTop=body.scrollTop, scrollLeft=body.scrollLeft;
     body.replaceChildren();
     pageRows = []; renderedRows = 0; appendRows = null;
     const rows = result.rows.filter(row => !search || (row.path + ' ' + row.cells.map(v => JSON.stringify(v) ?? '').join(' ')).toLocaleLowerCase().includes(search.toLocaleLowerCase()));
@@ -259,14 +285,17 @@ export function baseEditor(ctx) {
         if (result.view.groupBy) body.append(el('h3', row.group ?? 'No value', 'group-heading'));
         holder = el('div', null, result.view.type); body.append(holder);
         if (result.view.type === 'table') {
-          const table = el('table'), head = el('tr'), thead = el('thead'); tbody = el('tbody');
+          const table = el('table'), head = el('tr'), thead = el('thead'), cols=el('colgroup'); tbody = el('tbody');
+          for(const column of result.columns){const col=el('col');col.dataset.column=column;col.style.width=columnWidth(column)+'px';cols.append(col);}
+          table.style.width=result.columns.reduce((sum,column)=>sum+columnWidth(column),0)+'px'; table.append(cols);
           for (const column of result.columns) {
             const th = el('th'), active = result.view.sort?.[0]?.property === column;
             const title = button(displayName(column) + (active ? result.view.sort[0].direction === 'DESC' ? ' ↓' : ' ↑' : ''), () => {
               const direction = active && result.view.sort[0].direction !== 'DESC' ? 'DESC' : 'ASC';
               ctx.change(updateBaseView(ctx.data.source, viewIndex, {sort:[{property:column, direction}]}));
             });
-            title.title = 'Sort by ' + displayName(column); title.prepend(propertyIcon(column)); th.append(title); head.append(th);
+            title.title = 'Sort by ' + displayName(column); title.prepend(propertyIcon(column)); th.append(title);
+            const resize=el('span',null,'column-resize');resize.tabIndex=0;resize.setAttribute('role','separator');resize.setAttribute('aria-orientation','vertical');resize.setAttribute('aria-label','Resize '+displayName(column));resize.setAttribute('aria-valuenow',columnWidth(column));resize.setAttribute('aria-valuemin','72');resize.setAttribute('aria-valuemax','1200');resizeColumn(resize,column);th.append(resize);head.append(th);
           }
           thead.append(head); table.append(thead, tbody); holder.append(table);
         }
@@ -288,9 +317,11 @@ export function baseEditor(ctx) {
     renderedRows += batchSize;
     if (renderedRows < pageRows.length) body.append(more);
     };
-    appendRows(visibleCount); body.scrollTop=scrollTop;
+    appendRows(visibleCount); body.scrollTop=scrollTop;body.scrollLeft=scrollLeft;
+    if(focus){const target=[...body.querySelectorAll('.cell-input')].find(field=>{const cell=field.closest('[data-column][data-path]');return cell.dataset.path===focus.path&&cell.dataset.column===focus.column&&field.dataset.item===focus.item;});if(target){target.focus({preventScroll:true});target.setSelectionRange(focus.start,focus.end);}}
   }
   function refresh() {
+    if(pendingWrites || body.querySelector('.cell-input[data-dirty=true]'))return;
     const files = ctx.data.files ?? [];
     doc = yaml(ctx.data.source); viewIndex = Math.min(viewIndex, doc.views.length - 1);
     const options = doc.views.map((v,i) => [String(i),v.name || 'View ' + (i + 1)]);
@@ -304,14 +335,20 @@ export function baseEditor(ctx) {
     result = {doc, view:doc.views[viewIndex], columns:doc.views[viewIndex].order ?? ['file.name'], rows:[]};
     try {
       result = base(ctx.data.source, files, path, viewIndex);
-      const warnings = [ctx.data.warning, ...(result.warnings ?? [])];
+      cloudHint.hidden = true; cloudHint.textContent = ''; cloudHint.title = '';
+      const inventoryWarning = (ctx.data.warning ?? '').replace(/(\d+) iCloud notes are not downloaded\.(?: Their properties and tags will be available after downloading and refreshing the index\.)?/, (message, total) => {
+        cloudHint.textContent = 'iCloud: ' + total + ' not downloaded';
+        cloudHint.title = message; cloudHint.setAttribute('aria-label', message); cloudHint.hidden = false;
+        return '';
+      }).trim();
+      const warnings = [inventoryWarning, ...(result.warnings ?? [])];
       if (result.view.summaries && Object.keys(result.view.summaries).length) warnings.push('Summary calculations are not supported. Original settings are preserved.');
       warning.textContent = warnings.filter(Boolean).join(' '); warning.hidden = !warning.textContent;
       filterButton.classList.toggle('active', !!(doc.filters || result.view.filters));
       sortButton.classList.toggle('active', !!result.view.sort?.length);
       draw();
     } catch(e) {
-      pageRows=[]; renderedRows=0; appendRows=null; count.textContent='Unable to load results';
+      pageRows=[]; renderedRows=0; appendRows=null; count.textContent='Unable to load results'; cloudHint.hidden=true;
       warning.textContent=e.message; warning.hidden=false;
       body.replaceChildren(el('div','This view could not be evaluated. Adjust its filters or options.','empty'));
     }
@@ -319,11 +356,12 @@ export function baseEditor(ctx) {
   body.addEventListener('scroll', () => {
     if (renderedRows < pageRows.length && body.scrollHeight - body.scrollTop - body.clientHeight < 240) appendRows?.();
   });
-  query.oninput = () => { search = query.value; body.scrollTop=0; renderedRows=0; draw(); }; refresh();
+  query.oninput = () => { search = query.value; rememberView(ctx); body.scrollTop=0; renderedRows=0; draw(); }; refresh();
   return {
     update() {
       if (ctx.data.kind !== 'base' || ctx.data.path !== path) return false;
       const files=ctx.data.files ?? [], sameFiles=files.length === lastFiles.length && files.every((f,i)=>f===lastFiles[i]);
+      if(pendingWrites || body.querySelector('.cell-input[data-dirty=true]'))return true;
       if (lastSource !== ctx.data.source || !sameFiles || lastLoading !== ctx.data.loading || lastWarning !== ctx.data.warning) refresh();
       return true;
     },

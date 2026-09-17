@@ -93,3 +93,14 @@ test('Filter scopes, nested conditions and formulas preserve unrelated Base sett
  assert.equal(yaml(formula).plugin,'kept'); assert.ok(formula.includes('# Keep comment'));
  assert.equal(yaml(updateBaseFilters(formula,0,'view',null)).views[0].filters,undefined);
 });
+
+test('Missing, null, empty strings and lists always sort last in either direction',()=>{
+ const rows = ['value: 2','value: 0','value: 8','','value: null','value: ""','value: []','value: "   "'].map((value,i)=>({path:i+'.md',text:'---\n'+value+'\n---\n'}));
+ for (const direction of ['ASC','DESC']) {
+  const result = base(`views: [{type: table, order: [value], sort: [{property: value, direction: ${direction}}]}]`, rows, 'a.base');
+  assert.deepEqual(result.rows.slice(0,3).map(r=>r.cells[0]),direction==='ASC'?[0,2,8]:[8,2,0]);
+  assert.deepEqual(new Set(result.rows.slice(3).map(r=>r.path)),new Set(['3.md','4.md','5.md','6.md','7.md']));
+ }
+ const booleans = [true,false,null].map((value,i)=>({path:i+'.md',text:'---\nvalue: '+value+'\n---\n'}));
+ assert.equal(base('views: [{type: table, sort: [{property: value, direction: DESC}]}]',booleans,'a.base').rows.at(-1).path,'2.md');
+});

@@ -36,3 +36,20 @@ final class NoteLinksTests: XCTestCase {
         XCTAssertTrue(blocks.dropFirst().map(\.html).joined().contains("data-source-start=\"\((prefix as NSString).length + 2)\""))
     }
 }
+
+extension NoteLinksTests {
+    func testVaultFlagDefaultsOffAndCatalogTracksRenamedTags() throws {
+        let workspace = Workspace(name: "Notes", kind: .local, connection: .local)
+        var snapshot = WorkspaceSnapshot(workspace: workspace, rootPath: "/notes")
+        var old = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        old.removeValue(forKey: "isNoteVault")
+        XCTAssertFalse(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONSerialization.data(withJSONObject: old)).isNoteVault)
+        snapshot.isNoteVault = true
+        XCTAssertTrue(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(snapshot)).isNoteVault)
+        var catalog = NoteLinks.Catalog(notes: ["Folder/Note.md": "---\ntags: [work, '한글/태그']\n---\n#inline `#ignored`\n```\n#ignoredToo\n```\n"], paths: ["image.png"])
+        XCTAssertEqual(Set(catalog.tags), ["work", "한글/태그", "inline"])
+        XCTAssertEqual(catalog.paths, ["Folder/Note.md", "image.png"])
+        catalog.update(path: "Folder/Note.md", text: "---\ntags:\n - changed\n - nested/tag\n---\n")
+        XCTAssertEqual(catalog.tags, ["changed", "nested/tag"])
+    }
+}

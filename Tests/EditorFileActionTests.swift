@@ -195,7 +195,7 @@ import WebKit
         let alias = root.appendingPathComponent("escape")
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root.deletingLastPathComponent())
         let (files, _) = try await ObsidianFiles.inventory(in: model.current)
-        XCTAssertTrue(files.contains { $0["path"] as? String == "Notes/Note.md" && ($0["text"] as? String)?.contains("status: reading") == true })
+        XCTAssertTrue(files.contains { $0["path"] as? String == "Notes/Note.md" && ($0["text"] as? String)?.contains("status: reading") == true }, String(describing: files))
         XCTAssertFalse(files.contains { ($0["path"] as? String)?.hasPrefix("escape/") == true })
         for path in ["../outside.txt", "escape/outside.txt", "/etc/passwd"] {
             do { _ = try await ObsidianFiles.resolve(path, in: model.current); XCTFail("Escaping links must fail") } catch {}
@@ -394,9 +394,60 @@ import WebKit
         assert(!document.querySelector('.base-count').textContent.includes('Loading'),'Stopping must release the loading state');
         window.crowObsidian.failed('Connection interrupted');
         assert(document.querySelector('.view-select')===viewSelect && document.querySelector('.warning').textContent.includes('Connection interrupted'),'A load failure must retain usable controls');
+        assert(window.messages.some(m=>m.action==='selectView' && m.index==='1'),'Selected view must reach native state');
+        window.crowObsidian.receive({source,kind:'base',path:'Other.base',files});
+        receive({files});
+        assert(document.querySelector('.view-select').value==='1','Switching documents lost the selected view');
         assert(!window.crowObsidian.validateBase({source:'views: [broken',path:'Notes.base'}),'Invalid definitions must report an error');
         receive({files});
         assert(document.querySelector('.view-select')?.isConnected && document.querySelectorAll('tbody tr').length===100,'Fixing a definition must remount its controls');
+        source='custom: preserved\nviews:\n - type: table\n   name: Inline\n   order: [file.name, status, cover, tags]\n';
+        const inlineFiles=[{path:'Inline.md',text:'---\nstatus: reading\ncover: "![[Attachments/image.png|200]]"\ntags: [one, two]\n---\nBody'}];
+        receive({files:inlineFiles,warning:'288 iCloud notes are not downloaded. Their properties and tags will be available after downloading and refreshing the index.'});
+        assert(!document.querySelector('.base-cloud-hint').hidden && document.querySelector('.base-cloud-hint').parentElement.contains(document.querySelector('.base-count')),'Cloud warning belongs beside results');
+        assert(document.querySelector('.warning').hidden,'Cloud hint must not occupy a banner');
+        const cell=document.querySelector('[data-column=status] .cell-input');
+        assert(cell && !document.querySelector('.property-editor,.cell-edit-trigger'),'Cells must be directly editable');
+        document.querySelector('[data-column=cover] .property-link').click();
+        assert(window.messages.at(-1).action==='openWiki' && window.messages.at(-1).path==='Attachments/image.png','Embed property must open its target, excluding size alias');
+        cell.focus();cell.value='한글 변경';cell.dispatchEvent(new Event('input'));
+        receive({files:[],incremental:true});
+        assert(document.activeElement===cell && cell.value==='한글 변경','Background updates must retain a cell draft');
+        cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,isComposing:true}));
+        assert(document.activeElement===cell,'IME Enter must not commit');
+        cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
+        const write=window.messages.filter(m=>m.action==='property').at(-1);
+        assert(write.source.includes('status: 한글 변경') && write.source.endsWith('Body'),'Inline Enter must preserve the rest of the note');
+        window.crowObsidian.propertyResult(write.id,{ok:true});await new Promise(resolve=>setTimeout(resolve,0));
+        const edited=document.querySelector('[data-column=status] .cell-input');edited.focus();edited.value='discard';edited.dispatchEvent(new Event('input'));edited.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        assert(edited.value==='한글 변경','Escape must discard only the draft');
+        const resize=document.querySelector('[aria-label="Resize status"]');resize.setPointerCapture=()=>{};resize.hasPointerCapture=()=>false;
+        resize.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:1,clientX:200,bubbles:true}));
+        resize.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:287,bubbles:true}));
+        assert(document.querySelector('col[data-column=status]').style.width==='267px','Dragging must resize immediately');
+        resize.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:287,bubbles:true}));
+        source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        assert(source.includes('status: 267') && source.includes('custom: preserved'),'Column size must persist without dropping other settings');
+        receive({files:inlineFiles});
+        assert(document.querySelector('col[data-column=status]').style.width==='267px','Column size must survive remount');
+        const status=document.querySelector('[data-column=status] .cell-input'),cover=document.querySelector('[data-column=cover] .cell-input');
+        status.focus();status.value='queued';status.dispatchEvent(new Event('input'));cover.focus();
+        cover.value='![[Attachments/next.png]]';cover.dispatchEvent(new Event('input'));cover.blur();
+        await new Promise(resolve=>setTimeout(resolve,0));
+        const first=window.messages.filter(m=>m.action==='property').at(-1);
+        assert(first.source.includes('status: queued'),'First cell write must go first');
+        window.crowObsidian.propertyResult(first.id,{ok:true});await new Promise(resolve=>setTimeout(resolve,0));
+        const second=window.messages.filter(m=>m.action==='property').at(-1);
+        assert(second.id!==first.id && second.source.includes('status: queued') && second.source.includes('Attachments/next.png'),'Queued edit must use the newly saved note');
+        assert(cover.isConnected,'Pending cell edits must not be replaced by another save');
+        window.crowObsidian.propertyResult(second.id,{ok:true});await new Promise(resolve=>setTimeout(resolve,0));
+        const failing=document.querySelector('[data-column=status] .cell-input');failing.focus();failing.value='keep my draft';failing.dispatchEvent(new Event('input'));failing.blur();
+        await new Promise(resolve=>setTimeout(resolve,0));
+        window.crowObsidian.propertyResult(window.messages.filter(m=>m.action==='property').at(-1).id,{ok:false,error:'Save conflict'});await new Promise(resolve=>setTimeout(resolve,0));
+        receive({files:[],incremental:true});
+        assert(failing.isConnected && failing.value==='keep my draft','A failed save must retain the draft across refreshes');
+        failing.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
         return true;
         """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
         XCTAssertEqual(result, true)
@@ -415,10 +466,174 @@ import WebKit
         XCTAssertEqual(initial?.count, unchanged.count, "Reopening must publish cached results before any IO")
         try Data("---\nstatus: done\n---\nChanged body".utf8).write(to: note)
         let (changed, _) = try await ObsidianFiles.inventory(in: model.current)
-        XCTAssertTrue((changed.first { $0["path"] as? String == "Cached.md" }?["text"] as? String)?.contains("status: done") == true)
+        XCTAssertTrue((changed.first { $0["path"] as? String == "Cached.md" }?["text"] as? String)?.contains("status: done") == true, String(describing: changed))
         try FileManager.default.removeItem(at: note)
         let (deleted, _) = try await ObsidianFiles.inventory(in: model.current)
         XCTAssertFalse(deleted.contains { $0["path"] as? String == "Cached.md" })
+    }
+
+    func testProfileLocalVaultReadOnlyWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CROW_PROFILE_VAULT"] else { throw XCTSkip("Set CROW_PROFILE_VAULT to profile a real vault without editing it.") }
+        let state = WorkspaceState(.init(workspace: Workspace(name: "Profile", kind: .local, connection: .local), rootPath: path))
+        let start = Date(), (files, warning) = try await ObsidianFiles.inventory(in: state)
+        print("REAL_VAULT_READ_SECONDS", Date().timeIntervalSince(start), "FILES", files.count, "LOADED_NOTES", files.filter { $0["text"] is String }.count, "WARNING", warning ?? "none")
+        let config = WKWebViewConfiguration()
+        let scriptURL = try XCTUnwrap(Bundle.main.url(forResource: "obsidian-preview", withExtension: "js"))
+        let script = "window.webkit={messageHandlers:{obsidian:{postMessage:()=>{}}}};\n" + (try String(contentsOf: scriptURL, encoding: .utf8))
+        config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        let view = WKWebView(frame: .init(x: 0, y: 0, width: 900, height: 600), configuration: config)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.setFrameOrigin(.init(x: -20000, y: -20000)); window.contentView = view; window.orderBack(nil); defer { window.close() }
+        let styleURL = try XCTUnwrap(Bundle.main.url(forResource: "obsidian-preview", withExtension: "css"))
+        view.loadHTMLString("<html><head><style>\(try String(contentsOf: styleURL, encoding: .utf8))</style></head><body><main></main></body></html>", baseURL: nil)
+        for _ in 0..<100 {
+            if (try? await view.callAsyncJavaScript("return !!window.crowObsidian", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        for item in files {
+            guard let relative = item["path"] as? String, relative.hasSuffix(".base"), !relative.contains("/") else { continue }
+            let source = try String(contentsOfFile: (path as NSString).appendingPathComponent(relative), encoding: .utf8)
+            let start = Date()
+            let result = try await view.callAsyncJavaScript("""
+            window.crowObsidian.receive(payload);
+            void document.body.offsetHeight;
+            return {rows:document.querySelectorAll('tbody tr,.base-item').length, error:document.querySelector('.error')?.textContent??''};
+            """, arguments: ["payload": ["path": relative, "kind": "base", "source": source, "files": files]], in: nil, contentWorld: .defaultClient)
+            _ = try await view.takeSnapshot(configuration: nil)
+            print("REAL_BASE_BRIDGE_AND_PAINT_SECONDS", Date().timeIntervalSince(start), String(describing: result))
+        }
+    }
+
+    func testImagePropertyTargetResolvesByNameAndThumbnailCacheInvalidates() async throws {
+        let directory = root.appendingPathComponent("Attachments")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let image = directory.appendingPathComponent("한글 image.png")
+        try InputToolsTests.png.write(to: image)
+        let sourceID = try XCTUnwrap(model.selectedBufferID)
+        model.openMarkdownLink("한글 image.png", from: sourceID, allowWorkspaceLink: true)
+        for _ in 0..<100 where model.selectedBuffer?.path != image.path { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.selectedBuffer?.path, image.path)
+        XCTAssertEqual(model.selectedBuffer?.isImage, true)
+        let first = try await ObsidianFiles.asset("Attachments/한글 image.png", in: model.current)
+        let cached = try await ObsidianFiles.asset("Attachments/한글 image.png", in: model.current)
+        XCTAssertNotNil(first["image"]); XCTAssertEqual(first, cached)
+        try Data("invalid image".utf8).write(to: image)
+        do { _ = try await ObsidianFiles.asset("Attachments/한글 image.png", in: model.current); XCTFail("Modified image must not return a stale cached thumbnail") }
+        catch {}
+    }
+
+    func testProfileCanvasReadOnlyWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CROW_PROFILE_CANVAS"],
+              let vault = ProcessInfo.processInfo.environment["CROW_PROFILE_CANVAS_ROOT"] else { throw XCTSkip("Opt-in real Canvas profile") }
+        let source = try Data(contentsOf: URL(fileURLWithPath: path))
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: source) as? [String: Any])
+        let nodes = try XCTUnwrap(document["nodes"] as? [[String: Any]])
+        let imageCount = nodes.filter { $0["file"] is String }.count
+        let state = WorkspaceState(.init(workspace: Workspace(name: "Canvas profile", kind: .local, connection: .local), rootPath: vault))
+        model.states.append(state); model.activateWorkspace(state.id, reconnect: false)
+        let started = Date()
+        model.openFile(.init(name: (path as NSString).lastPathComponent, path: path, isDirectory: false))
+        for _ in 0..<100 where model.selectedBuffer?.path != path { try await Task.sleep(for: .milliseconds(20)) }
+        let buffer = try XCTUnwrap(model.selectedBuffer)
+        XCTAssertEqual(buffer.path, path)
+        let hosting = NSHostingView(rootView: ObsidianDocumentView(buffer: buffer).environment(model))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 1200, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil); defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+        var firstPaint: TimeInterval?, localReady: TimeInterval?, imageLoaded = 0, errors = 0
+        for _ in 0..<600 {
+            if let view = web(hosting), let counts = try? await view.callAsyncJavaScript("return [document.querySelectorAll('.node').length,[...document.querySelectorAll('.node img')].filter(i=>i.complete&&i.naturalWidth>0).length,[...document.querySelectorAll('.node.file .node-content')].filter(n=>n.textContent.includes('iCloud')).length]", arguments: [:], in: nil, contentWorld: .defaultClient) as? [Int], counts.count == 3 {
+                if firstPaint == nil, counts[0] == nodes.count { firstPaint = Date().timeIntervalSince(started) }
+                imageLoaded = counts[1]; errors = counts[2]
+                if localReady == nil, imageLoaded + errors == imageCount { localReady = Date().timeIntervalSince(started) }
+                if imageLoaded == imageCount { break }
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        print("REAL_CANVAS_SECONDS", "first paint", firstPaint ?? -1, "local ready", localReady ?? -1, "waited", Date().timeIntervalSince(started), "loaded", imageLoaded, "cloud unavailable", errors, "expected", imageCount)
+        XCTAssertNotNil(firstPaint); XCTAssertEqual(imageLoaded + errors, imageCount)
+        if let view = web(hosting) {
+            let image = try await view.takeSnapshot(configuration: nil)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/crow-real-canvas.png"))
+        }
+        let reopenStart = Date()
+        let reopened = NSHostingView(rootView: ObsidianDocumentView(buffer: buffer).environment(model))
+        window.contentView = reopened
+        var reopenedImages = 0
+        for _ in 0..<200 {
+            if let view = web(reopened), let count = try? await view.callAsyncJavaScript("return [...document.querySelectorAll('.node img')].filter(i=>i.complete&&i.naturalWidth>0).length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int { reopenedImages = count }
+            if reopenedImages == imageCount { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        print("REAL_CANVAS_REOPEN_SECONDS", Date().timeIntervalSince(reopenStart), "images", reopenedImages)
+        XCTAssertEqual(reopenedImages, imageCount)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), source, "Profiling must not alter the Canvas")
+    }
+
+    func testNoteVaultIndexesWorkspaceAndDisablesWithoutChangingDocuments() async throws {
+        let note = root.appendingPathComponent("VaultNote.md")
+        let original = "---\ntags: [work, reading]\n---\nBody\n"
+        try Data(original.utf8).write(to: note)
+        let state = model.current
+        model.setNoteVault(state.id, enabled: true)
+        await state.noteIndexTask?.value
+        XCTAssertTrue(state.snapshot.isNoteVault)
+        XCTAssertTrue(state.noteCatalog.paths.contains("VaultNote.md"))
+        XCTAssertTrue(state.noteCatalog.tags.contains("reading"))
+        let (files, _) = try await ObsidianFiles.inventory(in: state, preferCached: true)
+        XCTAssertTrue(files.contains { $0["path"] as? String == "VaultNote.md" })
+        model.setNoteVault(state.id, enabled: false)
+        XCTAssertFalse(state.snapshot.isNoteVault)
+        XCTAssertTrue(state.noteCatalog.paths.isEmpty)
+        XCTAssertEqual(try String(contentsOf: note, encoding: .utf8), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".obsidian").path))
+    }
+
+    func testLargeLocalBaseInventoryStaysResponsive() async throws {
+        let folder = root.appendingPathComponent("Large")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for index in 0..<1500 {
+            try Data("---\nstatus: reading\nnumber: \(index)\n---\nBody\n".utf8).write(to: folder.appendingPathComponent("Note-\(index).md"))
+        }
+        let start = Date()
+        var publications = 0
+        let (files, _) = try await ObsidianFiles.inventory(in: model.current) { _, _ in publications += 1 }
+        print("BASE_LOCAL_1500_SECONDS", Date().timeIntervalSince(start))
+        XCTAssertEqual(files.filter { ($0["path"] as? String)?.hasPrefix("Large/") == true }.count, 1500)
+        XCTAssertGreaterThan(publications, 1)
+        XCTAssertTrue(files.filter { ($0["path"] as? String)?.hasPrefix("Large/") == true }.allSatisfy { $0["text"] != nil })
+    }
+
+    func testBaseViewSurvivesWebViewRecreation() async throws {
+        let file = root.appendingPathComponent("Views.base")
+        let source = "views:\n - {type: table, name: Table, order: [file.name]}\n - {type: cards, name: Cards, order: [file.name]}\n"
+        try Data(source.utf8).write(to: file)
+        model.openFile(.init(name: "Views.base", path: file.path, isDirectory: false))
+        let buffer = try XCTUnwrap(model.selectedBuffer)
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.orderBack(nil); defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { if let value = view as? WKWebView { return value }; return view.subviews.lazy.compactMap { web($0) }.first }
+        for pass in 0..<2 {
+            let hosting = NSHostingView(rootView: ObsidianDocumentView(buffer: buffer).environment(model))
+            window.contentView = hosting
+            var preview: WKWebView?
+            for _ in 0..<100 {
+                if let view = web(hosting), (try? await view.callAsyncJavaScript("return !!document.querySelector('.view-select')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { preview = view; break }
+                try await Task.sleep(for: .milliseconds(40))
+            }
+            let view = try XCTUnwrap(preview)
+            if pass == 0 {
+                _ = try await view.callAsyncJavaScript("const picker=document.querySelector('.view-select'); picker.value='1'; picker.dispatchEvent(new Event('change'));", arguments: [:], in: nil, contentWorld: .defaultClient)
+                for _ in 0..<40 where model.current.baseViews[buffer.id] != 1 { try await Task.sleep(for: .milliseconds(20)) }
+                XCTAssertEqual(model.current.baseViews[buffer.id], 1)
+            } else {
+                let selected = try await view.callAsyncJavaScript("return document.querySelector('.view-select').value", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+                XCTAssertEqual(selected,"1")
+            }
+            window.contentView = NSView()
+            try await Task.sleep(for: .milliseconds(80))
+        }
     }
 
     func testBaseInventoryPublishesBeforeCompletionAndHonorsCancellation() async throws {
@@ -551,7 +766,7 @@ import WebKit
                     if (try? await view.callAsyncJavaScript("return document.querySelector('.base-count').textContent.includes('Loading')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == false { break }
                     try await Task.sleep(for: .milliseconds(50))
                 }
-                try await js("document.querySelector(\"td[data-column=status][data-path='Project.md']\").dispatchEvent(new MouseEvent('dblclick')); const input=document.querySelector('[data-property-editor=status]'); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));")
+                try await js("document.querySelector(\"td[data-column=status][data-path='Project.md']\").dispatchEvent(new MouseEvent('dblclick')); const input=document.querySelector('[data-property-editor=status]'); input.focus(); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));")
                 for _ in 0..<80 where !(try String(contentsOf: note, encoding: .utf8)).contains("status: done") { try await Task.sleep(for: .milliseconds(50)) }
                 let saved = try String(contentsOf: note, encoding: .utf8)
                 XCTAssertTrue(saved.contains("status: done")); XCTAssertTrue(saved.contains("# Preserve comment")); XCTAssertTrue(saved.hasSuffix("# Project\nBody stays intact.\n"))

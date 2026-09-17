@@ -62,10 +62,11 @@ import SwiftUI
 struct WindowCloseGuard: NSViewRepresentable {
     let model: AppModel
     var floating = false
+    var floatingController: FloatingWindowController? = nil
     var onActivate: (() -> Void)?
     var onClose: (() -> Void)?
     func makeNSView(context: Context) -> GuardView {
-        let view = GuardView(model: model); view.floating = floating
+        let view = GuardView(model: model, floatingController: floatingController); view.floating = floating
         view.onActivate = onActivate; view.onClose = onClose
         return view
     }
@@ -80,15 +81,19 @@ struct WindowCloseGuard: NSViewRepresentable {
         var floating = false
         var onActivate: (() -> Void)?
         var onClose: (() -> Void)?
-        let floatingController = FloatingWindowController()
+        let floatingController: FloatingWindowController
         // NSObject's forwarding hooks are nonisolated. AppKit invokes these
         // window-delegate hooks on the main thread, like the assignment below.
         nonisolated(unsafe) weak var previous: NSWindowDelegate?
-        init(model: AppModel) { self.model = model; super.init(frame: .zero) }
+        init(model: AppModel, floatingController: FloatingWindowController? = nil) {
+            self.model = model; self.floatingController = floatingController ?? FloatingWindowController()
+            super.init(frame: .zero)
+        }
         required init?(coder: NSCoder) { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let window {
+                floatingController.attach(to: window)
                 window.titleVisibility = .hidden
                 window.titlebarAppearsTransparent = true
                 window.styleMask.insert(.fullSizeContentView)
@@ -170,11 +175,12 @@ struct CrowMacSceneView: View {
     var onActivate: (() -> Void)?
     var onClose: (() -> Void)?
     @State private var floating = false
+    @State private var floatingController = FloatingWindowController()
     var body: some View {
-        CrowRootView().environment(model).environment(\.crowFloatingMode, $floating)
+        CrowRootView().environment(model).environment(\.crowFloatingMode, floatingController.modeBinding($floating))
             .frame(minWidth: floating ? FloatingWindowController.minimumSize.width : 640,
                    minHeight: floating ? FloatingWindowController.minimumSize.height : 400)
-            .background(WindowCloseGuard(model: model, floating: floating, onActivate: onActivate, onClose: onClose))
+            .background(WindowCloseGuard(model: model, floating: floating, floatingController: floatingController, onActivate: onActivate, onClose: onClose))
     }
 }
 
@@ -190,6 +196,30 @@ struct CrowMacSceneView: View {
         var zoomAction: Selector?
     }
     private var original: Original?
+    private var preparedOriginal: Original?
+    private weak var window: NSWindow?
+    private var restoration = UUID()
+
+    func attach(to window: NSWindow) { self.window = window }
+
+    func modeBinding(_ value: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { value.wrappedValue }, set: { [weak self] floating in
+            guard value.wrappedValue != floating else { return }
+            // Capture before SwiftUI replaces the regular content and its sizing
+            // constraints. A representable update runs too late for this snapshot.
+            if floating, let self, let window = self.window, !window.styleMask.contains(.fullScreen) {
+                self.preparedOriginal = self.snapshot(of: window)
+            }
+            value.wrappedValue = floating
+        })
+    }
+
+    private func snapshot(of window: NSWindow) -> Original {
+        let zoomButton = window.standardWindowButton(.zoomButton)
+        return Original(frame: window.frame, level: window.level, behavior: window.collectionBehavior,
+            minimum: window.minSize, hidesOnDeactivate: window.hidesOnDeactivate,
+            zoomTarget: zoomButton?.target, zoomAction: zoomButton?.action)
+    }
     private var floatingSize = NSSize(width: 420, height: 560)
     var waitingForFullscreenExit = false
 
@@ -202,10 +232,9 @@ struct CrowMacSceneView: View {
     func apply(_ floating: Bool, to window: NSWindow) {
         if floating {
             guard original == nil else { return }
+            restoration = UUID()
             let zoomButton = window.standardWindowButton(.zoomButton)
-            original = Original(frame: window.frame, level: window.level, behavior: window.collectionBehavior,
-                minimum: window.minSize, hidesOnDeactivate: window.hidesOnDeactivate,
-                zoomTarget: zoomButton?.target, zoomAction: zoomButton?.action)
+            original = preparedOriginal ?? snapshot(of: window); preparedOriginal = nil
             window.level = .floating
             var behavior = window.collectionBehavior
             behavior.subtract([.moveToActiveSpace, .fullScreenPrimary, .fullScreenAuxiliary, .fullScreenNone, .canJoinAllSpaces])
@@ -230,8 +259,17 @@ struct CrowMacSceneView: View {
             zoomButton?.target = original.zoomTarget
             zoomButton?.action = original.zoomAction
             window.minSize = original.minimum; window.hidesOnDeactivate = original.hidesOnDeactivate
+            window.contentView?.layoutSubtreeIfNeeded()
             window.setFrame(original.frame, display: true)
-            self.original = nil
+            self.original = nil; preparedOriginal = nil
+            let generation = UUID(); restoration = generation
+            Task { @MainActor [weak self, weak window] in
+                await Task.yield()
+                guard let self, let window, self.restoration == generation, self.original == nil else { return }
+                // Hosting views may resize again at the end of the layout pass.
+                window.contentView?.layoutSubtreeIfNeeded()
+                window.setFrame(original.frame, display: true)
+            }
         }
     }
 }

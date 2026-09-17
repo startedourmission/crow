@@ -1,4 +1,4 @@
-import {base, updateNoteProperty} from './obsidian-model.js';
+import {base, updateNoteProperty, record as noteRecord, noteProperty} from './obsidian-model.js';
 import {canvasEditor} from './canvas-editor.js';
 import {baseEditor} from './base-editor.js';
 import {el, iconButton} from './obsidian-ui.js';
@@ -6,6 +6,7 @@ import {el, iconButton} from './obsidian-ui.js';
 const send = body => window.webkit.messageHandlers.obsidian.postMessage(body);
 const main = document.querySelector('main');
 let data, controller, generation = 0, sequence = 0;
+let propertyQueue = Promise.resolve();
 let undo = [], redo = [], assets = new Map(), cache = new Map(), pending = new Map();
 function notice(message, error = false) {
   let node = document.querySelector('.notice');
@@ -17,10 +18,11 @@ function notice(message, error = false) {
 function open(path) { send({action:'open', path}); }
 function renderAsset(path, target, background = false, style = 'cover', markdown = false) {
   const key = (markdown ? 'markdown:' : 'file:') + path;
-  const item = {target, background, style, key};
+  const request=markdown ? {action:'markdown',text:path} : {action:'asset',path};
+  const item = {target, background, style, key, request, retries:0};
   if (cache.has(key)) { applyAsset(item, cache.get(key)); return; }
   const id = generation + ':' + sequence++; assets.set(id, item);
-  send(markdown ? {action:'markdown', text:path, id} : {action:'asset', path, id});
+  send({...request,id});
 }
 function applyAsset({target, background, style}, value) {
   if (target.dataset.editing === 'true') return;
@@ -84,11 +86,18 @@ function render() {
   controller = null;
   if (!data) return;
   const context = {
-    get data() { return data; }, main, open, change, record, notice, tools, asset:renderAsset, render,
+    get data() { return data; }, main, open, openWiki: path=>send({action:"openWiki",path}), change, record, notice, tools, asset:renderAsset, render,
+    selectView: index => send({action:'selectView', index:String(index)}),
     createNote: name => send({action:'createNote', name}),
-    property: async (path, column, value) => {
-      const file = data.files.find(file => file.path === path);
-      return writeProperty(path, updateNoteProperty(file?.text, column, value));
+    property: (path, column, value) => {
+      const documentPath=data.path;
+      const request=propertyQueue.catch(()=>{}).then(()=>{
+        if(data.path!==documentPath)throw Error('The Base was closed before this edit could be saved.');
+        const file=data.files.find(file=>file.path===path);
+        const next=typeof value==='function'?value(noteRecord(file).note[noteProperty(column)]):value;
+        return writeProperty(path,updateNoteProperty(file?.text,column,next));
+      });
+      propertyQueue=request;return request;
     },
     get busy() { return pending.size > 0; }
   };
@@ -146,7 +155,14 @@ window.crowObsidian = {
     if (item.options.render !== false) render();
   },
   asset(id, value) {
-    const item = assets.get(id); if (!item) return; assets.delete(id);
+    const item = assets.get(id); if (!item) return;
+    if(value.pending==='true' && item.retries++ < 45){
+      applyAsset(item,value);
+      setTimeout(()=>{if(assets.get(id)===item)send({...item.request,id});},Math.min(4000,700+item.retries*200));
+      return;
+    }
+    assets.delete(id);
+    if(value.pending==='true')value={error:'iCloud download is still pending. Refresh to try again.'};
     if (!value.error) { cache.set(item.key, value); if (cache.size > 64) cache.delete(cache.keys().next().value); }
     applyAsset(item, value);
   }

@@ -146,7 +146,7 @@ public enum TmuxCommand {
     public static func kill(id: String) throws -> String { prefix + "tmux kill-session -t " + (try target(id)) }
     public static func attach(id: String) throws -> String { try attach(.init(sessionID: id)) }
     public static func attach(_ location: TmuxLocation) throws -> String {
-        let commands = try selectionCommands(location) + ["exec tmux -u attach-session -t " + target(location.sessionID)]
+        let commands = try selectionCommands(location) + ["exec tmux -u -T sync attach-session -t " + target(location.sessionID)]
         return prefix + commands.joined(separator: " && ")
     }
     public static func select(_ location: TmuxLocation) throws -> String {

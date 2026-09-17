@@ -30,6 +30,28 @@ extension AppModel {
         }
     }
 
+    func orderedWorkspaces(on hostID: HostID?) -> [WorkspaceState] {
+        let alphabetical = alphabetizedWorkspaces(on: hostID)
+        return alphabetical.enumerated().sorted {
+            let left = $0.element.snapshot.sortOrder ?? Int.max
+            let right = $1.element.snapshot.sortOrder ?? Int.max
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
+    }
+
+    @discardableResult func moveWorkspace(_ id: WorkspaceID, relativeTo targetID: WorkspaceID, after: Bool) -> Bool {
+        guard id != targetID, let source = states.first(where: { $0.id == id }),
+              let target = states.first(where: { $0.id == targetID }),
+              source.snapshot.workspace.hostID == target.snapshot.workspace.hostID else { return false }
+        var ordered = orderedWorkspaces(on: source.snapshot.workspace.hostID).filter { $0.id != id }
+        guard let index = ordered.firstIndex(where: { $0.id == targetID }) else { return false }
+        source.snapshot.isPinned = target.snapshot.isPinned
+        ordered.insert(source, at: index + (after ? 1 : 0))
+        for (rank, state) in ordered.enumerated() { state.snapshot.sortOrder = rank }
+        schedulePersist()
+        return true
+    }
+
     func recordHostConnection(_ id: HostID) {
         guard let index = hosts.firstIndex(where: { $0.id == id }) else { return }
         hosts[index].lastConnectedAt = Date()

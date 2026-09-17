@@ -86,6 +86,13 @@ import CrowCore
         let remote = WorkspaceState(.init(workspace: Workspace(name: "Remote", kind: .remote(hostID: host.id, path: root.path), connection: .connected), rootPath: root.path))
         remote.systemSSH = SystemSSHSpec(host: host, socket: socket, arguments: [], directory: root.path)
         try await verifyPage(in: remote, port: httpPort, forwarded: true)
+        let noteFolder = root.appendingPathComponent("Notes")
+        try FileManager.default.createDirectory(at: noteFolder, withIntermediateDirectories: true)
+        for index in 0..<32 { try Data("---\nnumber: \(index)\n---\nBody\n".utf8).write(to: noteFolder.appendingPathComponent("Note-\(index).md")) }
+        let systemFiles = RemoteConnection()
+        try systemFiles.attach(try XCTUnwrap(remote.systemSSH)); remote.remote = systemFiles
+        try await verifyInventory(in: remote)
+        await systemFiles.disconnect(); remote.remote = nil
         remote.systemSSH = nil
 
         let credential = HostCredential(privateKey: try String(contentsOfFile: userKey, encoding: .utf8))
@@ -99,6 +106,7 @@ import CrowCore
         defer { Task { await connection.disconnect() } }
         try await verifyPage(in: remote, port: httpPort, forwarded: true)
         XCTAssertTrue(connection.isConnected, "Closing a browser must preserve SSH/SFTP")
+        try await verifyInventory(in: remote)
 
         remote.remote = nil
         let blocked = BrowserSession(workspace: remote, address: "")
@@ -107,6 +115,13 @@ import CrowCore
         for _ in 0..<100 where blocked.error == nil { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertNotNil(blocked.error, "Disconnected SSH must never fall back to this device's localhost")
         XCTAssertGreaterThan(blocked.tunnel.acceptedConnections, 0)
+    }
+
+    private func verifyInventory(in state: WorkspaceState) async throws {
+        let (files, warning) = try await ObsidianFiles.inventory(in: state)
+        let notes = files.filter { ($0["path"] as? String)?.hasPrefix("Notes/Note-") == true }
+        XCTAssertEqual(notes.count, 32, warning ?? "")
+        XCTAssertTrue(notes.allSatisfy { ($0["text"] as? String)?.contains("number:") == true })
     }
 
     private func verifyPage(in state: WorkspaceState, port: String, forwarded: Bool) async throws {
@@ -133,6 +148,47 @@ import CrowCore
             XCTAssertEqual(blocked, true, "Hard-coded loopback subresources must not reach this device")
         }
         else { XCTAssertEqual(session.tunnel.acceptedConnections, 0) }
+        XCTAssertTrue(web.configuration.websiteDataStore.isPersistent, "Authentication cookies must survive browser recreation")
+        let openerURL = web.url
+        let opened = try await web.evaluateJavaScript("""
+            window.addEventListener('message', e => document.body.dataset.popupMessage = e.data);
+            window.fixturePopup = window.open('about:blank', '_blank');
+            !!window.fixturePopup;
+            """) as? Bool
+        XCTAssertEqual(opened, true, "window.open must return a real browsing context")
+        let popup = try XCTUnwrap(session.popups.last)
+        let popupWeb = try XCTUnwrap(popup.webView)
+        XCTAssertTrue(popup.tunnel === session.tunnel)
+        XCTAssertEqual(web.url, openerURL, "Opening a popup must preserve the original page")
+        _ = try await popupWeb.evaluateJavaScript("window.opener.postMessage('popup-ok', '*')")
+        var message = ""
+        for _ in 0..<50 {
+            message = (try? await web.evaluateJavaScript("document.body.dataset.popupMessage || ''")) as? String ?? ""
+            if message == "popup-ok" { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(message, "popup-ok")
+        _ = try await web.evaluateJavaScript("""
+            const form = document.createElement('form');
+            form.method = 'POST'; form.action = '/popup'; form.target = 'post-popup';
+            const field = document.createElement('input'); field.name = 'token'; field.value = 'popup-token';
+            form.append(field); document.body.append(form); form.submit();
+            """)
+        for _ in 0..<100 where session.popups.count < 2 { try await Task.sleep(for: .milliseconds(50)) }
+        let postPopup = try XCTUnwrap(session.popups.last)
+        let postWeb = try XCTUnwrap(postPopup.webView)
+        var posted = ""
+        for _ in 0..<100 {
+            posted = (try? await postWeb.evaluateJavaScript("document.body?.textContent || ''")) as? String ?? ""
+            if posted.contains("token=popup-token") { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(posted.contains("token=popup-token"), "Popup POST body must be preserved: \(posted)")
+        postPopup.onClose?()
+        _ = try await popupWeb.evaluateJavaScript("window.close()")
+        for _ in 0..<50 where !session.popups.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(session.popups.isEmpty)
+        if forwarded { XCTAssertFalse(session.tunnel.localPorts.isEmpty, "Closing a popup must preserve its opener's SSH tunnels") }
         let reviewRoot = FileManager.default.temporaryDirectory.appendingPathComponent("crow-browser-ui-" + UUID().uuidString)
         let model = AppModel(vaultURL: reviewRoot)
         defer { model.shutdown(); try? FileManager.default.removeItem(at: reviewRoot) }

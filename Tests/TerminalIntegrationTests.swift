@@ -66,6 +66,165 @@ final class TerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(view.getSelection(), "Stable")
     }
 
+    @MainActor func testHangulCompositionFollowsEchoWithoutCoveringSyllable() throws {
+        for local in [true, false] {
+            let session = TerminalSession(id: UUID(), workspace: Workspace(name: "IME",
+                kind: local ? .local : .remote(hostID: HostID(), path: "/tmp"), connection: local ? .local : .connected),
+                directory: "/tmp", remote: nil, fontSize: 16)
+            defer { session.stop() }
+            let view = session.view
+            let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = view
+            try view.setUseMetal(false) // Bitmap checks exercise the supported CPU fallback.
+            defer { window.close() }
+            view.feedProcessOutput(Array("$ ".utf8)[...])
+            let originalColor = view.caretColor
+            let range = NSRange(location: NSNotFound, length: 0)
+            view.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: range)
+            let composition = try XCTUnwrap((view as? any MarkedTextTerminal)?.composition)
+            let initial = try XCTUnwrap(composition.rect)
+            XCTAssertEqual(view.caretColor, .clear)
+            // The prior syllable's echo arrives after the next composition starts.
+            view.feedProcessOutput(Array("국".utf8)[...])
+            let advanced = try XCTUnwrap(composition.rect)
+            XCTAssertGreaterThan(advanced.minX, initial.minX)
+            XCTAssertEqual(view.caretColor, .clear)
+            if local, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/crow-ime-review.png"))
+            }
+            view.unmarkText()
+            XCTAssertNil(composition.rect); XCTAssertEqual(view.caretColor, originalColor)
+            XCTAssertFalse(view.hasMarkedText())
+        }
+    }
+
+    @MainActor func testModifiedArrowsReachTerminalBeforeSwiftUIFocusNavigation() throws {
+        for local in [true, false] {
+            let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Keys",
+                kind: local ? .local : .remote(hostID: HostID(), path: "/tmp"), connection: local ? .local : .connected),
+                directory: "/tmp", remote: nil, fontSize: 16)
+            defer { session.stop() }
+            var sent: [UInt8] = []; session.onBytes = { sent += $0 }
+            for mode in ["", "\u{1b}[>1u"] {
+                session.view.feed(text: mode)
+                for (code, scalar, suffix) in [(UInt16(123), 0xf702, "D"), (124, 0xf703, "C"), (125, 0xf701, "B"), (126, 0xf700, "A")] {
+                    let text = String(UnicodeScalar(scalar)!)
+                    let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                        modifierFlags: [.shift, .numericPad, .function], timestamp: 0, windowNumber: 0,
+                        context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
+                    sent = []
+                    XCTAssertTrue(session.handleTerminalKey(event))
+                    XCTAssertEqual(String(decoding: sent, as: UTF8.self), "\u{1b}[1;2" + suffix)
+                }
+            }
+        }
+    }
+
+    @MainActor func testTerminalMetalRenderingCPUComparison() async throws {
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Rendering", kind: .local, connection: .local),
+            directory: "/tmp", remote: nil, fontSize: 14)
+        defer { session.stop() }
+        let view = session.view
+        view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderBack(nil)
+        defer { window.close() }
+        let terminal = view.getTerminal()
+        for row in 1..<terminal.rows {
+            view.feed(text: "\u{1b}[\(row);1H\u{1b}[\(31 + row % 7)m" + String(repeating: "Rendering text ", count: 12))
+        }
+        func cpuTime() -> Double {
+            var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        for metal in [false, true] {
+            try view.setUseMetal(metal)
+            XCTAssertEqual(view.isUsingMetalRenderer, metal)
+            try await Task.sleep(for: .milliseconds(100))
+            let started = cpuTime()
+            for frame in 0..<90 {
+                view.feed(text: "\u{1b}[2;1H\u{1b}[0mWorking \(frame)   ")
+                try await Task.sleep(for: .milliseconds(17))
+                window.displayIfNeeded()
+            }
+            print("CROW_RENDER_CPU metal=\(metal) seconds=\(cpuTime() - started)")
+            if metal { XCTAssertGreaterThan(view.metalRendererStatus.presentedFrameCount, 0) }
+        }
+    }
+
+    @MainActor func testControlShortcutsWithKoreanInputSource() throws {
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Keys", kind: .local, connection: .local),
+            directory: "/tmp", remote: nil, fontSize: 16)
+        defer { session.stop() }
+        var sent: [UInt8] = []
+        session.onBytes = { sent += $0 }
+        for (code, korean, expected) in [(UInt16(0), "ㅁ", UInt8(1)), (8, "ㅊ", 3), (2, "ㅇ", 4),
+                                        (14, "ㄷ", 5), (3, "ㄹ", 6), (37, "ㅣ", 12), (40, "ㅏ", 11), (35, "ㅔ", 16), (6, "ㅋ", 26)] {
+            for flags in [NSEvent.ModifierFlags.control, [.control, .shift]] {
+                let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                    timestamp: 0, windowNumber: 0, context: nil, characters: korean, charactersIgnoringModifiers: korean,
+                    isARepeat: false, keyCode: code))
+                sent = []
+                XCTAssertTrue(session.handleTerminalKey(event))
+                XCTAssertEqual(sent, [expected])
+            }
+        }
+    }
+
+    @MainActor func testDefaultTmuxPrefixAndCommandsWithKoreanInputSource() async throws {
+        let tmux = "/opt/homebrew/bin/tmux"
+        guard FileManager.default.isExecutableFile(atPath: tmux) else { throw XCTSkip("tmux is not installed") }
+        let socket = "crow-keys-" + UUID().uuidString
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(socket)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        func run(_ arguments: [String]) throws -> String {
+            let process = Process(), pipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: tmux)
+            process.arguments = ["-L", socket] + arguments
+            process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            return String(decoding: data, as: UTF8.self)
+        }
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "tmux", kind: .local, connection: .local),
+            directory: root.path, remote: nil, fontSize: 16)
+        defer { session.stop(); _ = try? run(["kill-server"]); try? FileManager.default.removeItem(at: root) }
+        session.shellEnvironment = ["PATH=/usr/bin:/bin:/opt/homebrew/bin", "ZDOTDIR=" + root.path, "TERM=xterm-256color"]
+        session.launchCommand = "exec " + tmux + " -T sync -L " + socket + " -f /dev/null new-session -s fixture /bin/sh"
+        session.tmuxLocation = .init(sessionID: "$0")
+        session.start()
+        for _ in 0..<100 {
+            if !(try run(["list-clients"])).isEmpty { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        func key(_ code: UInt16, _ text: String, _ flags: NSEvent.ModifierFlags = []) throws {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                timestamp: 0, windowNumber: 0, context: nil, characters: text, charactersIgnoringModifiers: text,
+                isARepeat: false, keyCode: code))
+            XCTAssertTrue(session.handleTerminalKey(event))
+        }
+        let features = try run(["list-clients", "-F", "#{client_termfeatures}"])
+        XCTAssertTrue(features.contains("sync"), "Crow tmux clients must negotiate synchronized output")
+        try key(11, "ㅠ", .control); try key(8, "ㅊ")
+        var windows = ""
+        for _ in 0..<100 {
+            windows = try run(["list-windows", "-F", "#{window_id}"])
+            if windows.split(separator: "\n").count == 2 { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        XCTAssertEqual(windows.split(separator: "\n").count, 2)
+        try key(11, "b", .control); try key(23, "%", .shift)
+        var panes = ""
+        for _ in 0..<100 {
+            panes = try run(["list-panes", "-F", "#{pane_id}"])
+            if panes.split(separator: "\n").count == 2 { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        XCTAssertEqual(panes.split(separator: "\n").count, 2)
+    }
+
     @MainActor func testRealShellInputResizeAndWorkspaceRetention() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("crow-pty-" + UUID().uuidString)
         let model = AppModel(vaultURL: directory)

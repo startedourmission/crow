@@ -63,24 +63,25 @@ svg{width:16px;height:16px;flex:none}
 .base-search{font-size:12px;width:180px;max-width:65%;padding:5px 8px!important;background:#f8f9fb!important}
 .base-body{flex:1;min-height:0;overflow:auto}
 .table{min-width:100%;overflow:visible}
-.table table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+.table table{table-layout:fixed;border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
 .table th{position:sticky;top:0;z-index:2;text-align:left;padding:0;background:#f6f7f9;border-bottom:1px solid #dfe4ec;color:#6d7786;font-size:11px;font-weight:500}
 .table th button{border:0;border-radius:0;width:100%;text-align:left;background:none;padding:9px 12px;white-space:nowrap}
-.table td{position:relative;min-width:135px;max-width:480px;padding:9px 12px;border-bottom:1px solid #edf0f4;border-right:1px solid #f2f4f7;vertical-align:top;overflow-wrap:anywhere}
+.table td{position:relative;min-width:0;overflow:hidden;padding:9px 12px;border-bottom:1px solid #edf0f4;border-right:1px solid #f2f4f7;vertical-align:top;overflow-wrap:anywhere}
 .table tr:hover td{background:#fafbfd}.table td:focus{outline:1px solid var(--accent);outline-offset:-1px}
 .file-link{border:0;background:transparent!important;color:var(--accent);padding:0;text-align:left;white-space:normal;font:inherit}
 .note-link{font-weight:500}.file-link:hover{text-decoration:underline}
 .cell-value{display:inline;line-height:1.5}.tag{display:inline-block;border-radius:4px;background:#eef1f6;color:#617188;padding:1px 5px;margin:1px 3px 1px 0;font-size:11px}
-.editable-cell{position:relative;padding-right:30px!important}
-.cell-edit-trigger{position:absolute;right:3px;top:4px;opacity:0;width:24px;min-width:24px;height:24px;color:#8492a5}
-.editable-cell:hover>.cell-edit-trigger,.editable-cell:focus-within>.cell-edit-trigger{opacity:1}
-.property-editor{min-width:190px;display:flex;flex-direction:column;gap:5px;position:relative;z-index:3}
-.property-editor>input:not([type=checkbox]),.property-editor>textarea{width:100%;font-size:12px}
-.property-editor>textarea{min-height:74px;resize:vertical}
-.property-editor-actions{display:flex;gap:4px;align-items:center}
-.property-editor-actions select{font-size:10px;padding:3px;max-width:100px;margin-right:auto}
-.property-editor-actions button{font-size:10px;padding:3px 6px}
-.property-editor.saving{opacity:.5;pointer-events:none}
+.editable-cell{position:relative}
+.cell-field{display:flex;align-items:center;min-width:0;gap:3px;max-width:100%}
+.cell-input{font:inherit!important;line-height:1.5!important;border:0!important;background:transparent!important;border-radius:0!important;padding:0!important;min-width:0;width:100%;outline:none;color:inherit}
+.cell-input:is(textarea){resize:vertical;min-height:1.5em}
+.cell-input:focus{box-shadow:0 1px var(--accent)}
+.cell-input.saving{opacity:.65}
+.cell-list{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
+.cell-list .cell-input{width:auto;max-width:100%}
+.property-link{color:var(--accent);text-decoration:none;flex-shrink:0;font-size:12px}
+.column-resize{position:absolute;right:-3px;top:0;bottom:0;width:7px;cursor:col-resize;touch-action:none;z-index:4}
+.column-resize:hover,.column-resize:focus{background:var(--accent);outline:none;opacity:.6}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;padding:12px}
 .base-item{border:1px solid #e2e7ee;border-radius:8px;background:#fff;padding:14px;box-shadow:0 2px 6px #22354b05;display:flex;flex-direction:column;gap:12px}
 .card-title{font-size:14px;font-weight:600}
@@ -103,6 +104,8 @@ dialog form{padding:16px;display:flex;flex-direction:column;gap:12px}
 .base-toolbar{gap:5px;min-height:44px;height:auto;flex-wrap:wrap;padding:6px 10px}
 .base-toolbar .view-select{max-width:200px;background:transparent;font-size:14px;font-weight:500}
 .base-count{white-space:nowrap;margin:0 8px;font-variant-numeric:tabular-nums}
+.base-results{display:inline-flex;align-items:center;min-width:0;max-width:100%}
+.base-cloud-hint{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;min-width:0}
 .base-toolbar .icon-button{font-size:13px;height:30px}
 .base-toolbar .active{color:var(--accent)}
 .base-toolbar .icon-button[aria-expanded=true]{background:#eeeef0}

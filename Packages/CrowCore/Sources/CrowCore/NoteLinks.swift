@@ -1,7 +1,49 @@
 import Foundation
 
-/// Bounded, on-demand note linking. No database, embeddings or background watcher.
+/// Workspace-scoped note linking and a lightweight completion catalog.
 public enum NoteLinks {
+    public struct Catalog: Equatable, Sendable {
+        public private(set) var paths: [String] = []
+        private var tagsByPath: [String: Set<String>] = [:]
+        public var tags: [String] { Set(tagsByPath.values.flatMap { $0 }).sorted() }
+        public init() {}
+        public init(notes: [String: String], paths: [String] = []) {
+            self.paths = Array(Set(paths + Array(notes.keys))).sorted()
+            for (path, text) in notes { tagsByPath[path] = NoteLinks.tags(in: text) }
+        }
+        public mutating func update(path: String, text: String) {
+            if !paths.contains(path) { paths.append(path); paths.sort() }
+            tagsByPath[path] = NoteLinks.tags(in: text)
+        }
+    }
+    private static let tagPattern = try! NSRegularExpression(pattern: #"(?:^|\s)#([\p{L}\p{N}_/-]+)"#)
+    public static func tags(in text: String) -> Set<String> {
+        var tags = Set<String>(), frontmatter = false, tagList = false, fence: Character?
+        func collect(_ value: String) {
+            let tag = value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\"'[]#"))
+            if !tag.isEmpty, tag.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_/-")).contains($0) }) { tags.insert(tag) }
+        }
+        for (index, raw) in text.components(separatedBy: .newlines).enumerated() {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if index == 0 && line.trimmingCharacters(in: CharacterSet(charactersIn: "\u{FEFF}")) == "---" { frontmatter = true; continue }
+            if frontmatter {
+                if line == "---" { frontmatter = false; continue }
+                if line.hasPrefix("tags:") {
+                    let value = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                    tagList = value.isEmpty
+                    if value.hasPrefix("[") { value.dropFirst().dropLast().split(separator: ",").forEach { collect(String($0)) } }
+                    else if !value.hasPrefix("#") { collect(value) }
+                } else if tagList && line.hasPrefix("- ") { collect(String(line.dropFirst(2))) }
+                else if !line.isEmpty && !line.hasPrefix("#") { tagList = false }
+                continue
+            }
+            if line.hasPrefix("```") || line.hasPrefix("~~~") { if fence == line.first { fence = nil } else if fence == nil { fence = line.first }; continue }
+            if fence != nil { continue }
+            let plain = code.stringByReplacingMatches(in: raw, range: NSRange(raw.startIndex..., in: raw), withTemplate: "")
+            for match in tagPattern.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) { collect((plain as NSString).substring(with: match.range(at: 1))) }
+        }
+        return tags
+    }
     private static let links = try! NSRegularExpression(pattern: #"(?<!!)\[\[([^\]\n]+)\]\]|(?<!!)\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"#)
     private static let code = try! NSRegularExpression(pattern: #"(`+).*?\1"#)
     public static func targets(in source: String) -> [String] {

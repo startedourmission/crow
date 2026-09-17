@@ -86,6 +86,7 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         agent.reverseHostID = host; agent.reverseServerDirectory = "/server/crow/session"
         state.snapshot.agentTerminals.append(agent)
         state.snapshot.terminalIDs.append(agent.id); state.snapshot.selectedTerminalID = agent.id
+        state.snapshot.layout?.open(.terminal(agent.id))
         let terminal = model.terminal(agent.id, in: state)
         terminal.view.feed(text: "\u{1b}]7;file://server/server/crow/session\u{7}")
         XCTAssertEqual(state.agentHistoryPath, "/client/workspace")
@@ -412,6 +413,40 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(state.explorer.rootPath, original)
     }
 
+    @MainActor func testDocumentFocusOverridesTmuxAndReverseAgentContext() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-document-context-" + UUID().uuidString)
+        let folder = root.appendingPathComponent("documents")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("note.md")
+        try "document".write(to: file, atomically: true, encoding: .utf8)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let state = model.current
+        model.newTerminal()
+        let terminalID = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let terminal = model.terminal(terminalID, in: state)
+        terminal.running = true; terminal.tmuxLocation = .init(sessionID: "$0", windowID: "@0", paneID: "%0")
+        state.tmuxContextDirectory = "/previous-agent"
+        terminal.tmuxCurrentDirectory = "/previous-agent"
+        model.openFile(.init(name: "note.md", path: file.path, isDirectory: false))
+        let pane = try XCTUnwrap(state.snapshot.layout?.activePane)
+        let tab = try XCTUnwrap(pane.selected)
+        model.selectTab(tab, in: pane.id)
+        XCTAssertNil(state.focusedTerminalID)
+        XCTAssertNil(state.selectedAgent)
+        XCTAssertEqual(state.agentHistoryPath, folder.path)
+        XCTAssertEqual(state.contextRootPath, root.path)
+        model.refreshFiles()
+        XCTAssertEqual(state.explorer.rootPath, root.path)
+        model.applyTmuxFocus(.init(location: terminal.tmuxLocation!, directory: "/stale-result"), in: state, terminalID: terminalID)
+        XCTAssertEqual(state.contextRootPath, root.path)
+        let source = try model.agentHistorySource(for: state)
+        XCTAssertTrue(source.0 === state); XCTAssertEqual(source.1, folder.path)
+        model.selectTab(.terminal(terminalID), in: pane.id)
+        XCTAssertEqual(state.agentHistoryPath, "/previous-agent")
+        XCTAssertEqual(state.snapshot.rootPath, root.path)
+    }
+
     @MainActor func testTmuxPanelDoesNotInterceptClicksForWindowDragging() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-hit-test-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
@@ -692,6 +727,35 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         model.recordHostConnection(older.id)
         XCTAssertEqual(model.workspaceHostIDs, [older.id, newer.id])
         XCTAssertEqual(model.alphabetizedWorkspaces(on: older.id).map { $0.snapshot.workspace.name }, ["alpha", "Beta", "Zebra"])
+    }
+
+    @MainActor func testWorkspaceDragOrderPersistsAndStaysWithinHost() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reorder-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let first = model.current; first.snapshot.workspace.name = "Alpha"
+        let second = WorkspaceState(.init(workspace: Workspace(name: "Beta", kind: .local, connection: .local), rootPath: root.appendingPathComponent("Beta").path))
+        let third = WorkspaceState(.init(workspace: Workspace(name: "Gamma", kind: .local, connection: .local), rootPath: root.appendingPathComponent("Gamma").path))
+        model.states += [second, third]
+        XCTAssertEqual(model.orderedWorkspaces(on: nil).map(\.id), [first.id, second.id, third.id])
+        XCTAssertTrue(model.moveWorkspace(third.id, relativeTo: first.id, after: false))
+        XCTAssertEqual(model.orderedWorkspaces(on: nil).map(\.id), [third.id, first.id, second.id])
+        model.workspaceSearch = "Beta"
+        XCTAssertTrue(model.moveWorkspace(third.id, relativeTo: second.id, after: true))
+        XCTAssertEqual(model.orderedWorkspaces(on: nil).map(\.id), [first.id, second.id, third.id])
+        model.pinWorkspace(first.id)
+        XCTAssertTrue(model.moveWorkspace(third.id, relativeTo: first.id, after: false))
+        XCTAssertTrue(third.snapshot.isPinned)
+        let hostID = HostID()
+        let remote = WorkspaceState(.init(workspace: Workspace(name: "Remote", kind: .remote(hostID: hostID, path: "/tmp"), connection: .disconnected), rootPath: "/tmp"))
+        model.states.append(remote)
+        XCTAssertFalse(model.moveWorkspace(third.id, relativeTo: remote.id, after: true))
+        XCTAssertFalse(model.moveWorkspace(first.id, relativeTo: first.id, after: false))
+        model.persist()
+        let restored = AppModel(vaultURL: root); defer { restored.shutdown() }
+        XCTAssertEqual(restored.orderedWorkspaces(on: nil).map(\.id), [third.id, first.id, second.id])
+        XCTAssertTrue(try XCTUnwrap(restored.states.first { $0.id == third.id }).snapshot.isPinned)
+        XCTAssertEqual(restored.orderedWorkspaces(on: hostID).map(\.id), [remote.id])
     }
 
     @MainActor func testUnifiedTmuxRoutingNeverFallsBackToAnotherHost() throws {

@@ -165,7 +165,7 @@ final class AgentTerminalTests: XCTestCase {
         XCTAssertTrue(focus.contains("has-session -t '$0' && tmux select-window -t '$0:@2' && tmux select-pane -t '%5'"))
         XCTAssertFalse(focus.contains("attach-session"))
         let command = try TmuxCommand.attach(location)
-        XCTAssertTrue(command.contains("select-window -t '$0:@2' && tmux select-pane -t '%5' && exec tmux -u attach-session"))
+        XCTAssertTrue(command.contains("select-window -t '$0:@2' && tmux select-pane -t '%5' && exec tmux -u -T sync attach-session"))
         XCTAssertTrue(try TmuxCommand.killWindow(sessionID: "$0", windowID: "@2").hasSuffix("kill-window -t '$0:@2'"))
         XCTAssertTrue(try TmuxCommand.killPane(id: "%5").hasSuffix("kill-pane -t '%5'"))
         XCTAssertThrowsError(try TmuxCommand.killPane(id: "%5; kill-server"))

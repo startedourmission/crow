@@ -67,6 +67,9 @@ struct ImagePasteStatusView: View {
         defer { allowMouseReporting = reporting }
         #endif
         feed(byteArray: bytes)
+        #if os(macOS)
+        (self as? any MarkedTextTerminal)?.composition.update(in: self)
+        #endif
     }
 
     func pasteLiteralText(_ text: String) {
@@ -75,3 +78,59 @@ struct ImagePasteStatusView: View {
         send(data: Array(bytes.utf8)[...])
     }
 }
+
+#if os(macOS)
+@MainActor protocol MarkedTextTerminal: AnyObject {
+    var composition: TerminalComposition { get }
+}
+
+/// SwiftTerm anchors its marked text to the last painted caret. Reposition the
+/// native preview from the current buffer after each echo, and keep the block
+/// caret from being reinserted above the composing syllable by output updates.
+@MainActor final class TerminalComposition {
+    private var caretColor: NSColor?
+    private var caretTextColor: NSColor?
+    private(set) var rect: NSRect?
+
+    func update(in view: SwiftTerm.TerminalView) {
+        guard view.hasMarkedText() else { clear(in: view); return }
+        guard let overlay = view.subviews.compactMap({ $0 as? NSTextView }).first,
+              let container = overlay.textContainer, let layout = overlay.layoutManager,
+              let pixels = view.cellSizeInPixels(source: view.getTerminal()) else { return }
+        if caretColor == nil {
+            caretColor = view.caretColor; caretTextColor = view.caretTextColor
+            view.caretColor = .clear; view.caretTextColor = .clear
+        }
+        let scale = view.window?.backingScaleFactor ?? 1
+        let cell = NSSize(width: CGFloat(pixels.width) / scale, height: CGFloat(pixels.height) / scale)
+        let terminal = view.getTerminal(), cursor = terminal.getCursorLocation()
+        let wrapped = cursor.x >= terminal.cols
+        let x = max(4, CGFloat(wrapped ? 0 : cursor.x) * cell.width)
+        let y = view.bounds.height - CGFloat(cursor.y + (wrapped ? 2 : 1)) * cell.height
+        container.exclusionPaths = x > 4
+            ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: x - 4, height: cell.height + 1))] : []
+        if let storage = overlay.textStorage {
+            storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
+                range: NSRange(location: 0, length: storage.length))
+        }
+        layout.ensureLayout(for: container)
+        let height = max(cell.height, layout.usedRect(for: container).height)
+        overlay.frame.origin = NSPoint(x: 4, y: y + cell.height - height)
+        overlay.frame.size.height = height
+        rect = NSRect(x: x, y: y, width: cell.width, height: cell.height)
+        view.inputContext?.invalidateCharacterCoordinates()
+    }
+
+    func clear(in view: SwiftTerm.TerminalView) {
+        if let caretColor {
+            view.caretColor = caretColor; view.caretTextColor = caretTextColor
+        }
+        caretColor = nil; caretTextColor = nil; rect = nil
+    }
+
+    func screenRect(in view: SwiftTerm.TerminalView) -> NSRect? {
+        guard let rect, let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(rect, to: nil))
+    }
+}
+#endif

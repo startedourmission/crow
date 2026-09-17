@@ -76,6 +76,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var systemSSH: SystemSSHSpec?
     var shellEnvironment: [String]?
     @ObservationIgnored private var imageKeyMonitor: Any?
+    @ObservationIgnored private var awaitingTmuxCommand = false
     private var stoppingProcessID: pid_t?
     #endif
     private var shellTask: Task<Void, Never>?
@@ -117,6 +118,36 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         view.terminalDelegate = self
     }
 
+    #if os(macOS)
+    /// Control chords must not disappear when charactersIgnoringModifiers is Hangul.
+    @discardableResult func handleTerminalKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.control, .option, .command, .shift])
+        let key = MacTerminalKeys.character(event)
+        if flags == .control, key?.lowercased() == "v", pasteClipboardImage() { return true }
+        if tmuxLocation != nil, flags == .control, key?.lowercased() == "b" {
+            view.send(data: [2][...]); awaitingTmuxCommand.toggle(); return true
+        }
+        if awaitingTmuxCommand {
+            awaitingTmuxCommand = false
+            if flags.isSubset(of: [.shift]), let key {
+                view.send(txt: key); return true
+            }
+        }
+        if flags.contains(.control), !flags.contains(.command), !flags.contains(.option),
+           event.charactersIgnoringModifiers?.utf8.count != 1,
+           let byte = key?.lowercased().utf8.first, (97...122).contains(byte) {
+            view.send(data: [byte - 96][...]); return true
+        }
+        // SwiftUI focus navigation can consume modified arrows before keyDown
+        // reaches the embedded NSView. Deliver them here while preserving the
+        // keyboard protocol negotiated by Codex/tmux (including Kitty events).
+        if !flags.contains(.command), !flags.isEmpty, [UInt16(123), 124, 125, 126].contains(event.keyCode) {
+            view.keyDown(with: event); return true
+        }
+        return false
+    }
+    #endif
+
     func setFontSize(_ size: Double) {
         guard appliedFontSize != size else { return }
         appliedFontSize = size
@@ -136,10 +167,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         startActivityTracking()
         #if os(macOS)
         imageKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.view.window?.firstResponder === self.view,
-                  event.modifierFlags.intersection([.control, .option, .command, .shift]) == .control,
-                  event.charactersIgnoringModifiers?.lowercased() == "v" else { return event }
-            return self.pasteClipboardImage() ? nil : event
+            guard let self, self.view.window?.firstResponder === self.view else { return event }
+            return self.handleTerminalKey(event) ? nil : event
         }
         if let systemSSH, let local = view as? CrowLocalTerminalView {
             let args: [String]
@@ -376,8 +405,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     @discardableResult func pasteImage(_ data: Data) -> Bool {
         guard let context = imagePasteContext?(), let uploadImage else { return false }
         guard !imagePasteInProgress else { return true }
-        guard running else { imagePasteMessage = "Wait for the SSH terminal to connect before pasting an image."; return true }
-        imagePasteInProgress = true; imagePasteMessage = "Uploading clipboard image…"
+        guard running else { imagePasteMessage = "Wait for the terminal to connect before pasting an image."; return true }
+        imagePasteInProgress = true; imagePasteMessage = "Saving clipboard image…"
         imagePasteTask = Task { [weak self] in
             defer { self?.imagePasteInProgress = false; self?.imagePasteTask = nil }
             do {
@@ -389,7 +418,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                     return
                 }
                 self.view.pasteLiteralText(ClipboardImage.pastedPath(path))
-                self.imagePasteMessage = "Image uploaded: \(path)"
+                self.imagePasteMessage = "Image ready: \(path)"
             } catch {
                 if !Task.isCancelled { self?.imagePasteMessage = "Image paste failed: \(error.localizedDescription)" }
             }
@@ -519,12 +548,54 @@ class CrowIOSTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, SnippetIn
 #endif
 
 #if os(macOS)
-private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal {
+private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, MarkedTextTerminal {
+    let composition = TerminalComposition()
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        composition.update(in: self)
+    }
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        composition.clear(in: self)
+        super.insertText(string, replacementRange: replacementRange)
+    }
+    override func unmarkText() {
+        composition.clear(in: self); super.unmarkText()
+    }
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        if let rect = composition.screenRect(in: self) { actualRange?.pointee = range; return rect }
+        return super.firstRect(forCharacterRange: range, actualRange: actualRange)
+    }
+
     var onImagePaste: (() -> Bool)?
+    override func paste(_ sender: Any) {
+        if onImagePaste?() == true { return }
+        super.paste(sender)
+    }
 }
 
-private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteTerminal {
+private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteTerminal, MarkedTextTerminal {
+    let composition = TerminalComposition()
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        composition.update(in: self)
+    }
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        composition.clear(in: self)
+        super.insertText(string, replacementRange: replacementRange)
+    }
+    override func unmarkText() {
+        composition.clear(in: self); super.unmarkText()
+    }
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        if let rect = composition.screenRect(in: self) { actualRange?.pointee = range; return rect }
+        return super.firstRect(forCharacterRange: range, actualRange: actualRange)
+    }
+
     var onImagePaste: (() -> Bool)?
+    override func paste(_ sender: Any) {
+        if onImagePaste?() == true { return }
+        super.paste(sender)
+    }
     var onInput: (@MainActor ([UInt8]) -> Void)?
     var onOutput: (@MainActor () -> Void)?
     override func dataReceived(slice: ArraySlice<UInt8>) {

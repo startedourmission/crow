@@ -38,13 +38,13 @@ extension AppModel {
 
     var tmuxContextTrackingID: String {
         let state = current
-        let session = state.snapshot.selectedTerminalID.flatMap { state.terminals[$0] }
+        let session = state.focusedTerminalID.flatMap { state.terminals[$0] }
         return "\(state.id)-\(state.terminalGeneration)-\(session?.id.uuidString ?? "")-\(session?.tmuxLocation?.sessionID ?? "")-\(session?.running == true)"
     }
 
     func followTmuxContext() async {
         let state = current
-        guard let id = state.snapshot.selectedTerminalID, let session = state.terminals[id],
+        guard let id = state.focusedTerminalID, let session = state.terminals[id],
               session.tmuxLocation != nil, session.running else {
             clearTmuxContext(in: state); return
         }
@@ -67,7 +67,7 @@ extension AppModel {
 
     func applyTmuxFocus(_ focus: TmuxFocus, in state: WorkspaceState, terminalID: UUID) {
         guard states.contains(where: { $0 === state }), selectedWorkspaceID == state.id,
-              state.snapshot.selectedTerminalID == terminalID, let session = state.terminals[terminalID],
+              state.focusedTerminalID == terminalID, let session = state.terminals[terminalID],
               session.running, session.tmuxLocation?.sessionID == focus.location.sessionID else { return }
         session.tmuxLocation = focus.location
         session.tmuxCurrentDirectory = focus.directory

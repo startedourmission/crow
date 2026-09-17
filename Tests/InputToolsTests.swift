@@ -6,6 +6,22 @@ import SwiftTerm
 import AppKit
 import SwiftUI
 
+@MainActor @Observable private final class FloatingSceneFixture {
+    var floating = false
+    let controller = FloatingWindowController()
+}
+
+private struct FloatingSceneTestView: View {
+    let model: AppModel
+    @Bindable var state: FloatingSceneFixture
+    var body: some View {
+        CrowRootView().environment(model).environment(\.crowFloatingMode, state.controller.modeBinding($state.floating))
+            .frame(minWidth: state.floating ? FloatingWindowController.minimumSize.width : 640,
+                   minHeight: state.floating ? FloatingWindowController.minimumSize.height : 400)
+            .background(WindowCloseGuard(model: model, floating: state.floating, floatingController: state.controller))
+    }
+}
+
 @MainActor private final class FloatingZoomTestWindow: NSWindow {
     var zoomRequests = 0
     var fullScreenRequests = 0
@@ -97,6 +113,30 @@ final class InputToolsTests: XCTestCase {
     }
 
     #if os(macOS)
+    @MainActor func testLocalTmuxImagePasteSavesReadableImageAndUsesBracketedPaste() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-local-image-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        model.newTerminal()
+        let id = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        let session = model.terminal(id, in: model.current)
+        session.tmuxLocation = .init(sessionID: "$0", windowID: "@0", paneID: "%0")
+        session.running = true
+        session.view.feed(text: "\u{1b}[?2004h")
+        var sent: [UInt8] = []
+        session.onBytes = { sent += $0 }
+        XCTAssertNotNil(session.imagePasteContext?(), "Local tmux must have an image destination")
+        XCTAssertTrue(session.pasteImage(Self.png))
+        for _ in 0..<100 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        let text = String(decoding: sent, as: UTF8.self)
+        XCTAssertTrue(text.hasPrefix("\u{1b}[200~")); XCTAssertTrue(text.hasSuffix(" \u{1b}[201~"))
+        let path = String(text.dropFirst(6).dropLast(7))
+        let file = URL(fileURLWithPath: path)
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        XCTAssertEqual(try Data(contentsOf: file), Self.png)
+        XCTAssertFalse(sent.contains(13)); XCTAssertFalse(sent.contains(10))
+    }
+
     @MainActor func testMacSnippetRestoresCapturedSelectionAndSupportsTerminal() throws {
         let editor = CodeTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 400))
         editor.isRichText = false; editor.allowsUndo = true; editor.string = "before after"
@@ -150,6 +190,57 @@ final class InputToolsTests: XCTestCase {
         XCTAssertEqual(window.frame.size, NSSize(width: 760, height: 620))
         controller.apply(false, to: window)
         XCTAssertEqual(window.frame, original)
+    }
+
+    @MainActor func testFloatingSceneRestoresRegularFrameAfterLayoutChanges() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-floating-restore-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root), state = FloatingSceneFixture()
+        let hosting = NSHostingView(rootView: FloatingSceneTestView(model: model, state: state))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1100, height: 750),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil)
+        defer { window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.layoutSubtreeIfNeeded()
+        let original = window.frame
+        for _ in 0..<2 {
+            state.controller.modeBinding(Binding(get: { state.floating }, set: { state.floating = $0 })).wrappedValue = true
+            try await Task.sleep(for: .milliseconds(150))
+            hosting.layoutSubtreeIfNeeded()
+            XCTAssertEqual(window.level, .floating)
+            window.setFrame(NSRect(x: 200, y: 200, width: 360, height: 300), display: true)
+            (window.delegate as? WindowCloseGuard.GuardView)?.windowDidEndLiveResize(Notification(name: NSWindow.didEndLiveResizeNotification, object: window))
+            state.controller.modeBinding(Binding(get: { state.floating }, set: { state.floating = $0 })).wrappedValue = false
+            try await Task.sleep(for: .milliseconds(150))
+            hosting.layoutSubtreeIfNeeded()
+            XCTAssertEqual(window.level, .normal)
+            XCTAssertEqual(window.frame, original, "Restoration must survive the SwiftUI content replacement")
+        }
+    }
+
+    @MainActor func testFloatingCapturesFrameBeforeContentResizesAndSurvivesGuardReplacement() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-floating-recreate-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root), controller = FloatingWindowController()
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1000, height: 700),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        window.contentView = WindowCloseGuard.GuardView(model: model, floatingController: controller)
+        let original = window.frame
+        var floating = false
+        let binding = controller.modeBinding(Binding(get: { floating }, set: { floating = $0 }))
+        binding.wrappedValue = true
+        // SwiftUI can apply the smaller content's size before updating its guard.
+        window.setFrame(NSRect(x: 300, y: 300, width: 420, height: 560), display: false)
+        let compactGuard = WindowCloseGuard.GuardView(model: model, floatingController: controller)
+        compactGuard.floating = true; window.contentView = compactGuard
+        binding.wrappedValue = false
+        window.contentView = WindowCloseGuard.GuardView(model: model, floatingController: controller)
+        // A trailing hosting-layout resize must not win over restoration.
+        window.setFrame(NSRect(x: 300, y: 300, width: 640, height: 400), display: false)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(window.frame, original)
+        XCTAssertEqual(window.level, .normal)
     }
 
     @MainActor func testFloatingGreenButtonZoomsWithoutEnteringFullScreen() throws {

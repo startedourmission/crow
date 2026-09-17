@@ -9,6 +9,7 @@ struct MarkdownPreviewView: View {
     var locationRequest: EditorLocationRequest?
     var onOpenLink: ((String) -> Void)?
     var noteLinksEnabled = false
+    var noteCatalog = NoteLinks.Catalog()
     @State private var failure: String?
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +18,7 @@ struct MarkdownPreviewView: View {
                 NativeEditor(text: $text, fontSize: fontSize, indentWidth: 4, lineNumbers: false,
                     findRequest: 0, onSave: onSave, locationRequest: locationRequest)
             } else {
-                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled)
+                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled, noteCatalog: noteCatalog)
             }
         }
     }
@@ -27,6 +28,7 @@ struct MarkdownPreviewView: View {
     var source: String?
     var onOpenLink: ((String) -> Void)?
     var noteLinksEnabled = false
+    var noteCatalog = NoteLinks.Catalog()
     var fontSize: Double?
     var text: Binding<String> = .constant("")
     var onSave: () -> Void = {}
@@ -39,6 +41,12 @@ struct MarkdownPreviewView: View {
     private var renderTask: Task<Void, Never>?
     private var renderID = UUID()
     private var rendering = false
+    private var publishedCatalog: NoteLinks.Catalog?
+    func publishCatalog(_ view: WKWebView) {
+        guard loaded, publishedCatalog != noteCatalog else { return }
+        publishedCatalog = noteCatalog
+        view.callAsyncJavaScript("window.crowMarkdown.setCatalog(catalog)", arguments: ["catalog": ["paths": noteCatalog.paths, "tags": noteCatalog.tags]], in: nil, in: .defaultClient) { _ in }
+    }
     func navigate(_ webView: WKWebView) {
         guard loaded, !rendering, let request = locationRequest, lastLocation != request.id, let heading = request.headingIndex else { return }
         lastLocation = request.id
@@ -48,7 +56,7 @@ struct MarkdownPreviewView: View {
             }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        loaded = true; render(webView)
+        loaded = true; publishCatalog(webView); render(webView)
     }
     func render(_ webView: WKWebView, force: Bool = false) {
         guard loaded else { return }
@@ -160,6 +168,7 @@ struct MarkdownPreviewView: View {
     var locationRequest: EditorLocationRequest?
     var onOpenLink: ((String) -> Void)?
     var noteLinksEnabled = false
+    var noteCatalog = NoteLinks.Catalog()
     func makeCoordinator() -> MarkdownNavigation { MarkdownNavigation() }
     func makeView(_ coordinator: MarkdownNavigation) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -179,6 +188,8 @@ struct MarkdownPreviewView: View {
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.fontSize = fontSize; coordinator.failure = $failure
         coordinator.locationRequest = locationRequest
         coordinator.onOpenLink = onOpenLink
+        coordinator.noteCatalog = noteCatalog
+        coordinator.publishCatalog(view)
         coordinator.noteLinksEnabled = noteLinksEnabled
         view.loadHTMLString(MarkdownPreview.document("", fontSize: fontSize), baseURL: nil)
         return view
@@ -188,6 +199,8 @@ struct MarkdownPreviewView: View {
         coordinator.locationRequest = locationRequest
         coordinator.onOpenLink = onOpenLink
         let linksChanged = coordinator.noteLinksEnabled != noteLinksEnabled
+        coordinator.noteCatalog = noteCatalog
+        coordinator.publishCatalog(view)
         coordinator.noteLinksEnabled = noteLinksEnabled
         guard coordinator.source != text || coordinator.fontSize != fontSize || linksChanged else { coordinator.navigate(view); return }
         coordinator.fontSize = fontSize
@@ -274,13 +287,18 @@ struct WorkspaceMarkdownView: View {
     @State private var loading = false
     @State private var warning: String?
     @State private var refresh = 0
-    private var scope: String { "\(buffer.id)-\(buffer.path)-\(model.settings.effectiveNoteLinksEnabled)-\(expanded)-\(refresh)" }
+    private var owner: WorkspaceState? { model.locate(buffer.id)?.0 }
+    private var linksEnabled: Bool { owner?.snapshot.isNoteVault == true || model.settings.effectiveNoteLinksEnabled }
+    private var scope: String { "\(buffer.id)-\(buffer.path)-\(linksEnabled)-\(expanded)-\(refresh)" }
     var body: some View {
         VStack(spacing: 0) {
             MarkdownPreviewView(text: $text, fontSize: model.settings.fontSize,
                 onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest,
-                onOpenLink: { model.openMarkdownLink($0, from: buffer.id) }, noteLinksEnabled: model.settings.effectiveNoteLinksEnabled)
-            if model.settings.effectiveNoteLinksEnabled {
+                onOpenLink: { model.openMarkdownLink($0, from: buffer.id) }, noteLinksEnabled: linksEnabled, noteCatalog: owner?.noteCatalog ?? .init())
+            if let status = owner?.noteIndexStatus, owner?.snapshot.isNoteVault == true {
+                Text(status).font(.caption).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 10)
+            }
+            if linksEnabled {
                 DisclosureGroup(isExpanded: $expanded) {
                     HStack {
                         if loading { ProgressView().controlSize(.small) }
@@ -304,8 +322,11 @@ struct WorkspaceMarkdownView: View {
                 .padding(10).background(CrowTheme.bg0).windowDragExcluded()
             }
         }
+        .task(id: "\(owner?.id.rawValue.uuidString ?? "")-\(owner?.snapshot.isNoteVault == true)-\(linksEnabled)") {
+            if linksEnabled, let owner { model.startNoteIndex(owner) }
+        }
         .task(id: scope) {
-            guard expanded, model.settings.effectiveNoteLinksEnabled, let (state, _) = model.locate(buffer.id) else { return }
+            guard expanded, linksEnabled, let (state, _) = model.locate(buffer.id) else { return }
             backlinks = []; warning = nil; loading = true
             do {
                 let root = state.snapshot.rootPath
@@ -325,7 +346,65 @@ struct WorkspaceMarkdownView: View {
 }
 
 extension AppModel {
-    func openMarkdownLink(_ value: String, from bufferID: BufferID) {
+    func setNoteVault(_ id: WorkspaceID, enabled: Bool) {
+        guard let state = states.first(where: { $0.id == id }) else { return }
+        state.snapshot.isNoteVault = enabled
+        if enabled { startNoteIndex(state, force: true) }
+        else { state.noteIndexGeneration = UUID(); state.noteIndexTask?.cancel(); state.noteIndexTask = nil; state.noteIndexRoot = nil; state.noteIndexStatus = nil; state.noteCatalog = .init() }
+        schedulePersist()
+    }
+    func startNoteIndex(_ state: WorkspaceState, force: Bool = false) {
+        guard state.noteIndexTask == nil, force || state.noteIndexRoot != state.snapshot.rootPath else { return }
+        let root = state.snapshot.rootPath, generation = UUID()
+        state.noteIndexGeneration = generation
+        state.noteIndexStatus = "Indexing notes…"
+        state.noteIndexTask = Task { [weak self, weak state] in
+            guard let self, let state else { return }
+            defer { if state.noteIndexGeneration == generation { state.noteIndexTask = nil } }
+            do {
+                if !state.snapshot.workspace.isRemote && state.noteCatalog.paths.isEmpty {
+                    let worker = Task.detached(priority: .utility) { () -> [String] in
+                        guard let entries = FileManager.default.enumerator(at: URL(fileURLWithPath: root), includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) else { return [] }
+                        var paths: [String] = []
+                        while let url = entries.nextObject() as? URL {
+                            if Task.isCancelled || paths.count >= 20000 { break }
+                            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]), values.isSymbolicLink != true else { continue }
+                            if values.isDirectory == true { if url.lastPathComponent == "node_modules" { entries.skipDescendants() }; continue }
+                            paths.append(url.pathComponents.suffix(entries.level).joined(separator: "/"))
+                        }
+                        return paths
+                    }
+                    let paths = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+                    try Task.checkCancellation()
+                    state.noteCatalog = .init(notes: [:], paths: paths)
+                }
+                let (files, warning) = try await ObsidianFiles.inventory(in: state, preferCached: !force) { files, _ in
+                    guard !Task.isCancelled else { return }
+                    let count = files.filter { $0["text"] is String }.count
+                    state.noteIndexStatus = "Indexing notes: \(count) read · \(files.count) files"
+                    let catalog = await self.noteCatalog(files, in: state)
+                    if !Task.isCancelled { state.noteCatalog = catalog }
+                }
+                let catalog = await self.noteCatalog(files, in: state)
+                guard !Task.isCancelled, state.snapshot.rootPath == root, self.states.contains(where: { $0 === state }) else { return }
+                state.noteCatalog = catalog; state.noteIndexRoot = root; state.noteIndexStatus = warning
+            } catch { if !Task.isCancelled { state.noteIndexStatus = error.localizedDescription } }
+        }
+    }
+    private func noteCatalog(_ files: [[String: Any]], in state: WorkspaceState) async -> NoteLinks.Catalog {
+        let root = state.snapshot.rootPath
+        var notes = Dictionary(uniqueKeysWithValues: files.compactMap { file -> (String, String)? in
+            guard let path = file["path"] as? String, let text = file["text"] as? String else { return nil }
+            return (path, text)
+        })
+        for buffer in state.snapshot.buffers where buffer.path.hasPrefix(root + "/") && !buffer.isImage {
+            notes[String(buffer.path.dropFirst(root.count + 1))] = buffer.text
+        }
+        let paths = files.compactMap { $0["path"] as? String }
+        let worker = Task.detached(priority: .utility) { NoteLinks.Catalog(notes: notes, paths: paths) }
+        return await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+    }
+    func openMarkdownLink(_ value: String, from bufferID: BufferID, allowWorkspaceLink: Bool = false) {
         guard let (state, index) = locate(bufferID) else { return }
         if let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             do { _ = try BrowserAddress.parse(value) } catch { report(error); return }
@@ -339,7 +418,7 @@ extension AppModel {
             #endif
             return
         }
-        guard settings.effectiveNoteLinksEnabled, URL(string: value)?.scheme == nil else { return }
+        guard allowWorkspaceLink || state.snapshot.isNoteVault || settings.effectiveNoteLinksEnabled, URL(string: value)?.scheme == nil else { return }
         let root = state.snapshot.rootPath, source = state.snapshot.buffers[index].path
         Task {
             do {

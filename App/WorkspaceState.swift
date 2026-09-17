@@ -7,14 +7,30 @@ final class WorkspaceState: Identifiable {
     var snapshot: WorkspaceSnapshot
     var files: [FileEntry] = []
     var isLoading = false
+    var noteCatalog = NoteLinks.Catalog()
+    var noteIndexStatus: String?
+    @ObservationIgnored var noteIndexTask: Task<Void, Never>?
+    @ObservationIgnored var noteIndexRoot: String?
+    @ObservationIgnored var noteIndexGeneration = UUID()
     let explorer: FileExplorer
     var maximizedPaneID: UUID?
     let id: WorkspaceID
     @ObservationIgnored var remote: RemoteConnection?
     var terminalGeneration = 0
     var tmuxContextDirectory: String?
+    var focusedTerminalID: UUID? {
+        // A document takes ownership of the folder context. Start/browser pages
+        // retain the previous terminal context for launching another agent.
+        if case .file = snapshot.layout?.activePane?.selected { return nil }
+        return snapshot.selectedTerminalID
+    }
+    var focusedDocumentDirectory: String? {
+        guard case .file(let id) = snapshot.layout?.activePane?.selected,
+              let path = snapshot.buffers.first(where: { $0.id == id })?.path, !path.isEmpty else { return nil }
+        return (path as NSString).deletingLastPathComponent
+    }
     var selectedAgent: AgentTerminal? {
-        guard let id = snapshot.selectedTerminalID else { return nil }
+        guard let id = focusedTerminalID else { return nil }
         if let terminal = terminals[id], let pane = terminal.tmuxLocation?.paneID,
            let agent = terminal.tmuxReverseAgents[pane] { return agent }
         return snapshot.agentTerminals.first { $0.id == id }
@@ -23,12 +39,13 @@ final class WorkspaceState: Identifiable {
         guard let agent = selectedAgent, agent.reverseHostID != nil else { return nil }
         return agent.directory
     }
-    var contextRootPath: String { reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.rootPath }
-    var contextDirectoryPath: String { reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.directoryPath }
+    var contextRootPath: String { focusedDocumentDirectory != nil ? snapshot.rootPath : reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.rootPath }
+    var contextDirectoryPath: String { focusedDocumentDirectory != nil ? snapshot.rootPath : reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.directoryPath }
     var agentHistoryPath: String {
         // Terminal instances are stored outside Observation; track their replacement too.
         _ = terminalGeneration
-        guard let id = snapshot.selectedTerminalID else { return snapshot.rootPath }
+        if let directory = focusedDocumentDirectory { return directory }
+        guard let id = focusedTerminalID else { return snapshot.rootPath }
         if let directory = reverseAgentDirectory { return directory }
         let initial = snapshot.agentTerminals.first { $0.id == id }?.directory ?? snapshot.rootPath
         guard let terminal = terminals[id] else { return initial }
@@ -37,6 +54,7 @@ final class WorkspaceState: Identifiable {
     }
     @ObservationIgnored var tmuxFocusGeneration = UUID()
     @ObservationIgnored var terminals: [UUID: TerminalSession] = [:]
+    @ObservationIgnored var baseViews: [BufferID: Int] = [:]
     @ObservationIgnored var browsers: [UUID: BrowserSession] = [:]
     @ObservationIgnored var accessURL: URL?
     @ObservationIgnored var refreshGeneration = UUID()
