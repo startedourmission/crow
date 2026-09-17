@@ -1,5 +1,5 @@
 *{box-sizing:border-box}
-:root{color-scheme:light;--ink:#252c38;--muted:#77808c;--line:#e5e8ed;--accent:#365b89}
+:root{color-scheme:light;--ink:#252c38;--muted:#77808c;--line:#e5e8ed;--accent:#132138}
 html,body{height:100%;margin:0;overflow:hidden}
 body{font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:var(--ink);background:#fff}
 main{height:100%;display:flex;flex-direction:column;position:relative;min-width:0}
@@ -7,7 +7,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 button{border:1px solid var(--line);border-radius:6px;background:#fff;padding:5px 9px;cursor:pointer}
 button:hover{background:#eef1f5}
 button:disabled{opacity:.4;cursor:default}
-button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid #5d84b7;outline-offset:1px}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 input:not([type=checkbox]):not([type=color]),select,textarea{border:1px solid #d8dee6;border-radius:5px;background:#fff;padding:6px 8px;min-width:0}
 input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;margin:2px;vertical-align:middle;cursor:pointer}
 input[type=color]{appearance:none;background:none;border:0;padding:0;width:22px;height:24px;cursor:pointer}
@@ -26,7 +26,7 @@ svg{width:16px;height:16px;flex:none}
 .edges .edge-hit{pointer-events:stroke;cursor:pointer}
 .pending-edge{stroke-dasharray:5 4}
 .node{position:absolute;display:flex;flex-direction:column;background:#fff;border:1.5px solid var(--node-color);border-radius:9px;box-shadow:0 3px 12px #1b30480b}
-.node.selected{outline:2px solid #527eb9;outline-offset:3px}
+.node.selected{outline:2px solid var(--accent);outline-offset:3px}
 .node-bar{height:28px;min-height:28px;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 10px;border-radius:7px 7px 0 0;color:#8b929d;font-size:10px;cursor:grab;user-select:none;overflow:hidden}
 .node-bar>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .node:hover .node-bar,.node.selected .node-bar{background:#f5f6f8;color:#657084}
@@ -49,7 +49,7 @@ svg{width:16px;height:16px;flex:none}
 .node.group .node-bar{position:absolute;top:-29px;left:0;right:0;height:26px;pointer-events:auto;background:none;font-size:13px;font-weight:600;color:var(--node-color);padding:0 2px}
 .node-resize{position:absolute;bottom:-1px;right:-1px;width:17px;height:17px;padding:0;border:0;border-radius:0;background:linear-gradient(135deg,transparent 65%,#8c9bb4 65%,#8c9bb4 73%,transparent 73%);opacity:0;cursor:nwse-resize;pointer-events:auto}
 .node.selected .node-resize{opacity:1}
-.node-port{position:absolute;width:10px;height:10px;padding:0;border:1.5px solid #527eb9;background:#fff;border-radius:50%;opacity:0;pointer-events:auto;cursor:crosshair}
+.node-port{position:absolute;width:10px;height:10px;padding:0;border:1.5px solid var(--accent);background:#fff;border-radius:50%;opacity:0;pointer-events:auto;cursor:crosshair}
 .node.selected .node-port,.node:hover .node-port{opacity:1}
 .node-port.top{left:calc(50% - 5px);top:-6px}.node-port.bottom{left:calc(50% - 5px);bottom:-6px}
 .node-port.left{left:-6px;top:calc(50% - 5px)}.node-port.right{right:-6px;top:calc(50% - 5px)}
@@ -67,7 +67,7 @@ svg{width:16px;height:16px;flex:none}
 .table th{position:sticky;top:0;z-index:2;text-align:left;padding:0;background:#f6f7f9;border-bottom:1px solid #dfe4ec;color:#6d7786;font-size:11px;font-weight:500}
 .table th button{border:0;border-radius:0;width:100%;text-align:left;background:none;padding:9px 12px;white-space:nowrap}
 .table td{position:relative;min-width:135px;max-width:480px;padding:9px 12px;border-bottom:1px solid #edf0f4;border-right:1px solid #f2f4f7;vertical-align:top;overflow-wrap:anywhere}
-.table tr:hover td{background:#fafbfd}.table td:focus{outline:1px solid #7295c1;outline-offset:-1px}
+.table tr:hover td{background:#fafbfd}.table td:focus{outline:1px solid var(--accent);outline-offset:-1px}
 .file-link{border:0;background:transparent!important;color:var(--accent);padding:0;text-align:left;white-space:normal;font:inherit}
 .note-link{font-weight:500}.file-link:hover{text-decoration:underline}
 .cell-value{display:inline;line-height:1.5}.tag{display:inline-block;border-radius:4px;background:#eef1f6;color:#617188;padding:1px 5px;margin:1px 3px 1px 0;font-size:11px}
@@ -95,7 +95,7 @@ dialog form{padding:16px;display:flex;flex-direction:column;gap:12px}
 .field{display:flex;flex-direction:column;gap:5px;min-width:0}.field>span{font-size:11px;color:#737f8d}
 .field input,.field select{width:100%}.field-error{font-size:12px;color:#ac3b3b;margin:0}.field-error:empty{display:none}
 .dialog-actions{display:flex;justify-content:flex-end;gap:7px;padding-top:6px}
-.primary{color:#fff;background:#365b89;border-color:#365b89}.primary:hover{background:#2c4b73}
+.primary{color:#fff;background:var(--accent);border-color:var(--accent)}.primary:hover{background:color-mix(in srgb,var(--accent) 85%,white)}
 .column-options{display:grid;grid-template-columns:1fr 1fr;gap:7px;max-height:145px;overflow:auto;border:1px solid var(--line);border-radius:5px;padding:9px}
 .column-options label{display:flex;align-items:center;gap:5px;min-width:0;font-size:12px}.column-options input{width:14px}.column-options span{overflow:hidden;text-overflow:ellipsis}
 /* Bases keeps the document controls mounted while inventory updates arrive. */
@@ -104,7 +104,7 @@ dialog form{padding:16px;display:flex;flex-direction:column;gap:12px}
 .base-toolbar .view-select{max-width:200px;background:transparent;font-size:14px;font-weight:500}
 .base-count{white-space:nowrap;margin:0 8px;font-variant-numeric:tabular-nums}
 .base-toolbar .icon-button{font-size:13px;height:30px}
-.base-toolbar .active{color:#8764d6}
+.base-toolbar .active{color:var(--accent)}
 .base-toolbar .icon-button[aria-expanded=true]{background:#eeeef0}
 .base-subhead{padding:5px 12px;gap:5px}
 .base-subhead .base-search{background:transparent!important;border-color:transparent;width:200px}
@@ -113,8 +113,8 @@ dialog form{padding:16px;display:flex;flex-direction:column;gap:12px}
 .table th,.table td{border-right:1px solid #e0e0e3;border-bottom:1px solid #e0e0e3}
 .table th button{padding:9px 12px;font-weight:500}
 .table td{padding:8px 12px}
-.base-body .file-link{color:#8868d2;text-decoration:underline;text-underline-offset:2px}
-.base-body input[type=checkbox],.popover input[type=checkbox]{accent-color:#9474df}
+.base-body .file-link{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.base-body input[type=checkbox],.popover input[type=checkbox]{accent-color:var(--accent)}
 .load-more{display:block;margin:12px auto}
 .popover{position:fixed;z-index:20000;width:330px;max-width:calc(100vw - 16px);overflow:auto;background:#f8f8f9;border:1px solid #d9d9df;border-radius:9px;box-shadow:0 6px 24px #18182222;padding:10px}
 .popover form{display:flex;flex-direction:column;gap:10px}
@@ -133,7 +133,7 @@ dialog form{padding:16px;display:flex;flex-direction:column;gap:12px}
 .filter-rule-heading,.filter-group-heading,.sort-row{display:flex;align-items:center;gap:6px}
 .filter-rule-heading>select,.filter-group-heading>select{flex:1;background:transparent;font-size:12px}
 .filter-rule-heading{margin-bottom:5px}
-.filter-group{border-left:2px solid #e0d9ef;padding-left:9px;display:flex;flex-direction:column;gap:10px}
+.filter-group{border-left:2px solid var(--line);padding-left:9px;display:flex;flex-direction:column;gap:10px}
 .filter-group .filter-group{margin-left:2px}
 .filter-condition{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .filter-condition>input{grid-column:1/-1}
@@ -150,22 +150,22 @@ dialog form{padding:16px;display:flex;flex-direction:column;gap:12px}
 .canvas-create .icon-button{height:36px;min-width:36px}.canvas-create svg{width:24px;height:24px}
 .canvas-create .icon-button span{display:none}
 .node{border-color:var(--node-color);border-radius:8px;box-shadow:0 2px 7px #1818220c}
-.node.selected{outline:3px solid #9474df;outline-offset:1px}
+.node.selected{outline:3px solid var(--accent);outline-offset:1px}
 .node.text .node-bar>span{visibility:hidden}
 .node.file .node-bar,.node.link .node-bar{position:absolute;top:-29px;left:0;right:0;background:none!important;padding:0 2px;font-size:12px;overflow:visible}
 .node.file .node-content{padding:8px;border-radius:7px}
 .node.selected .node-port,.node:hover .node-port,.connecting .node-port,.node-port:focus-visible{opacity:1}
-.node-port{width:14px;height:14px;border:2px solid #fff;box-shadow:0 0 0 1px #b5a2df;background:#9474df}
+.node-port{width:14px;height:14px;border:2px solid #fff;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent)}
 .node-port.top{left:calc(50% - 7px);top:-8px}.node-port.bottom{left:calc(50% - 7px);bottom:-8px}
 .node-port.left{left:-8px;top:calc(50% - 7px)}.node-port.right{right:-8px;top:calc(50% - 7px)}
 .connecting .node-port{width:18px;height:18px;transform:translate(-2px,-2px)}
-.connection-target{outline:2px solid #9474df;outline-offset:2px}
-.node-port.connection-port{box-shadow:0 0 0 5px #9474df40;background:#7350cb}
+.connection-target{outline:2px solid var(--accent);outline-offset:2px}
+.node-port.connection-port{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 25%,transparent);background:var(--accent)}
 .selection-toolbar{border-radius:6px;gap:5px;z-index:10003}
 .pending-edge{stroke-dasharray:none;pointer-events:none}
 @media(max-width:540px){.base-toolbar .icon-button{padding:4px}.base-count{font-size:11px;margin:0}.canvas-create{bottom:58px}.canvas-zoom{bottom:10px}.base-toolbar .view-select{max-width:140px}}
 .table th button{display:flex;align-items:center;gap:7px}
 .table th button svg,.property-option svg{width:15px;height:15px;color:#77777f;flex:none}
 .property-option input{appearance:none;position:relative;border:1px solid #aaaab0;border-radius:5px;background:transparent}
-.property-option input:checked{background:#9474df;border-color:#9474df}
+.property-option input:checked{background:var(--accent);border-color:var(--accent)}
 .property-option input:checked:after{content:'';position:absolute;left:3px;top:4px;width:9px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:rotate(-45deg)}

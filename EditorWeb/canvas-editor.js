@@ -91,7 +91,7 @@ export function canvasEditor(ctx) {
       const d = 'M' + p + ' C' + [p[0] + u[0] * distance, p[1] + u[1] * distance] + ' ' +
         [q[0] + v[0] * distance, q[1] + v[1] * distance] + ' ' + q;
       const active = selected?.kind === 'edge' && selected.id === edge.id;
-      svgPath(d, active ? '#365b89' : color(edge.color), active ? 3 : 2);
+      svgPath(d, active ? 'var(--accent)' : color(edge.color), active ? 3 : 2);
       const hit = svgPath(d, 'transparent', 16, 'edge-hit');
       hit.onclick = e => { e.stopPropagation(); choose({kind:'edge', id:edge.id}); drawEdges(); };
       hit.ondblclick = e => { e.stopPropagation(); editEdge(edge); };
@@ -111,7 +111,7 @@ export function canvasEditor(ctx) {
       const to = drag.to, direction = directions[drag.side], end = directions[drag.target?.side] ?? [0,0];
       const bend = Math.max(50,Math.hypot(to[0]-from[0],to[1]-from[1])*.4);
       svgPath('M' + from + ' C' + [from[0]+direction[0]*bend,from[1]+direction[1]*bend] + ' ' +
-        [to[0]+end[0]*bend,to[1]+end[1]*bend] + ' ' + to, '#8970db', 2, 'pending-edge');
+        [to[0]+end[0]*bend,to[1]+end[1]*bend] + ' ' + to, 'var(--accent)', 2, 'pending-edge');
     }
   }
   function position(node) {
