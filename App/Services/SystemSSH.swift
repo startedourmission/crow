@@ -152,6 +152,24 @@ struct SystemSSHSpec: Sendable {
         try await resolveConfiguration(arguments, directory: directory).host
     }
 
+    /// Query only public identity metadata; do not import, export or unlock keys.
+    nonisolated static func hasAgentIdentities(environment: [String: String] = ProcessInfo.processInfo.environment) async -> Bool {
+        guard let socket = environment["SSH_AUTH_SOCK"], !socket.isEmpty else { return false }
+        return await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+            process.arguments = ["-l"]; process.environment = environment
+            process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+            do { try process.run() } catch { return true } // Do not replace an agent we cannot inspect.
+            let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3, execute: timeout)
+            defer { timeout.cancel() }
+            process.waitUntilExit()
+            // ssh-add: 1 = no identities; 2 = unable to contact the agent.
+            return ![1, 2].contains(process.terminationStatus)
+        }.value
+    }
+
     nonisolated static func resolveConfiguration(_ arguments: [String], directory: String) async throws -> SSHResolvedConfiguration {
         try await Task.detached {
             let process = Process(), output = Pipe()

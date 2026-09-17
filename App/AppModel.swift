@@ -1211,6 +1211,9 @@ final class AppModel {
             $0.hostname.caseInsensitiveCompare(proposed.hostname) == .orderedSame &&
             $0.port == proposed.port && $0.username == proposed.username
         } ?? proposed
+        // An established OpenSSH host must retain its working authentication,
+        // including credentials supplied by ssh-agent or an external provider.
+        if host.commandArguments != nil, host.lastConnectedAt != nil { return nil }
         var credential = try SecureStore.credential(host)
         if let keyID = credential.keyID { host.authentication = try keys.identity(keyID).authentication }
         let hasCredential = host.authentication == .password
@@ -1242,15 +1245,18 @@ final class AppModel {
         let config = try await SystemSSHBridge.resolveConfiguration(command.arguments, directory: directory)
         try Task.checkCancellation()
         guard !config.requiresOpenSSH else { return nil }
-        return try automaticSSHHost(config.host, allowSingleKey: !config.hasIdentityFile(directory: directory), keys: keys)
+        var systemAuthentication = config.hasIdentityFile(directory: directory)
+        if !systemAuthentication { systemAuthentication = await SystemSSHBridge.hasAgentIdentities() }
+        try Task.checkCancellation()
+        return try automaticSSHHost(config.host, allowSingleKey: !systemAuthentication, keys: keys)
     }
     #endif
 
-    func connectCommand(_ line: String, password: String = "", preserveReverseSSH: Bool = false) async throws {
+    func connectCommand(_ line: String, password: String = "", preserveReverseSSH: Bool = false, useSavedCredentials: Bool = true) async throws {
         let command = try SSHCommand(line)
         #if os(macOS)
         let directory = !hasWorkspace || current.snapshot.workspace.isRemote ? vaultURL.path : current.snapshot.directoryPath
-        if !preserveReverseSSH, let host = try await automaticSSHHost(command, directory: directory) {
+        if useSavedCredentials, !preserveReverseSSH, let host = try await automaticSSHHost(command, directory: directory) {
             connect(host)
             return
         }

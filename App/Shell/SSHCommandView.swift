@@ -17,6 +17,7 @@ struct SSHCommandView: View {
     private var authenticationChoices: [(String, String)] {
         var choices = [("Automatic · SSH config / saved credentials", "auto"), ("Password", "password"), ("Saved SSH Key", "key")]
         #if os(macOS)
+        choices.append(("System SSH · config / agent", "system"))
         choices.append(("Private Key File", "file"))
         #endif
         return choices
@@ -92,7 +93,7 @@ struct SSHCommandView: View {
                 } else {
                     #if os(macOS)
                     let line = try Self.connectionCommand(command, authentication: authentication, identityPath: identityPath)
-                    try await model.connectCommand(line)
+                    try await model.connectCommand(line, useSavedCredentials: authentication == "auto")
                     #else
                     if authentication == "password" {
                         guard !password.isEmpty else { throw CommandError("Enter the SSH password.") }

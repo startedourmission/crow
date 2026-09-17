@@ -199,6 +199,20 @@ final class CrowAppTests: XCTestCase {
         XCTAssertThrowsError(try model.automaticSSHHost(host, keys: keys))
     }
 
+    @MainActor func testAutomaticSSHPreservesPreviouslyConnectedSystemHost() throws {
+        let model = fixture(), keys = SSHKeyStore(account: "test-auto-ssh-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        _ = try keys.generate(name: "Unrelated Crow key")
+        var host = SSHHost(name: "Working system SSH", hostname: "example.invalid", username: "user")
+        host.commandArguments = ["user@example.invalid"]
+        host.lastConnectedAt = Date()
+        defer { try? SecureStore.remove(host.id.rawValue.uuidString) }
+        try model.storeHost(host, credential: HostCredential())
+        XCTAssertNil(try model.automaticSSHHost(host, keys: keys))
+        XCTAssertEqual(model.hosts.first?.commandArguments, host.commandArguments)
+        XCTAssertNil(try SecureStore.credential(host).keyID)
+    }
+
     #if os(macOS)
     @MainActor func testAutomaticSSHLeavesExplicitOptionsAndReverseCommandsWithOpenSSH() async throws {
         let model = fixture(), keys = SSHKeyStore(account: "test-auto-ssh-" + UUID().uuidString)

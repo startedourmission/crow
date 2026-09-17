@@ -5,6 +5,35 @@ import SwiftTerm
 @testable import Crow
 
 final class SSHIntegrationTests: XCTestCase {
+    func testAutomaticSSHDetectsExistingAgentKeysWithoutChangingThem() async throws {
+        // Unix-domain socket paths are limited to 104 bytes on macOS.
+        let root = URL(fileURLWithPath: "/tmp/crow-agent-test-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("agent").path
+        let agent = Process()
+        agent.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-agent")
+        agent.arguments = ["-D", "-a", socket]
+        agent.standardOutput = FileHandle.nullDevice; agent.standardError = FileHandle.nullDevice
+        try agent.run()
+        defer { if agent.isRunning { agent.terminate(); agent.waitUntilExit() } }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket) { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(agent.isRunning)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: socket))
+        var environment = ProcessInfo.processInfo.environment
+        environment["SSH_AUTH_SOCK"] = socket
+        let empty = await SystemSSHBridge.hasAgentIdentities(environment: environment)
+        XCTAssertFalse(empty)
+        let keys = SSHKeyStore(account: "test-agent-keys-" + UUID().uuidString)
+        defer { try? SecureStore.remove(keys.account) }
+        let key = try keys.generate(name: "Agent fixture")
+        _ = try await ReverseSSHCommand.run("/usr/bin/ssh-add", ["-"], input: Data(key.credential.privateKey.utf8), environment: environment)
+        let populated = await SystemSSHBridge.hasAgentIdentities(environment: environment)
+        XCTAssertTrue(populated)
+        let identities = try await ReverseSSHCommand.run("/usr/bin/ssh-add", ["-L"], environment: environment)
+        XCTAssertTrue(identities.contains(key.publicKey))
+    }
+
     @MainActor private func verifyAutomaticSavedKeyConnection(host: SSHHost, credential: HostCredential, root: URL) async throws {
         let model = AppModel(vaultURL: root.appendingPathComponent("automatic-vault"))
         let key = try SSHKeyStore.shared.importKey(name: "Automatic loopback " + UUID().uuidString,
