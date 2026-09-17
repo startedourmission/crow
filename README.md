@@ -38,6 +38,13 @@ brew tap startedourmission/crow https://github.com/startedourmission/crow
 brew install --cask crow
 ```
 
+Homebrew로 업데이트:
+
+```sh
+brew update
+brew upgrade --cask --greedy crow
+```
+
 앱의 **Crow → Check for Updates…**에서 업데이트합니다. iPhone·iPad는 iOS/iPadOS 18 이상이며 소스에서 빌드할 수 있습니다.
 
 ## 개발하기
