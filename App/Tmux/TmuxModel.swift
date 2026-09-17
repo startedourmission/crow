@@ -8,6 +8,34 @@ struct TmuxExpansionState {
 }
 
 extension AppModel {
+    func tmuxLaunchTerminal(in state: WorkspaceState, paneID: UUID? = nil) -> TerminalSession? {
+        let id: UUID?
+        if let paneID {
+            if case .terminal(let terminalID) = state.snapshot.layout?.panes.first(where: { $0.id == paneID })?.selected {
+                id = terminalID
+            } else { id = nil }
+        } else { id = selectedTerminalID(in: state) }
+        guard let id, let session = state.terminals[id], session.running, session.tmuxLocation != nil else { return nil }
+        return session
+    }
+
+    func launchInTmux(_ command: String, location: TmuxLocation, terminal: TerminalSession,
+                      in state: WorkspaceState) async throws {
+        guard states.contains(where: { $0 === state }), state.terminals[terminal.id] === terminal,
+              terminal.running, terminal.tmuxLocation?.sessionID == location.sessionID else {
+            throw CommandError("The tmux terminal was closed or changed. Try again.")
+        }
+        _ = try await runTmux(TmuxCommand.run(command, in: location), in: state)
+        if selectedWorkspaceID == state.id {
+            compactSurface = .terminal; terminalVisible = true
+            #if os(macOS)
+            terminal.view.window?.makeFirstResponder(terminal.view)
+            #else
+            terminal.view.becomeFirstResponder()
+            #endif
+        }
+    }
+
     var tmuxContextTrackingID: String {
         let state = current
         let session = state.snapshot.selectedTerminalID.flatMap { state.terminals[$0] }

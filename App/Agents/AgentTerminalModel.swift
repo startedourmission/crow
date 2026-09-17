@@ -92,12 +92,32 @@ extension AppModel {
         state.snapshot.isPinned.toggle(); schedulePersist()
     }
 
-    @discardableResult func newAgentTerminal(_ provider: AgentProvider, in paneID: UUID? = nil, directory: String? = nil) -> UUID? {
+    @discardableResult func newAgentTerminal(_ provider: AgentProvider, in paneID: UUID? = nil, directory: String? = nil,
+                                           sessionID: String? = nil, fork: Bool = false, conversationTitle: String? = nil) -> UUID? {
         guard hasWorkspace else { folderImporterVisible = true; return nil }
         guard !current.snapshot.workspace.isRemote || current.remote?.isConnected == true else {
             report(CommandError("Connect this workspace’s SSH host before starting an agent.")); return nil
         }
-        let agent = AgentTerminal(provider: provider, directory: directory ?? current.contextRootPath)
+        var agent = AgentTerminal(provider: provider, directory: directory ?? current.contextRootPath)
+        agent.sessionID = sessionID; agent.forkSession = fork; agent.conversationTitle = conversationTitle
+        if let terminal = tmuxLaunchTerminal(in: current, paneID: paneID), let location = terminal.tmuxLocation {
+            guard !terminal.tmuxAgentLaunching else { return terminal.id }
+            terminal.tmuxAgentLaunching = true
+            let state = current
+            Task {
+                defer { terminal.tmuxAgentLaunching = false }
+                do {
+                    guard states.contains(where: { $0 === state }), state.terminals[terminal.id] === terminal,
+                          terminal.running, terminal.tmuxLocation?.sessionID == location.sessionID else { return }
+                    let output = try await runTmux(TmuxCommand.focus(sessionID: location.sessionID), in: state)
+                    let focus = try TmuxCommand.parseFocus(output, sessionID: location.sessionID)
+                    if directory == nil { agent.directory = focus.directory }
+                    try await launchInTmux(agent.command, location: focus.location, terminal: terminal, in: state)
+                    if let pane = focus.location.paneID { terminal.tmuxReverseAgents.removeValue(forKey: pane) }
+                } catch { report(error) }
+            }
+            return terminal.id
+        }
         current.snapshot.agentTerminals.append(agent)
         openCommandTerminal(id: agent.id, in: paneID)
         return agent.id
@@ -151,6 +171,7 @@ struct ReverseAgentRequest: Identifiable {
     var sessionID: String?
     var fork = false
     var replacingTerminalID: UUID?
+    var tmuxTerminalID: UUID?
 }
 
 extension AppModel {
@@ -160,12 +181,12 @@ extension AppModel {
         reverseAgentRequest = ReverseAgentRequest(workspaceID: current.id, paneID: paneID,
             directory: agent?.directory ?? current.agentHistoryPath, provider: agent?.provider ?? .claude,
             hostID: agent?.reverseHostID, sessionID: agent?.historySessionID ?? agent?.sessionID,
-            fork: agent?.historySessionID == nil && agent?.forkSession == true, replacingTerminalID: terminalID)
+            fork: agent?.historySessionID == nil && agent?.forkSession == true, replacingTerminalID: terminalID,
+            tmuxTerminalID: terminalID == nil ? tmuxLaunchTerminal(in: current, paneID: paneID)?.id : nil)
     }
 
     func agentHistorySource(for state: WorkspaceState) throws -> (WorkspaceState, String) {
-        guard let id = state.snapshot.selectedTerminalID,
-              let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }),
+        guard let agent = state.selectedAgent,
               let hostID = agent.reverseHostID else { return (state, state.agentHistoryPath) }
         guard let remote = states.first(where: { $0.snapshot.workspace.hostID == hostID && $0.remote?.isConnected == true }),
               let directory = agent.reverseServerDirectory else { throw CommandError("Connect the agent's server to read its saved conversations.") }
@@ -184,6 +205,17 @@ extension AppModel {
         }
         if let old = request.replacingTerminalID, owner.terminals[old]?.isWorking == true {
             throw CommandError("Stop the current agent task before restarting this tab.")
+        }
+        let tmuxTerminal = request.tmuxTerminalID.flatMap { owner.terminals[$0] }
+        guard tmuxTerminal?.tmuxAgentLaunching != true else { throw CommandError("An agent is already starting in this tmux pane.") }
+        tmuxTerminal?.tmuxAgentLaunching = true
+        defer { tmuxTerminal?.tmuxAgentLaunching = false }
+        var tmuxFocus: TmuxFocus?
+        if let id = request.tmuxTerminalID {
+            guard let tmuxTerminal, tmuxTerminal.id == id, tmuxTerminal.running,
+                  let location = tmuxTerminal.tmuxLocation else { throw CommandError("The tmux terminal was closed. Try again.") }
+            let output = try await runTmux(TmuxCommand.focus(sessionID: location.sessionID), in: owner)
+            tmuxFocus = try TmuxCommand.parseFocus(output, sessionID: location.sessionID)
         }
         let root = URL(fileURLWithPath: NSString(string: request.directory).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath()
         guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else { throw CommandError("Choose an existing local folder.") }
@@ -252,6 +284,46 @@ extension AppModel {
         var agent = AgentTerminal(provider: request.provider, directory: root.path)
         agent.reverseHostID = host.id; agent.reverseServerDirectory = prepared.directory
         agent.sessionID = request.sessionID; agent.forkSession = request.fork
+        if let tmuxTerminal, let tmuxFocus {
+            var relay: TmuxSSHRelay?
+            let command: String
+            if let ssh = source.systemSSH {
+                command = (["/usr/bin/ssh", "-tt"] + ssh.multiplexArguments
+                    + ["sh -lc " + TerminalCommand.quote(TerminalCommand.utf8Environment + TerminalCommand.environment + prepared.command)])
+                    .map(TerminalCommand.quote).joined(separator: " ")
+            } else {
+                guard let client = source.remote?.client else { throw CommandError("The SSH connection closed. Try again.") }
+                let bridge = TmuxSSHRelay(client: client, command: prepared.command)
+                relay = bridge
+                do {
+                    let port = try await bridge.start()
+                    let config = localRuntime.appendingPathComponent("terminal.json")
+                    try JSONSerialization.data(withJSONObject: ["port": port, "token": bridge.token]).write(to: config)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
+                    let request = String(decoding: try JSONSerialization.data(withJSONObject: ["action": "tmux-terminal", "config": config.path]), as: UTF8.self)
+                    command = [python, runtime.path, request].map(TerminalCommand.quote).joined(separator: " ")
+                } catch { bridge.stop(); throw error }
+            }
+            let completed = localRuntime.appendingPathComponent("completed")
+            let trackedCommand = "trap " + TerminalCommand.quote(": > " + TerminalCommand.quote(completed.path)) + " 0; " + command
+            do { try await launchInTmux(trackedCommand, location: tmuxFocus.location, terminal: tmuxTerminal, in: owner) }
+            catch { relay?.stop(); throw error }
+            let runID = UUID()
+            owner.tmuxAgentRuns[runID] = TmuxAgentRun(hostID: host.id, completed: completed) { [weak self, weak owner, weak tmuxTerminal] in
+                relay?.stop()
+                try? FileManager.default.removeItem(at: localRuntime)
+                Task { try? await Self.cleanReverseAgentLaunch(prepared.launch, on: source) }
+                owner?.tmuxAgentRuns.removeValue(forKey: runID)
+                if let pane = tmuxFocus.location.paneID, tmuxTerminal?.tmuxReverseAgents[pane]?.id == agent.id {
+                    tmuxTerminal?.tmuxReverseAgents.removeValue(forKey: pane)
+                }
+                self?.stopUnusedReverseSSH(for: [host.id])
+            }
+            if let pane = tmuxFocus.location.paneID { tmuxTerminal.tmuxReverseAgents[pane] = agent }
+            retained = true
+            defaults.set(host.id.rawValue.uuidString, forKey: "crow.reverse-agent-last-host")
+            return
+        }
         // The PTY connects to the server; the tab, explorer and Git remain local.
         let execution = Workspace(name: host.name, kind: .remote(hostID: host.id, path: prepared.directory), connection: .connected)
         let session = TerminalSession(id: agent.id, workspace: execution, directory: prepared.directory,
@@ -288,6 +360,161 @@ extension AppModel {
     private static func cleanReverseAgentLaunch(_ path: String, on state: WorkspaceState) async throws {
         guard state.remote?.isConnected == true else { return }
         _ = try await AgentHistoryService.run(["action": "reverse-cleanup", "workspace": state.snapshot.rootPath, "launch": path], in: state, operation: "Reverse agent cleanup")
+    }
+}
+
+import Network
+@preconcurrency import Citadel
+@preconcurrency import NIOCore
+
+private struct TmuxRelayWriter: @unchecked Sendable { let value: TTYStdinWriter }
+
+/// Owned by the workspace: detaching/closing a tmux client must leave its agent running.
+@MainActor final class TmuxAgentRun {
+    let hostID: HostID
+    private var cleanup: (() -> Void)?
+    private var task: Task<Void, Never>?
+    init(hostID: HostID, completed: URL, cleanup: @escaping () -> Void) {
+        self.hostID = hostID; self.cleanup = cleanup
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                if FileManager.default.fileExists(atPath: completed.path) { self?.stop(); return }
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            }
+        }
+    }
+    func stop() {
+        task?.cancel(); task = nil
+        let cleanup = cleanup; self.cleanup = nil; cleanup?()
+    }
+}
+
+/// One authenticated, loopback-only client connects a tmux tty to the existing SSH connection.
+@MainActor final class TmuxSSHRelay {
+    let token = UUID().uuidString + UUID().uuidString
+    private let client: SSHClient
+    private let command: String
+    private var listener: NWListener?
+    private var connection: NWConnection?
+    private var task: Task<Void, Never>?
+    private var timeout: Task<Void, Never>?
+    private var pending = Data()
+    private var ready: CheckedContinuation<Int, Error>?
+
+    init(client: SSHClient, command: String) { self.client = client; self.command = command }
+
+    func start() async throws -> Int {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try NWListener(using: parameters)
+        self.listener = listener
+        listener.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in
+                guard let self, let ready = self.ready else { return }
+                switch state {
+                case .ready:
+                    if let port = self.listener?.port { self.ready = nil; ready.resume(returning: Int(port.rawValue)) }
+                case .failed(let error): self.ready = nil; ready.resume(throwing: error); self.stop()
+                case .cancelled: self.ready = nil; ready.resume(throwing: CancellationError())
+                default: break
+                }
+            }
+        }
+        listener.newConnectionHandler = { [weak self] peer in
+            Task { @MainActor in
+                guard let self, self.connection == nil else { peer.cancel(); return }
+                self.connection = peer; peer.start(queue: .main)
+                self.task = Task { await self.serve() }
+            }
+        }
+        timeout = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            self?.stop()
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { ready = $0; listener.start(queue: .main) }
+        } onCancel: { listener.cancel() }
+    }
+
+    private func serve() async {
+        defer { stop() }
+        do {
+            let hello = try await message()
+            guard hello["token"] as? String == token else { throw CommandError("Invalid terminal relay token.") }
+            listener?.cancel(); listener = nil
+            let command = TerminalCommand.utf8Environment + TerminalCommand.environment + command
+            try await client.withPTY(.init(wantReply: true, term: "xterm-256color",
+                terminalCharacterWidth: max(1, hello["cols"] as? Int ?? 80), terminalRowHeight: max(1, hello["rows"] as? Int ?? 24),
+                terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { @Sendable [weak self] inbound, outbound in
+                let writer = TmuxRelayWriter(value: outbound)
+                var startup = SSHStartupOutput()
+                try await outbound.write(ByteBuffer(string: startup.command("exec sh -lc " + TerminalCommand.quote(command) + "\n")))
+                let input = Task { try await self?.pumpInput(writer) }
+                defer { input.cancel() }
+                for try await output in inbound {
+                    try Task.checkCancellation()
+                    switch output {
+                    case .stdout(let bytes), .stderr(let bytes):
+                        let visible = startup.receive(Array(bytes.readableBytesView))
+                        if startup.isReady { await self?.didStart() }
+                        if !visible.isEmpty { try await self?.send(Data(visible)) }
+                    }
+                }
+            }
+        } catch ChannelError.eof {
+        } catch ChannelError.alreadyClosed {
+        } catch {
+            try? await send(Data(("\r\n" + error.localizedDescription + "\r\n").utf8))
+        }
+    }
+
+    private func didStart() { timeout?.cancel(); timeout = nil }
+
+    private func pumpInput(_ writer: TmuxRelayWriter) async throws {
+        do {
+            while !Task.isCancelled {
+                let value = try await message()
+                if let input = value["input"] as? String, let data = Data(base64Encoded: input) {
+                    try await writer.value.write(ByteBuffer(bytes: data))
+                } else if let cols = value["cols"] as? Int, let rows = value["rows"] as? Int {
+                    try await writer.value.changeSize(cols: max(1, cols), rows: max(1, rows), pixelWidth: 0, pixelHeight: 0)
+                }
+            }
+        } catch { stop(); throw error }
+    }
+
+    private func message() async throws -> [String: Any] {
+        while true {
+            if let end = pending.firstIndex(of: 10) {
+                let line = pending[..<end]; pending.removeSubrange(...end)
+                guard let value = try JSONSerialization.jsonObject(with: line) as? [String: Any] else { throw CommandError("Invalid terminal input.") }
+                return value
+            }
+            guard pending.count < 131_072, let connection else { throw CancellationError() }
+            let data: Data = try await withCheckedThrowingContinuation { continuation in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else if let data, !data.isEmpty { continuation.resume(returning: data) }
+                    else { continuation.resume(throwing: CancellationError()) }
+                }
+            }
+            pending.append(data)
+        }
+    }
+
+    private func send(_ data: Data) async throws {
+        guard let connection else { throw CancellationError() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            })
+        }
+    }
+
+    func stop() {
+        timeout?.cancel(); timeout = nil; task?.cancel(); task = nil
+        listener?.cancel(); listener = nil; connection?.cancel(); connection = nil
+        ready?.resume(throwing: CancellationError()); ready = nil
     }
 }
 #endif

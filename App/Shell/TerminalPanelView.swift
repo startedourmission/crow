@@ -96,8 +96,6 @@ struct StatusBarView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(model.workspaceTitle)
-                .font(.system(size: 11, weight: .medium))
             if let buffer = model.selectedBuffer {
                 Text(buffer.language.label)
                     .crowForeground(CrowTheme.textDim)

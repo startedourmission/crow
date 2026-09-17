@@ -105,11 +105,10 @@ struct WindowCloseGuard: NSViewRepresentable {
         }
         func applyFloatingMode() {
             guard let window else { return }
+            guard !floatingController.waitingForFullscreenExit else { return }
             if floating && window.styleMask.contains(.fullScreen) {
-                if !floatingController.waitingForFullscreenExit {
-                    floatingController.waitingForFullscreenExit = true
-                    window.toggleFullScreen(nil)
-                }
+                floatingController.waitingForFullscreenExit = true
+                window.toggleFullScreen(nil)
                 return
             }
             floatingController.apply(floating, to: window)
@@ -119,9 +118,17 @@ struct WindowCloseGuard: NSViewRepresentable {
             applyFloatingMode()
             previous?.windowDidExitFullScreen?(notification)
         }
+        func windowDidFailToExitFullScreen(_ window: NSWindow) {
+            floatingController.waitingForFullscreenExit = false
+            previous?.windowDidFailToExitFullScreen?(window)
+        }
         func windowDidBecomeKey(_ notification: Notification) {
             onActivate?()
             previous?.windowDidBecomeKey?(notification)
+        }
+        func windowDidEndLiveResize(_ notification: Notification) {
+            if let window { floatingController.rememberSize(of: window) }
+            previous?.windowDidEndLiveResize?(notification)
         }
         func windowWillClose(_ notification: Notification) {
             onClose?()
@@ -165,41 +172,63 @@ struct CrowMacSceneView: View {
     @State private var floating = false
     var body: some View {
         CrowRootView().environment(model).environment(\.crowFloatingMode, $floating)
-            .frame(minWidth: floating ? 360 : 640, minHeight: floating ? 280 : 400)
+            .frame(minWidth: floating ? FloatingWindowController.minimumSize.width : 640,
+                   minHeight: floating ? FloatingWindowController.minimumSize.height : 400)
             .background(WindowCloseGuard(model: model, floating: floating, onActivate: onActivate, onClose: onClose))
     }
 }
 
 @MainActor final class FloatingWindowController {
+    static let minimumSize = NSSize(width: 280, height: 200)
     private struct Original {
         var frame: NSRect
         var level: NSWindow.Level
         var behavior: NSWindow.CollectionBehavior
         var minimum: NSSize
         var hidesOnDeactivate: Bool
+        weak var zoomTarget: AnyObject?
+        var zoomAction: Selector?
     }
     private var original: Original?
+    private var floatingSize = NSSize(width: 420, height: 560)
     var waitingForFullscreenExit = false
+
+    func rememberSize(of window: NSWindow) {
+        // Only remember user resizing, before restoring the regular layout's minimum.
+        guard original != nil else { return }
+        floatingSize = window.frame.size
+    }
 
     func apply(_ floating: Bool, to window: NSWindow) {
         if floating {
             guard original == nil else { return }
+            let zoomButton = window.standardWindowButton(.zoomButton)
             original = Original(frame: window.frame, level: window.level, behavior: window.collectionBehavior,
-                minimum: window.minSize, hidesOnDeactivate: window.hidesOnDeactivate)
+                minimum: window.minSize, hidesOnDeactivate: window.hidesOnDeactivate,
+                zoomTarget: zoomButton?.target, zoomAction: zoomButton?.action)
             window.level = .floating
             var behavior = window.collectionBehavior
-            behavior.subtract([.moveToActiveSpace, .fullScreenPrimary, .fullScreenAuxiliary, .canJoinAllSpaces])
+            behavior.subtract([.moveToActiveSpace, .fullScreenPrimary, .fullScreenAuxiliary, .fullScreenNone, .canJoinAllSpaces])
             behavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
             window.collectionBehavior = behavior
             window.hidesOnDeactivate = false
-            window.minSize = NSSize(width: 360, height: 280)
+            // A floating window joins every Space. Its green button should zoom
+            // in place, without starting a full-screen Space transition that the
+            // floating-mode guard would immediately try to reverse.
+            zoomButton?.target = window
+            zoomButton?.action = #selector(NSWindow.zoom(_:))
+            window.minSize = Self.minimumSize
             let visible = window.screen?.visibleFrame ?? window.frame
-            let size = NSSize(width: min(420, visible.width), height: min(560, visible.height))
+            let size = NSSize(width: min(max(Self.minimumSize.width, floatingSize.width), visible.width),
+                              height: min(max(Self.minimumSize.height, floatingSize.height), visible.height))
             let frame = NSRect(x: max(visible.minX, min(window.frame.maxX - size.width, visible.maxX - size.width)),
                 y: max(visible.minY, min(window.frame.maxY - size.height, visible.maxY - size.height)), width: size.width, height: size.height)
             window.setFrame(frame, display: true)
         } else if let original {
             window.level = original.level; window.collectionBehavior = original.behavior
+            let zoomButton = window.standardWindowButton(.zoomButton)
+            zoomButton?.target = original.zoomTarget
+            zoomButton?.action = original.zoomAction
             window.minSize = original.minimum; window.hidesOnDeactivate = original.hidesOnDeactivate
             window.setFrame(original.frame, display: true)
             self.original = nil

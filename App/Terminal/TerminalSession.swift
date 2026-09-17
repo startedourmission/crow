@@ -32,6 +32,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         didSet { if oldValue != tmuxLocation { tmuxCurrentDirectory = nil } }
     }
     var tmuxCurrentDirectory: String?
+    var tmuxReverseAgents: [String: AgentTerminal] = [:]
+    var tmuxAgentLaunching = false
     var workingDirectory: String { currentDirectory ?? directory }
     var agentProvider: AgentProvider?
     var agentConversationTitle: String?

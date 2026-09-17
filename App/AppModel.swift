@@ -299,7 +299,7 @@ final class AppModel {
             showFileExplorer()
         }
         ensureLayout(current); refreshFiles()
-        statusMessage = workspaceTitle; schedulePersist()
+        statusMessage = ""; schedulePersist()
     }
 
     func ensureLayout(_ state: WorkspaceState) {
@@ -465,6 +465,10 @@ final class AppModel {
             return false
         }
         state.browsers.values.forEach { $0.close() }; state.browsers.removeAll()
+        var reverseHostIDs = Set(state.snapshot.agentTerminals.compactMap(\.reverseHostID))
+        #if os(macOS)
+        reverseHostIDs.formUnion(state.tmuxAgentRuns.values.map(\.hostID))
+        #endif
         disconnect(state)
         state.refreshGeneration = UUID()
         state.accessURL?.stopAccessingSecurityScopedResource(); state.accessURL = nil
@@ -475,7 +479,7 @@ final class AppModel {
             externallyChangedBuffers.remove(buffer.id)
         }
         states.remove(at: index)
-        stopUnusedReverseSSH(for: Set(state.snapshot.agentTerminals.compactMap(\.reverseHostID)))
+        stopUnusedReverseSSH(for: reverseHostIDs)
         if selectedWorkspaceID == id {
             selectedWorkspaceID = states.isEmpty ? emptyState.id : states[min(index, states.count - 1)].id
             refreshFiles()
@@ -1696,11 +1700,11 @@ final class AppModel {
         if state.snapshot.selectedTerminalID == id { state.snapshot.selectedTerminalID = state.snapshot.terminalIDs.last }
         schedulePersist()
     }
-    private func stopUnusedReverseSSH(for hostIDs: Set<HostID>) {
+    func stopUnusedReverseSSH(for hostIDs: Set<HostID>) {
         #if os(macOS)
         for hostID in hostIDs {
             let hasAgentTab = states.contains { state in
-                state.snapshot.agentTerminals.contains {
+                state.tmuxAgentRuns.values.contains { $0.hostID == hostID } || state.snapshot.agentTerminals.contains {
                     $0.reverseHostID == hostID && state.snapshot.terminalIDs.contains($0.id)
                 }
             }

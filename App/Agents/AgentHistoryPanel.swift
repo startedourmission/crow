@@ -209,6 +209,7 @@ struct AgentHistoryPanel: View {
             }
             .alert("Delete saved session?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), presenting: deletion) { entry in
                 Button("Delete Session", role: .destructive) { delete(entry) }
+                    .keyboardShortcut(.defaultAction)
                 Button("Cancel", role: .cancel) {}
             } message: { entry in Text("Delete “\(entry.title)” from \(entry.provider.title)'s saved conversation history and close its open agent tabs. Running work in those tabs will stop. Project files are kept.") }
     }
@@ -259,19 +260,15 @@ struct AgentHistoryPanel: View {
         guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
         if let hostID = loadedReverseHost, let pane = state.snapshot.layout?.activePaneID {
             model.reverseAgentRequest = ReverseAgentRequest(workspaceID: state.id, paneID: pane,
-                directory: path, provider: entry.provider, hostID: hostID, sessionID: entry.id, fork: fork)
+                directory: path, provider: entry.provider, hostID: hostID, sessionID: entry.id, fork: fork,
+                tmuxTerminalID: model.tmuxLaunchTerminal(in: state, paneID: pane)?.id)
             return
         }
-        if !fork, let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.currentSessionID == entry.id }), state.terminals[agent.id]?.running == true {
+        if model.tmuxLaunchTerminal(in: state) == nil, !fork,
+           let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.currentSessionID == entry.id }), state.terminals[agent.id]?.running == true {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
-        guard let id = model.newAgentTerminal(entry.provider, directory: path), let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }) else { return }
-        state.snapshot.agentTerminals[index].conversationTitle = entry.title
-        state.snapshot.agentTerminals[index].sessionID = entry.id
-        state.snapshot.agentTerminals[index].forkSession = fork
-        // A session view may already have been created while opening the tab.
-        state.terminals[id]?.launchCommand = state.snapshot.agentTerminals[index].command
-        model.schedulePersist()
+        model.newAgentTerminal(entry.provider, directory: path, sessionID: entry.id, fork: fork, conversationTitle: entry.title)
     }
     private func delete(_ entry: AgentHistoryEntry) {
         guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }

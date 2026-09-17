@@ -31,7 +31,10 @@ struct FloatingWorkspaceView: View {
                         .allowsHitTesting(model.compactSurface == .terminal)
                         .accessibilityHidden(model.compactSurface != .terminal)
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            // Hidden editor/terminal views must not impose their ideal size on the window.
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .clipped()
             CrowDivider()
             HStack(spacing: 4) {
                 Button { model.showHosts() } label: {

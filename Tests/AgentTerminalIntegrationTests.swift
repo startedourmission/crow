@@ -194,15 +194,11 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(entry.description, "Fixture for the focused directory")
     }
 
-    @MainActor func testResourceSamplingAndSleepAssertionLifecycle() {
+    @MainActor func testResourceSampling() {
         let status = DeviceStatusState()
         status.sampleResources()
         XCTAssertGreaterThan(status.memory, 0)
         XCTAssertGreaterThanOrEqual(status.cpu, 0)
-        status.toggleAwake()
-        XCTAssertTrue(status.awake); XCTAssertNil(status.error)
-        if status.awake { status.toggleAwake() }
-        XCTAssertFalse(status.awake)
     }
     @MainActor func testOnlyWorkingSessionsAskBeforeClosing() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-close-state-" + UUID().uuidString)
@@ -401,7 +397,10 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertEqual(state.explorer.rootPath, folder.path)
         XCTAssertEqual(state.snapshot.rootPath, original)
         XCTAssertEqual(session.tmuxLocation, focus.location)
-        let agentID = try XCTUnwrap(model.newAgentTerminal(.codex))
+        // Launching from a start page still creates a separate agent tab.
+        let paneID = try XCTUnwrap(state.snapshot.layout?.activePaneID)
+        state.snapshot.layout?.open(.start(UUID()), in: paneID)
+        let agentID = try XCTUnwrap(model.newAgentTerminal(.codex, in: paneID))
         XCTAssertEqual(state.snapshot.agentTerminals.first { $0.id == agentID }?.directory, folder.path)
         model.applyTmuxFocus(.init(location: focus.location, directory: "/stale"), in: state, terminalID: id)
         XCTAssertEqual(state.contextRootPath, folder.path, "Ignore a result for a terminal that lost focus")
@@ -427,6 +426,84 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         let surface = try XCTUnwrap(hosting.superview?.subviews.compactMap { $0 as? WindowMoveSurface }.first)
         let center = hosting.convert(NSPoint(x: hosting.bounds.midX, y: hosting.bounds.midY), to: surface)
         XCTAssertFalse(surface.containsRegion(center), "The tmux panel must receive clicks instead of starting a window drag")
+    }
+
+    @MainActor func testAgentLaunchKeepsTheSelectedTmuxTerminal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-agent-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        model.newTerminal()
+        let state = model.current
+        let id = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let terminal = model.terminal(id, in: state)
+        terminal.running = true; terminal.tmuxLocation = .init(sessionID: "$3", windowID: "@2", paneID: "%9")
+        let tabs = state.snapshot.terminalIDs
+        XCTAssertEqual(model.newAgentTerminal(.claude), id)
+        XCTAssertEqual(state.snapshot.terminalIDs, tabs)
+        XCTAssertTrue(state.snapshot.agentTerminals.isEmpty, "The tmux client must not become a standalone agent on restoration")
+        let pane = try XCTUnwrap(state.snapshot.layout?.activePaneID)
+        model.requestReverseAgent(in: pane)
+        XCTAssertEqual(model.reverseAgentRequest?.tmuxTerminalID, id)
+        // Cancel the queued launch before yielding; this test must never contact a user tmux server.
+        terminal.running = false
+        XCTAssertNil(model.tmuxLaunchTerminal(in: state, paneID: pane))
+    }
+
+    @MainActor func testTmuxAgentCommandUsesOnlyItsPaneAndReturnsToShell() async throws {
+        let tmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let tmux else { throw XCTSkip("tmux is not installed") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-run-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let socket = "crow-test-" + UUID().uuidString
+        let wrapper = root.appendingPathComponent("tmux")
+        try ("#!/bin/sh\nexec " + TerminalCommand.quote(tmux) + " -L " + TerminalCommand.quote(socket) + " -f /dev/null \"$@\"\n").write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+        defer {
+            let process = Process(); process.executableURL = URL(fileURLWithPath: tmux)
+            process.arguments = ["-L", socket, "kill-server"]; try? process.run(); process.waitUntilExit()
+            try? FileManager.default.removeItem(at: root)
+        }
+        func run(_ command: String) async throws -> String {
+            try await ReverseSSHCommand.run("/bin/sh", ["-c", "export PATH=" + TerminalCommand.quote(root.path) + ":$PATH; " + command])
+        }
+        let output = try await run("tmux new-session -d -s fixture -P -F 'CROW_CREATED|#{session_id}|#{window_id}|#{pane_id}' /bin/sh")
+        let location = try TmuxCommand.parseCreated(output, sessionID: "$0")
+        _ = try await run("tmux split-window -d -t '%0' /bin/sh")
+        let result = root.appendingPathComponent("한글 ' result")
+        let command = "printf '%s' 'literal $HOME; #{pane_id}' > " + TerminalCommand.quote(result.path)
+        _ = try await run(TmuxCommand.run(command, in: location))
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: result.path) { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(try String(contentsOf: result, encoding: .utf8), "literal $HOME; #{pane_id}")
+        let panes = try await run("tmux list-panes -F '#{pane_id}|#{pane_current_command}'")
+        XCTAssertEqual(Set(panes.split(separator: "\n").map { String($0.split(separator: "|")[0]) }), Set(["%0", "%1"]))
+        XCTAssertTrue(panes.split(separator: "\n").allSatisfy { $0.hasSuffix("|sh") || $0.hasSuffix("|bash") }, panes)
+        _ = try await run("tmux send-keys -t '%0' 'sleep 30' Enter")
+        try await Task.sleep(for: .milliseconds(150))
+        do { _ = try await run(TmuxCommand.run("printf should-not-run", in: location)); XCTFail("A busy pane must reject agent input") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Return to the shell prompt"), error.localizedDescription) }
+    }
+
+    @MainActor func testTmuxReverseRunSurvivesClientCloseAndCleansUpOnExit() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-lifetime-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        model.newTerminal()
+        let state = model.current, id = try XCTUnwrap(state.snapshot.selectedTerminalID)
+        let runID = UUID(), completed = root.appendingPathComponent("completed")
+        var cleanups = 0
+        let run = TmuxAgentRun(hostID: HostID(), completed: completed) { [weak state] in
+            cleanups += 1; state?.tmuxAgentRuns.removeValue(forKey: runID)
+        }
+        state.tmuxAgentRuns[runID] = run
+        model.closeTerminal(id)
+        XCTAssertEqual(cleanups, 0)
+        XCTAssertNotNil(state.tmuxAgentRuns[runID])
+        try Data().write(to: completed)
+        for _ in 0..<50 where cleanups == 0 { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(cleanups, 1)
+        XCTAssertNil(state.tmuxAgentRuns[runID])
+        run.stop()
+        XCTAssertEqual(cleanups, 1, "Cleanup must only run once")
     }
 
     @MainActor func testAgentActivityTracksRealPTYOutputAndStopsWithTheTerminal() async throws {

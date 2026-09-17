@@ -720,9 +720,67 @@ def reverse_launch(request):
     os.chdir(config["cwd"])
     os.execv(config["argv"][0], config["argv"])
 
+def tmux_terminal(request):
+    """Attach this pane's tty to Crow's already authenticated SSH PTY."""
+    import base64
+    import socket
+    import termios
+    import tty
+
+    config = json.loads(pathlib.Path(request["config"]).read_text())
+    stream = socket.create_connection(("127.0.0.1", config["port"]), timeout=15)
+    stream.settimeout(None)
+
+    def send(value):
+        stream.sendall(json.dumps(value).encode() + b"\n")
+
+    def dimensions():
+        size = os.get_terminal_size(sys.stdin.fileno())
+        return {"cols": size.columns, "rows": size.lines}
+
+    send(dict(dimensions(), token=config["token"]))
+    previous = termios.tcgetattr(sys.stdin.fileno())
+    old_resize = signal.getsignal(signal.SIGWINCH)
+    resized = True
+
+    def resize(*_):
+        nonlocal resized
+        resized = True
+
+    selector = selectors.DefaultSelector()
+    try:
+        tty.setraw(sys.stdin.fileno())
+        signal.signal(signal.SIGWINCH, resize)
+        selector.register(sys.stdin, selectors.EVENT_READ)
+        selector.register(stream, selectors.EVENT_READ)
+        while True:
+            if resized:
+                send(dimensions())
+                resized = False
+            for key, _ in selector.select(0.1):
+                if key.fileobj is stream:
+                    data = stream.recv(65536)
+                    if not data:
+                        return
+                    sys.stdout.buffer.write(data)
+                    sys.stdout.buffer.flush()
+                else:
+                    data = os.read(sys.stdin.fileno(), 16384)
+                    if not data:
+                        return
+                    send({"input": base64.b64encode(data).decode()})
+    finally:
+        signal.signal(signal.SIGWINCH, old_resize)
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, previous)
+        selector.close()
+        stream.close()
+
+
 def main():
     request = json.loads(sys.argv[1])
     action = request.get("action", "list")
+    if action == "tmux-terminal":
+        return tmux_terminal(request)
     workspace = canonical(request["workspace"])
     if action == "reverse-cleanup":
         target = pathlib.Path(request["launch"])

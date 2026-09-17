@@ -94,6 +94,37 @@ final class SSHIntegrationTests: XCTestCase {
         XCTFail("Remote launch command did not receive a PTY: \(session.status)")
     }
 
+    @MainActor private func verifyTmuxRelay(remote: RemoteConnection, root: URL) async throws {
+        let relay = TmuxSSHRelay(client: try XCTUnwrap(remote.client),
+            command: "stty -echo; printf '__RELAY_READY__\\n'; read crow_line; printf '__INPUT_%s__\\n' \"$crow_line\"; stty size")
+        let port = try await relay.start()
+        defer { relay.stop() }
+        let config = root.appendingPathComponent("relay.json")
+        try JSONSerialization.data(withJSONObject: ["port": port, "token": relay.token]).write(to: config)
+        let runtime = try XCTUnwrap(Bundle.main.url(forResource: "agent-history", withExtension: "py"))
+        let request = String(decoding: try JSONSerialization.data(withJSONObject: ["action": "tmux-terminal", "config": config.path]), as: UTF8.self)
+        let session = TerminalSession(id: UUID(), workspace: .init(name: "Relay", kind: .local, connection: .local),
+                                      directory: root.path, remote: nil, fontSize: 14)
+        session.launchCommand = TerminalCommand.environment + "python3 " + TerminalCommand.quote(runtime.path) + " " + TerminalCommand.quote(request)
+        session.start()
+        defer { session.stop() }
+        func text() -> String {
+            let terminal = session.view.getTerminal()
+            return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true,
+                skipNullCellsFollowingWide: true, characterProvider: terminal.getCharacter(for:)) }.joined(separator: "\n")
+        }
+        for _ in 0..<200 where !text().contains("__RELAY_READY__") { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(text().contains("__RELAY_READY__"), text())
+        let local = try XCTUnwrap(session.view as? LocalProcessTerminalView)
+        local.send(source: local, data: Array("한글 relay\n".utf8)[...])
+        for _ in 0..<200 where !text().contains("__INPUT_한글 relay__") { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(text().contains("__INPUT_한글 relay__"), text())
+        for _ in 0..<100 where session.running { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertFalse(session.running, "The pane relay must exit when its remote command exits")
+        let output = try await remote.workspaceCommand("printf STILL_CONNECTED")
+        XCTAssertEqual(output, "STILL_CONNECTED", "Closing the relay must preserve the authenticated SSH connection")
+    }
+
     func testClosedSFTPPipeThrowsInsteadOfTerminatingApplication() throws {
         let pipe = Pipe()
         try SystemSFTP.protectWrites(to: pipe.fileHandleForWriting)
@@ -213,6 +244,14 @@ final class SSHIntegrationTests: XCTestCase {
     }
 
     @MainActor func testLoopbackSSHHostVerificationSFTPAndPTY() async throws {
+        try await verifyLoopbackSSH(relayOnly: false)
+    }
+
+    @MainActor func testTmuxAgentRelayUsesAuthenticatedConnection() async throws {
+        try await verifyLoopbackSSH(relayOnly: true)
+    }
+
+    @MainActor private func verifyLoopbackSSH(relayOnly: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-sshd-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -283,6 +322,7 @@ final class SSHIntegrationTests: XCTestCase {
         let connection = RemoteConnection()
         try await connection.connect(host, credential: credential)
         defer { Task { await connection.disconnect() } }
+        if relayOnly { try await verifyTmuxRelay(remote: connection, root: root); return }
         try await verifyAutomaticSavedKeyConnection(host: host, credential: credential, root: root)
         try await verifyNativeReverseSSH(host: host, credential: credential, root: root)
         let commandOutput = try await connection.workspaceCommand("printf '__COMMAND_OK__'")

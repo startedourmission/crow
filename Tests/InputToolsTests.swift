@@ -4,6 +4,14 @@ import SwiftTerm
 @testable import Crow
 #if os(macOS)
 import AppKit
+import SwiftUI
+
+@MainActor private final class FloatingZoomTestWindow: NSWindow {
+    var zoomRequests = 0
+    var fullScreenRequests = 0
+    override func zoom(_ sender: Any?) { zoomRequests += 1 }
+    override func toggleFullScreen(_ sender: Any?) { fullScreenRequests += 1 }
+}
 #else
 import UIKit
 #endif
@@ -122,12 +130,74 @@ final class InputToolsTests: XCTestCase {
         XCTAssertTrue(window.collectionBehavior.contains([.canJoinAllSpaces, .fullScreenAuxiliary]))
         XCTAssertFalse(window.hidesOnDeactivate)
         XCTAssertLessThanOrEqual(window.frame.width, 420)
+        XCTAssertEqual(window.minSize, NSSize(width: 280, height: 200))
+        window.setFrame(NSRect(x: 100, y: 100, width: 300, height: 220), display: false)
+        controller.rememberSize(of: window)
         controller.apply(true, to: window)
+        XCTAssertEqual(window.frame.size, NSSize(width: 300, height: 220))
         controller.apply(false, to: window)
         XCTAssertEqual(window.frame, original)
         XCTAssertEqual(window.level, .normal)
         XCTAssertEqual(window.collectionBehavior, behavior)
         XCTAssertEqual(window.minSize, NSSize(width: 640, height: 400))
+        controller.rememberSize(of: window)
+        controller.apply(true, to: window)
+        XCTAssertEqual(window.frame.size, NSSize(width: 300, height: 220))
+        window.setFrame(NSRect(x: 100, y: 100, width: 760, height: 620), display: false)
+        controller.rememberSize(of: window)
+        controller.apply(false, to: window)
+        controller.apply(true, to: window)
+        XCTAssertEqual(window.frame.size, NSSize(width: 760, height: 620))
+        controller.apply(false, to: window)
+        XCTAssertEqual(window.frame, original)
+    }
+
+    @MainActor func testFloatingGreenButtonZoomsWithoutEnteringFullScreen() throws {
+        let window = FloatingZoomTestWindow(contentRect: NSRect(x: 100, y: 100, width: 900, height: 600),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let button = try XCTUnwrap(window.standardWindowButton(.zoomButton))
+        let originalTarget = button.target
+        let originalAction = button.action
+        let controller = FloatingWindowController()
+        controller.apply(true, to: window)
+        button.performClick(nil)
+        button.performClick(nil)
+        XCTAssertEqual(window.zoomRequests, 2)
+        XCTAssertEqual(window.fullScreenRequests, 0)
+        XCTAssertEqual(window.level, .floating)
+        controller.apply(false, to: window)
+        XCTAssertTrue(button.target === originalTarget)
+        XCTAssertEqual(button.action, originalAction)
+    }
+
+    @MainActor func testFloatingContentAllowsSmallAndWideWindows() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-floating-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        let hosting = NSHostingView(rootView: CrowRootView().environment(model)
+            .environment(\.crowFloatingMode, .constant(true))
+            .frame(minWidth: FloatingWindowController.minimumSize.width, minHeight: FloatingWindowController.minimumSize.height))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 420, height: 560),
+            styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false; window.contentView = hosting
+        let controller = FloatingWindowController()
+        controller.apply(true, to: window)
+        defer { window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        for surface in [CompactSurface.hosts, .files, .editor, .terminal] {
+            model.compactSurface = surface
+            // Include the native title-bar inset when requesting the whole frame.
+            for size in [NSSize(width: 300, height: 260), NSSize(width: 850, height: 300)] {
+                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: false)
+                try await Task.sleep(for: .milliseconds(60))
+                hosting.layoutSubtreeIfNeeded()
+                XCTAssertEqual(hosting.frame.size, size, "\(surface) must allow independent width/height resizing")
+                XCTAssertLessThanOrEqual(window.contentMinSize.width, 300)
+                XCTAssertLessThanOrEqual(window.contentMinSize.height, 260)
+            }
+        }
+        controller.apply(false, to: window)
     }
     #else
     @MainActor func testIPadSnippetTargetsFocusedSplitAndRestoresSelection() throws {

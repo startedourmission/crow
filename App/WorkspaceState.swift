@@ -13,8 +13,15 @@ final class WorkspaceState: Identifiable {
     @ObservationIgnored var remote: RemoteConnection?
     var terminalGeneration = 0
     var tmuxContextDirectory: String?
+    var selectedAgent: AgentTerminal? {
+        guard let id = snapshot.selectedTerminalID else { return nil }
+        if let terminal = terminals[id], let pane = terminal.tmuxLocation?.paneID,
+           let agent = terminal.tmuxReverseAgents[pane] { return agent }
+        return snapshot.agentTerminals.first { $0.id == id }
+    }
     private var reverseAgentDirectory: String? {
-        snapshot.agentTerminals.first { $0.id == snapshot.selectedTerminalID && $0.reverseHostID != nil }?.directory
+        guard let agent = selectedAgent, agent.reverseHostID != nil else { return nil }
+        return agent.directory
     }
     var contextRootPath: String { reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.rootPath }
     var contextDirectoryPath: String { reverseAgentDirectory ?? tmuxContextDirectory ?? snapshot.directoryPath }
@@ -22,7 +29,7 @@ final class WorkspaceState: Identifiable {
         // Terminal instances are stored outside Observation; track their replacement too.
         _ = terminalGeneration
         guard let id = snapshot.selectedTerminalID else { return snapshot.rootPath }
-        if let agent = snapshot.agentTerminals.first(where: { $0.id == id }), agent.reverseHostID != nil { return agent.directory }
+        if let directory = reverseAgentDirectory { return directory }
         let initial = snapshot.agentTerminals.first { $0.id == id }?.directory ?? snapshot.rootPath
         guard let terminal = terminals[id] else { return initial }
         if terminal.tmuxLocation != nil, let path = terminal.tmuxCurrentDirectory { return path }
@@ -37,6 +44,7 @@ final class WorkspaceState: Identifiable {
     @ObservationIgnored var movingPaths: Set<String> = []
     #if os(macOS)
     @ObservationIgnored var systemSSH: SystemSSHSpec?
+    @ObservationIgnored var tmuxAgentRuns: [UUID: TmuxAgentRun] = [:]
     #endif
     init(_ snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot; id = snapshot.workspace.id
@@ -45,6 +53,10 @@ final class WorkspaceState: Identifiable {
     func stopTerminals() {
         terminals.values.forEach { $0.stop() }
         terminals.removeAll(); terminalGeneration += 1
+        #if os(macOS)
+        let runs = Array(tmuxAgentRuns.values); tmuxAgentRuns.removeAll()
+        runs.forEach { $0.stop() }
+        #endif
     }
 }
 

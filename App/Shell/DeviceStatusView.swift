@@ -1,7 +1,6 @@
 import CrowCore
 import SwiftUI
 #if os(macOS)
-import IOKit.pwr_mgt
 import Security
 #endif
 
@@ -28,8 +27,7 @@ struct AIUsageSource {
 
 extension AppModel {
     var aiUsageSource: AIUsageSource {
-        let selected = current.snapshot.selectedTerminalID
-        let agent = current.snapshot.agentTerminals.first { $0.id == selected }
+        let agent = current.selectedAgent
         let hostID = agent?.reverseHostID ?? current.snapshot.workspace.hostID
         let state: WorkspaceState?
         if let reverseHostID = agent?.reverseHostID {
@@ -43,8 +41,6 @@ extension AppModel {
 
 @MainActor @Observable final class DeviceStatusState {
     static let shared = DeviceStatusState()
-    var awake = false
-    var error: String?
     var memory: UInt64 = 0
     var cpu: Double = 0
     var usage: [AIProviderUsage] = []
@@ -54,15 +50,7 @@ extension AppModel {
     @ObservationIgnored private var usageGeneration = UUID()
     @ObservationIgnored private var claudeToken: String?
     #if os(macOS)
-    @ObservationIgnored private var assertion: IOPMAssertionID = 0
     @ObservationIgnored private var previousCPU: (Date, Double)?
-    func toggleAwake() {
-        if awake { IOPMAssertionRelease(assertion); assertion = 0; awake = false; error = nil; return }
-        let result = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
-            IOPMAssertionLevel(kIOPMAssertionLevelOn), "Crow sessions are active" as CFString, &assertion)
-        if result == kIOReturnSuccess { awake = true; error = nil }
-        else { error = "Could not enable sleep prevention (\(result))." }
-    }
     func sampleResources() {
         var info = mach_task_basic_info(), count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
@@ -169,14 +157,6 @@ struct DeviceStatusView: View {
     var body: some View {
         HStack(spacing: 12) {
             #if os(macOS)
-            Button { status.toggleAwake() } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: status.awake ? "cup.and.saucer.fill" : "cup.and.saucer")
-                    Text(status.awake ? "On" : "Off")
-                }.foregroundStyle(status.awake ? CrowTheme.accent : CrowTheme.textDim)
-            }.help(status.error ?? (status.awake ? "Keep this Mac awake · on. Display can still sleep." : "Prevent this Mac from sleeping while Crow is open."))
-                .accessibilityLabel("Prevent computer sleep").accessibilityValue(status.awake ? "On" : "Off")
-                .accessibilityIdentifier("crow.status.keep-awake")
             HStack(spacing: 4) {
                 Image(systemName: "memorychip")
                 Text(ByteCountFormatter.string(fromByteCount: Int64(status.memory), countStyle: .memory))

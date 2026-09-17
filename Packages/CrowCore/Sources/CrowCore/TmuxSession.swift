@@ -157,6 +157,28 @@ public enum TmuxCommand {
         prefix + "tmux -u display-message -p -t " + (try target(sessionID))
             + " -F " + TerminalCommand.quote("CROW_TMUX_FOCUS|#{session_id}|#{window_id}|#{pane_id}|#{pane_current_path}")
     }
+    public static func run(_ command: String, in location: TmuxLocation) throws -> String {
+        guard let window = location.windowID, let pane = location.paneID else {
+            throw Failure("Select a tmux pane before starting an agent.")
+        }
+        _ = try windowTarget(sessionID: location.sessionID, windowID: window)
+        _ = try target(pane, prefix: "%")
+        let destination = TerminalCommand.quote(location.sessionID + ":" + window + "." + pane)
+        // Run in a child shell so the agent's exec never replaces the pane's shell.
+        // ASCII transport also works in panes whose old shell still uses the C locale.
+        let encoded = Data(command.utf8).base64EncodedString()
+        let input = "sh -lc 'eval \"$(printf %s " + encoded + " | base64 -d)\"'"
+        return prefix + """
+        crow_pane_command=$(tmux display-message -p -t \(destination) '#{pane_current_command}') || exit $?
+        case "$crow_pane_command" in
+          sh|bash|zsh|fish|dash|ksh|nu) ;;
+          *) printf '%s\\n' 'Return to the shell prompt in this tmux pane before starting an agent.' >&2; exit 1 ;;
+        esac
+        tmux send-keys -t \(destination) C-u &&
+        tmux send-keys -l -t \(destination) -- \(TerminalCommand.quote(input)) &&
+        tmux send-keys -t \(destination) Enter
+        """
+    }
     public static func parseFocus(_ output: String, sessionID: String) throws -> TmuxFocus {
         let records = output.components(separatedBy: .newlines).filter { $0.hasPrefix("CROW_TMUX_FOCUS|") }
         guard records.count == 1 else { throw Failure("Could not read the active tmux pane's folder.") }
