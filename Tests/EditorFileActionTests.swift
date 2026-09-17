@@ -315,6 +315,97 @@ import WebKit
         XCTAssertEqual(state.snapshot.browserAddresses.count, count, "Unsafe schemes and disabled note links must not open tabs")
     }
 
+    func testBaseInventoryUpdatesOnlySendChangedAndRemovedNotes() {
+        var updates = ObsidianFiles.InventoryUpdates()
+        let first: [[String: Any]] = [["path": "A.md", "text": "body", "modified": 1], ["path": "B.md", "text": "other"]]
+        let initial = updates.payload(first)
+        XCTAssertEqual(initial["incremental"] as? Bool, false)
+        XCTAssertEqual((initial["files"] as? [[String: Any]])?.count, 2)
+        let unchanged = updates.payload(first)
+        XCTAssertEqual(unchanged["incremental"] as? Bool, true)
+        XCTAssertEqual((unchanged["files"] as? [[String: Any]])?.count, 0)
+        let changed = updates.payload([["path": "A.md", "text": "updated", "modified": 2]])
+        XCTAssertEqual((changed["files"] as? [[String: Any]])?.first?["text"] as? String, "updated")
+        XCTAssertEqual(changed["removed"] as? [String], ["B.md"])
+    }
+
+    func testBaseControlsSurviveLoadingAndEditFiltersSortAndProperties() async throws {
+        let config = WKWebViewConfiguration()
+        let scriptURL = try XCTUnwrap(Bundle.main.url(forResource: "obsidian-preview", withExtension: "js"))
+        let styleURL = try XCTUnwrap(Bundle.main.url(forResource: "obsidian-preview", withExtension: "css"))
+        let script = "window.messages=[]; window.webkit={messageHandlers:{obsidian:{postMessage:m=>window.messages.push(m)}}};\n" + (try String(contentsOf: scriptURL, encoding: .utf8))
+        config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        let view = WKWebView(frame: .init(x: 0, y: 0, width: 940, height: 620), configuration: config)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.setFrameOrigin(.init(x: -20000, y: -20000)); window.isReleasedWhenClosed = false
+        window.contentView = view; window.orderBack(nil); defer { window.close() }
+        view.loadHTMLString("<html><head><style>\(try String(contentsOf: styleURL, encoding: .utf8))</style></head><body><main></main></body></html>", baseURL: nil)
+        for _ in 0..<100 {
+            if (try? await view.callAsyncJavaScript("return !!window.crowObsidian", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == true { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let result = try await view.callAsyncJavaScript(#"""
+        const assert=(value,message)=>{if(!value)throw Error(message)};
+        const click=label=>document.querySelector('button[aria-label="'+label+'"]').click();
+        const apply=()=>[...document.querySelectorAll('.popover button')].find(b=>b.textContent==='Apply').click();
+        let source='filters: \'file.ext == "md"\'\ncustom: preserved\nviews:\n - type: table\n   name: Reading\n   order: [file.name, status]\n - type: table\n   name: All\n   order: [file.name, status]\n';
+        const files=Array.from({length:400},(_,i)=>({path:'Note '+i+'.md',text:'---\nstatus: reading\n---\nBody'}));
+        const receive=(extra)=>window.crowObsidian.receive({source,kind:'base',path:'Notes.base',...extra});
+        receive({files:files.slice(0,1),loading:true});
+        const viewSelect=document.querySelector('.view-select'); viewSelect.focus();
+        receive({files:files.slice(1,20),incremental:true,loading:true});
+        assert(document.querySelector('.view-select')===viewSelect && document.activeElement===viewSelect,'Loading replaced the focused view picker');
+        click('Filter');
+        [...document.querySelectorAll('.popover button')].find(b=>b.textContent==='+ Condition').click();
+        document.querySelector('[aria-label="Filter property"]').value='status';
+        const value=document.querySelector('[aria-label="Filter value"]'); value.value='done'; value.focus();
+        receive({files:files.slice(20),incremental:true});
+        assert(document.querySelector('[aria-label="Filter value"]')===value && value.value==='done' && document.activeElement===value,'Loading discarded a filter draft');
+        assert(document.querySelectorAll('tbody tr').length===100,'Large tables must render in bounded batches');
+        assert(document.querySelector('.base-count').textContent==='400 results','All files must be counted');
+        apply(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        assert(source.includes('custom: preserved') && source.includes('file.ext'),'Filters discarded existing settings');
+        assert(!document.querySelector('tbody tr'),'Filter did not apply');
+        receive({files:[{path:'Note 0.md',text:'---\nstatus: done\n---\nBody'}],incremental:true});
+        assert(document.querySelectorAll('tbody tr').length===1,'An updated file must re-evaluate the filter');
+        click('Properties');
+        const panel=document.querySelector('.popover'), check=[...panel.querySelectorAll('label')].find(n=>n.textContent==='status').querySelector('input');
+        check.click(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        assert(document.querySelector('.popover')===panel && document.querySelectorAll('thead th').length===1,'Toggling properties must keep its menu open');
+        panel.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        document.querySelector('[data-history=undo]').click(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        assert(document.querySelectorAll('thead th').length===2,'Undo must restore columns');
+        assert(!document.querySelector('[data-history=redo]').disabled,'Redo must become available');
+        viewSelect.value='1'; viewSelect.dispatchEvent(new Event('change'));
+        assert(document.querySelectorAll('tbody tr').length===100,'Switching views must keep batching');
+        const body=document.querySelector('.base-body'); body.scrollTop=body.scrollHeight; body.dispatchEvent(new Event('scroll'));
+        assert(document.querySelectorAll('tbody tr').length===200,'Scrolling must reveal additional rows');
+        const query=document.querySelector('.base-search'); query.value='Note 234'; query.dispatchEvent(new Event('input'));
+        assert(document.querySelectorAll('tbody tr').length===1,'Search must cover rows beyond the rendered batch');
+        query.value=''; query.dispatchEvent(new Event('input'));
+        click('Sort'); [...document.querySelectorAll('.popover button')].find(b=>b.textContent==='+ Add sort').click();
+        document.querySelector('[aria-label="Sort direction"]').value='DESC'; apply(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        assert(document.querySelector('tbody tr').dataset.path==='Note 399.md','Numeric descending sort failed');
+        receive({files:[{path:'Broken.md',text:'---\nbad: [\n---'}],removed:['Note 399.md'],incremental:true});
+        assert(document.querySelector('.warning').textContent.includes('Broken.md'),'Unreadable properties need a visible warning');
+        assert(document.querySelector('.view-select')===viewSelect,'An unreadable note must not remove the view picker');
+        assert(document.querySelector('tbody tr').dataset.path==='Note 398.md','Removed files must disappear');
+        receive({files:[],incremental:true,loading:true}); window.crowObsidian.stopLoading(source,'Stopped');
+        assert(!document.querySelector('.base-count').textContent.includes('Loading'),'Stopping must release the loading state');
+        window.crowObsidian.failed('Connection interrupted');
+        assert(document.querySelector('.view-select')===viewSelect && document.querySelector('.warning').textContent.includes('Connection interrupted'),'A load failure must retain usable controls');
+        assert(!window.crowObsidian.validateBase({source:'views: [broken',path:'Notes.base'}),'Invalid definitions must report an error');
+        receive({files});
+        assert(document.querySelector('.view-select')?.isConnected && document.querySelectorAll('tbody tr').length===100,'Fixing a definition must remount its controls');
+        return true;
+        """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertEqual(result, true)
+        _ = try await view.callAsyncJavaScript("document.querySelector('button[aria-label=Properties]').click()", arguments: [:], in: nil, contentWorld: .defaultClient)
+        let image = try await view.takeSnapshot(configuration: nil)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/crow-base-properties.png"))
+    }
+
     func testBaseInventoryReusesSnapshotAndReconcilesChangedAndDeletedFiles() async throws {
         let note = root.appendingPathComponent("Cached.md")
         try Data("---\nstatus: reading\n---\nBody".utf8).write(to: note)
@@ -430,7 +521,17 @@ import WebKit
                 const port=document.querySelector('[data-node-id=note] .node-port.right'), a=port.getBoundingClientRect(), b=document.querySelector('[data-node-id=next] .node-bar').getBoundingClientRect();
                 if (document.elementFromPoint(b.left+20,b.top+10)?.closest('[data-node-id]')?.dataset.nodeId !== 'next') throw Error('Connection target is not hit-testable');
                 port.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1,clientX:a.left,clientY:a.top}));
-                viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:b.left+20,clientY:b.top+10}));
+                const target=document.querySelector('[data-node-id=next] .node-port.left'), t=target.getBoundingClientRect(), tx=t.left+t.width/2, ty=t.top+t.height/2;
+                viewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:tx,clientY:ty}));
+                if (getComputedStyle(target).opacity !== '1' || !target.classList.contains('connection-port')) throw Error('The target handle must appear and highlight during a captured drag');
+                viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:tx,clientY:ty}));
+                if (document.querySelector('.connecting,.connection-port')) throw Error('Connection highlights must be cleared after dropping');
+                const cancelViewport=document.querySelector('.canvas-viewport'); cancelViewport.setPointerCapture=()=>{};
+                const cancelPort=document.querySelector('[data-node-id=note] .node-port.right');
+                cancelPort.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:2,clientX:a.left,clientY:a.top}));
+                cancelViewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:2,clientX:tx,clientY:ty}));
+                cancelViewport.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+                if (document.querySelector('.connecting,.connection-port,.pending-edge')) throw Error('Escape must cancel the pending connection');
                 """)
                 try await Task.sleep(for: .milliseconds(100))
                 let moved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(model.selectedBuffer).text.utf8)) as? [String: Any])
@@ -439,6 +540,7 @@ import WebKit
                 XCTAssertGreaterThan(try XCTUnwrap(edited["x"] as? Int), -160)
                 XCTAssertGreaterThan(try XCTUnwrap(edited["width"] as? Int), 300)
                 XCTAssertEqual((moved["edges"] as? [Any])?.count, 2)
+                XCTAssertEqual((moved["edges"] as? [[String: Any]])?.last?["toSide"] as? String, "left")
                 try await js("document.querySelector('[data-action=add-note]').click()")
                 let added = try await view.callAsyncJavaScript("return document.querySelectorAll('.node').length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int
                 XCTAssertEqual(added, 4)
@@ -446,7 +548,7 @@ import WebKit
             } else {
                 // Wait for the inventory's final payload before editing properties.
                 for _ in 0..<100 {
-                    if (try? await view.callAsyncJavaScript("return document.querySelector('.base-subhead').textContent.includes('Loading')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == false { break }
+                    if (try? await view.callAsyncJavaScript("return document.querySelector('.base-count').textContent.includes('Loading')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == false { break }
                     try await Task.sleep(for: .milliseconds(50))
                 }
                 try await js("document.querySelector(\"td[data-column=status][data-path='Project.md']\").dispatchEvent(new MouseEvent('dblclick')); const input=document.querySelector('[data-property-editor=status]'); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));")
@@ -469,6 +571,12 @@ import WebKit
             let image = try await view.takeSnapshot(configuration: nil)
             let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: name.hasSuffix("canvas") ? "/tmp/crow-canvas-editor.png" : "/tmp/crow-base-editor.png"))
+            if name.hasSuffix("base") {
+                try await js("document.querySelector('button[aria-label=\"New note\"]').click(); document.querySelector('dialog input').value='Created from Base'; document.querySelector('dialog form').dispatchEvent(new Event('submit',{cancelable:true}));")
+                let created = root.appendingPathComponent("Created from Base.md")
+                for _ in 0..<60 where !FileManager.default.fileExists(atPath: created.path) { try await Task.sleep(for: .milliseconds(25)) }
+                XCTAssertTrue(FileManager.default.fileExists(atPath: created.path), "New must create a note beside the Base")
+            }
         }
     }
     #endif

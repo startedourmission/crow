@@ -55,6 +55,25 @@ struct ObsidianDocumentView: View {
 
 /// Every path is scoped to the workspace that owns the document, even after a tab switch.
 @MainActor enum ObsidianFiles {
+    /// Send only changed records after the first snapshot. Large note bodies must
+    /// not cross the WebKit bridge again at every inventory progress update.
+    struct InventoryUpdates {
+        private var previous: [String: NSDictionary] = [:]
+        private var started = false
+        mutating func payload(_ files: [[String: Any]]) -> [String: Any] {
+            let next = Dictionary(uniqueKeysWithValues: files.compactMap { file in
+                (file["path"] as? String).map { ($0, file as NSDictionary) }
+            })
+            let changed = files.filter { file in
+                guard let path = file["path"] as? String, let old = previous[path] else { return true }
+                return !old.isEqual(to: file)
+            }
+            let result: [String: Any] = ["files": changed, "incremental": started,
+                "removed": previous.keys.filter { next[$0] == nil }]
+            previous = next; started = true
+            return result
+        }
+    }
     private final class InventoryCache {
         var files: [[String: Any]]
         init(_ files: [[String: Any]]) { self.files = files }
@@ -162,6 +181,12 @@ struct ObsidianDocumentView: View {
         var lastReport = Date.distantPast
         try Task.checkCancellation()
         await progress(previous, 0)
+        let canonicalRoot: String
+        if remote {
+            guard let connection = state.remote else { throw FileFailure.disconnected }
+            canonicalRoot = try await connection.realPath(root)
+            guard state.remote === connection else { throw FileFailure.disconnected }
+        } else { canonicalRoot = root }
         while let folder = queue.popLast() {
             try Task.checkCancellation()
             visited += 1
@@ -210,8 +235,13 @@ struct ObsidianDocumentView: View {
                         }
                         let data: Data
                         if remote {
-                            let path = try await resolve(relative, in: state)
-                            data = try await bytes(path, in: state, limit: 512 * 1024)
+                            guard let connection = state.remote else { throw FileFailure.disconnected }
+                            let path = try await connection.realPath(entry.path)
+                            guard path.hasPrefix(canonicalRoot == "/" ? "/" : canonicalRoot + "/") else {
+                                throw CommandError("The linked file is outside this workspace.")
+                            }
+                            data = try await connection.readData(path, maximumSize: 512 * 1024)
+                            guard state.remote === connection else { throw FileFailure.disconnected }
                         } else {
                             data = try await Task.detached(priority: .utility) {
                                 let rootURL = URL(fileURLWithPath: root).resolvingSymlinksInPath()
@@ -279,6 +309,7 @@ struct ObsidianDocumentView: View {
         var assets: [String: Task<Void, Never>] = [:]
         var assetTail: Task<Void, Never>?
         var assetBytes = 0
+        weak var preview: WKWebView?
         init(model: AppModel, bufferID: BufferID, status: ObsidianPreviewStatus) { self.model = model; self.bufferID = bufferID; self.status = status }
         func begin() {
             watchdog?.cancel()
@@ -292,10 +323,16 @@ struct ObsidianDocumentView: View {
         }
         func finishEarly(_ message: String) {
             task?.cancel(); watchdog?.cancel(); status.loading = false; status.message = message; status.cancel = nil
+            let expected = source
+            Task { [weak preview] in
+                _ = try? await preview?.callAsyncJavaScript("window.crowObsidian.stopLoading(source, message)",
+                    arguments: ["source": expected, "message": message], in: nil, contentWorld: .defaultClient)
+            }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; render(webView) }
         func render(_ view: WKWebView) {
             guard ready, let (state, index) = model.locate(bufferID) else { return }
+            preview = view
             task?.cancel(); assets.values.forEach { $0.cancel() }; assets.removeAll(); assetTail = nil; assetBytes = 0
             begin()
             let value = source, format = kind, path = state.snapshot.buffers[index].path
@@ -306,13 +343,16 @@ struct ObsidianDocumentView: View {
                     if format == "base" {
                         let valid = try await view.callAsyncJavaScript("return window.crowObsidian.validateBase(payload)", arguments: ["payload": payload], in: nil, contentWorld: .defaultClient) as? Bool
                         guard valid == true else { finishEarly("This Base could not be rendered. See the error below or open Source."); return }
+                        var updates = ObsidianFiles.InventoryUpdates()
                         let (files, warning) = try await ObsidianFiles.inventory(in: state) { files, folders in
                             guard !Task.isCancelled else { return }
                             self.status.message = "Reading workspace: \(files.count) files · \(folders) folders"
-                            var partial = payload; partial["source"] = self.source; partial["files"] = files; partial["loading"] = true
+                            var partial = payload; partial["source"] = self.source; partial["loading"] = true
+                            partial.merge(updates.payload(files)) { _, next in next }
                             _ = try? await view.callAsyncJavaScript("window.crowObsidian.receive(payload)", arguments: ["payload": partial], in: nil, contentWorld: .defaultClient)
                         }
-                        payload["files"] = files; payload["warning"] = warning
+                        payload.merge(updates.payload(files)) { _, next in next }
+                        payload["warning"] = warning
                     } else {
                         let html = await Task.detached(priority: .utility) {
                             var result: [String: String] = [:]
@@ -331,7 +371,7 @@ struct ObsidianDocumentView: View {
                 } catch is CancellationError {} catch {
                     guard !Task.isCancelled else { return }
                     watchdog?.cancel(); status.loading = false; status.message = error.localizedDescription; status.cancel = nil
-                    _ = try? await view.callAsyncJavaScript("document.querySelector('main').textContent = message", arguments: ["message": error.localizedDescription], in: nil, contentWorld: .defaultClient)
+                    _ = try? await view.callAsyncJavaScript("window.crowObsidian.failed(message)", arguments: ["message": error.localizedDescription], in: nil, contentWorld: .defaultClient)
                 }
             }
         }
@@ -358,6 +398,21 @@ struct ObsidianDocumentView: View {
                 Task { [weak view = message.webView] in
                     let saved = await model.saveBuffer(bufferID)
                     _ = try? await view?.callAsyncJavaScript("window.crowObsidian.saved(ok)", arguments: ["ok": saved], in: nil, contentWorld: .defaultClient)
+                }
+                return
+            }
+            if action == "createNote", let name = body["name"], kind == "base" {
+                let relative = String(state.snapshot.buffers[index].path.dropFirst(state.snapshot.rootPath == "/" ? 1 : state.snapshot.rootPath.count + 1))
+                Task {
+                    do {
+                        try TextFiles.validateName(name)
+                        guard ["md", "markdown"].contains((name as NSString).pathExtension.lowercased()) else {
+                            throw CommandError("Choose a Markdown note name.")
+                        }
+                        let base = try await ObsidianFiles.resolve(relative, in: state)
+                        guard model.current === state else { throw CommandError("Return to this workspace to create a note.") }
+                        await model.createEntry(name: name, directory: false, in: (base as NSString).deletingLastPathComponent).value
+                    } catch { model.report(error) }
                 }
                 return
             }

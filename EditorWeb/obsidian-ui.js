@@ -19,6 +19,12 @@ const glyphs = {
   settings: 'M4 7h16M4 17h16M8 4v6m8 4v6', table: 'M3 4h18v16H3V4Zm0 5h18M9 9v11m6-11v11',
   cards: 'M3 4h7v7H3V4Zm11 0h7v7h-7V4ZM3 15h7v6H3v-6Zm11 0h7v6h-7v-6Z',
   search: 'M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-2 5 6 6',
+  filter: 'M3 6h18M6 12h12M10 18h4', sort: 'M7 3v18m-4-4 4 4 4-4M17 21V3m-4 4 4-4 4 4',
+  properties: 'M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1',
+  type: 'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18Zm0 7v7m0-10v.5',
+  number: 'M9 3 7 21M17 3l-2 18M3 9h18M2 15h18',
+  calendar: 'M5 5h14v16H5V5Zm3-3v6m8-6v6M5 10h14',
+  formula: 'M3 3h18v18H3V3Zm5 5h8M11 8v9m-3-4h7',
   arrow: 'M4 12h16m-6-6 6 6-6 6', close: 'm5 5 14 14M19 5 5 19'
 };
 export function icon(name) {
@@ -62,6 +68,34 @@ export function actions(form, close, apply, label = 'Apply') {
   }, 'primary');
   row.append(button('Cancel', close), submit); form.append(error, row);
   form.onsubmit = e => { e.preventDefault(); submit.click(); };
+}
+let dismissPopover;
+export function closePopover() { dismissPopover?.(); }
+export function popover(anchor, title, build) {
+  const wasOpen = anchor.getAttribute('aria-expanded') === 'true';
+  closePopover(); if (wasOpen) return;
+  const panel = el('div', null, 'popover'), form = el('form');
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', title);
+  anchor.setAttribute('aria-expanded', 'true');
+  const close = () => {
+    panel.remove(); anchor.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', position); dismissPopover = null;
+  };
+  const outside = e => { if (!panel.contains(e.target) && !anchor.contains(e.target)) close(); };
+  const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); anchor.focus(); } };
+  const position = () => {
+    const rect = anchor.getBoundingClientRect();
+    panel.style.left = Math.max(8, Math.min(rect.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 8)) + 'px';
+    panel.style.top = (rect.bottom + 6) + 'px';
+    panel.style.maxHeight = Math.max(80, innerHeight - rect.bottom - 14) + 'px';
+  };
+  form.onsubmit = e => e.preventDefault(); panel.append(form); document.body.append(panel);
+  build(form, close); position(); dismissPopover = close;
+  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', position);
+  form.querySelector('input,select,button,textarea')?.focus();
+  return panel;
 }
 export const color = value => /^#[0-9a-f]{6}$/i.test(value ?? '') ? value :
   ({1:'#dc6269',2:'#d68d4c',3:'#b9a440',4:'#53a680',5:'#579fc0',6:'#9b79bf'}[value] ?? '#b5bcc8');

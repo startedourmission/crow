@@ -37,10 +37,33 @@ export function updateBaseView(source, index, changes) {
   return result;
 }
 
+export function updateBaseFilters(source, index, scope, rule) {
+  const parsed = yaml(source), before = scope === 'view' ? parsed.views[index].filters : parsed.filters;
+  if (JSON.stringify(before ?? null) === JSON.stringify(rule ?? null)) return source;
+  if (scope === 'view') return updateBaseView(source, index, {filters:rule});
+  if (scope !== 'all') throw Error('Invalid filter scope.');
+  const doc = parseDocument(source);
+  if (rule == null) doc.delete('filters'); else doc.set('filters', rule);
+  return doc.toString();
+}
+
+export function updateBaseFormula(source, index, name, value) {
+  if (!name.trim() || ['__proto__','prototype','constructor'].includes(name)) throw Error('Enter a formula name.');
+  expression(value);
+  const doc = parseDocument(source), parsed = yaml(source), column = 'formula.' + name;
+  doc.setIn(['formulas', name], value);
+  doc.setIn(['views', index, 'order'], [...new Set([...(parsed.views[index].order ?? ['file.name']), column])]);
+  return doc.toString();
+}
+
 export function noteProperty(column) {
   if (typeof column !== 'string' || column.startsWith('file.') || column.startsWith('formula.')) return null;
   const name = column.startsWith('note.') ? column.slice(5) : column;
   return name && !['__proto__', 'constructor', 'prototype'].includes(name) ? name : null;
+}
+export function propertyExpression(column) {
+  const match = /^(file|formula|note)\.(.*)$/s.exec(column);
+  return (match ? match[1] : 'note') + '[' + JSON.stringify(match ? match[2] : column) + ']';
 }
 
 export function updateNoteProperty(source, column, value) {
@@ -217,19 +240,25 @@ export function record(file) {
   recordsCache.set(file, {text:file.text, modified:file.modified, created:file.created, size:file.size, path:file.path, value});
   return value;
 }
-export function compare(a,b) { if(a==null)return b==null?0:1;if(b==null)return -1;return typeof a==='number'&&typeof b==='number'?a-b:display(a).localeCompare(display(b),undefined,{numeric:true}); }
+const collator = new Intl.Collator(undefined, {numeric:true});
+export function compare(a,b) { if(a==null)return b==null?0:1;if(b==null)return -1;return typeof a==='number'&&typeof b==='number'?a-b:collator.compare(display(a),display(b)); }
 export function base(source, files, path, viewIndex=0) {
   const doc=yaml(source);
   if(!Array.isArray(doc.views)||!doc.views.length) throw Error('This Base has no views.');
   const view=doc.views[viewIndex]; if(!view) throw Error('Missing Base view.');
   if(!['table','cards','list'].includes(view.type)) throw Error('Unsupported Base view: '+view.type+'. Use Source to inspect its configuration.');
-  const records=files.map(record), current=records.find(r=>r.file.path===path)??record({path});
+  const records=[], warnings=[];
+  for (const file of files) {
+    try { records.push(record(file)); }
+    catch { warnings.push('Could not read properties in ' + file.path + '. Fix its frontmatter to include it.'); }
+  }
+  const current=records.find(r=>r.file.path===path)??record({path});
   const rows=records.map(r=>({...r,formulas:doc.formulas??{},this:current})).filter(r=>filter(doc.filters,r)&&filter(view.filters,r));
   const columns=view.order??['file.name']; if(!Array.isArray(columns)||columns.some(c=>typeof c!=='string')) throw Error('Invalid Base columns.');
-  const read=(r,c)=>evaluate(expression(c.startsWith('file.')||c.startsWith('formula.')||c.startsWith('note.')?c:'note['+JSON.stringify(c)+']'),r);
+  const read=(r,c)=>evaluate(expression(propertyExpression(c)),r);
   if(view.sort && !Array.isArray(view.sort)) throw Error('Invalid Base sort.');
   const sort=[...(view.groupBy?[view.groupBy]:[]),...(view.sort??[])];
   rows.sort((a,b)=>{ for(const s of sort) { const v=compare(read(a,s.property),read(b,s.property))*(String(s.direction).toUpperCase()==='DESC'?-1:1); if(v)return v; } return compare(a.file.path,b.file.path); });
   const limited=Number.isInteger(view.limit)&&view.limit>=0?rows.slice(0,view.limit):rows;
-  return {doc,view,columns,rows:limited.map(r=>({path:r.file.path,group:view.groupBy?read(r,view.groupBy.property):null,cells:columns.map(c=>read(r,c))})),total:rows.length};
+  return {doc,view,columns,warnings,rows:limited.map(r=>({path:r.file.path,group:view.groupBy?read(r,view.groupBy.property):null,cells:columns.map(c=>read(r,c))})),total:rows.length};
 }

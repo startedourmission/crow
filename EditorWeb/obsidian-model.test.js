@@ -29,10 +29,11 @@ test('Formula interpreter has no JavaScript execution and detects cycles',()=>{
  assert.throws(()=>base('views: [{type: map}]',files,'a.base'),/Unsupported Base view/);
  assert.throws(()=>evaluate(expression('tags.filter(value)'),ctx),/Unsupported Base function/);
 });
-test('Invalid YAML and frontmatter are reported instead of silently dropping filters',()=>{
+test('Invalid YAML is rejected and unreadable note properties are reported',()=>{
  assert.throws(()=>yaml('views: [not closed'));
  assert.throws(()=>base('filters: {unknown: []}\nviews: [{type: table}]',files,'a.base'),/Invalid Base filter/);
- assert.throws(()=>base('views: [{type: table}]',[{path:'bad.md',text:'---\nbad: [\n---'}],'a.base'));
+ const result=base('views: [{type: table}]',[{path:'bad.md',text:'---\nbad: [\n---'},...files],'a.base');
+ assert.equal(result.rows.length,files.length); assert.match(result.warnings[0],/bad.md/);
 });
 
 test('Canvas edits preserve extension fields and node order', async () => {
@@ -76,4 +77,19 @@ test('Note metadata cache is reused and invalidated after an edit', () => {
  file.text='---\nstatus: done\n---\n#new';
  const changed=record(file); assert.notStrictEqual(changed,first); assert.equal(changed.note.status,'done');
  file.modified=2; assert.equal(record(file).file.mtime.getTime(),2000);
+});
+
+test('Filter scopes, nested conditions and formulas preserve unrelated Base settings', async () => {
+ const {updateBaseFilters,updateBaseFormula} = await import('./obsidian-model.js');
+ const source=`# Keep comment\nfilters: 'file.ext == "md"'\nplugin: kept\nviews: [{name: Books, type: table, order: [file.name]}]`;
+ const rule={and:[{or:['status == "reading"','price < 10']},{not:['file.ext == "png"']}]};
+ const scoped=updateBaseFilters(source,0,'view',rule);
+ assert.deepEqual(yaml(scoped).views[0].filters,rule); assert.equal(yaml(scoped).filters,'file.ext == "md"');
+ assert.equal(base(scoped,files,'a.base').rows.length,2);
+ const all=updateBaseFilters(scoped,0,'all','price > 10');
+ assert.deepEqual(yaml(all).views[0].filters,rule); assert.equal(base(all,files,'a.base').rows.length,1);
+ const formula=updateBaseFormula(all,0,'Per page','price / age');
+ assert.equal(base(formula,files,'a.base').rows[0].cells[1],4);
+ assert.equal(yaml(formula).plugin,'kept'); assert.ok(formula.includes('# Keep comment'));
+ assert.equal(yaml(updateBaseFilters(formula,0,'view',null)).views[0].filters,undefined);
 });

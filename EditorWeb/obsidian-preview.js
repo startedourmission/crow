@@ -38,8 +38,9 @@ function applyAsset({target, background, style}, value) {
 function record(before, after, path = null) {
   if (before === after) return;
   undo.push({before, after, path}); if (undo.length > 100) undo.shift(); redo = [];
-  main.querySelectorAll('[data-history]').forEach(b => b.disabled = b.dataset.history === 'undo' ? !undo.length : !redo.length);
+  syncHistory();
 }
+function syncHistory() { main.querySelectorAll('[data-history]').forEach(b => b.disabled = pending.size > 0 || (b.dataset.history === 'undo' ? !undo.length : !redo.length)); }
 function change(source, options = {}) {
   if (source === data.source) return;
   const before = data.source; data.source = source;
@@ -54,6 +55,7 @@ function writeProperty(path, source, options = {}) {
   const id = String(++sequence), before = file.text;
   return new Promise((resolve, reject) => {
     pending.set(id, {path, before, source, options, resolve, reject});
+    syncHistory();
     send({action:'property', id, path, expected:before, source});
   });
 }
@@ -76,10 +78,14 @@ function tools(header) {
   header.append(spacer, back, forward, iconButton('save', 'Save (⌘S)', () => send({action:'save'})));
 }
 function render() {
+  syncHistory();
+  if (controller?.update?.()) return;
   controller?.destroy?.(); generation++; assets.clear(); main.replaceChildren();
+  controller = null;
   if (!data) return;
   const context = {
-    data, main, open, change, record, notice, tools, asset:renderAsset, render,
+    get data() { return data; }, main, open, change, record, notice, tools, asset:renderAsset, render,
+    createNote: name => send({action:'createNote', name}),
     property: async (path, column, value) => {
       const file = data.files.find(file => file.path === path);
       return writeProperty(path, updateNoteProperty(file?.text, column, value));
@@ -92,10 +98,16 @@ function render() {
 window.crowObsidian = {
   validateBase(value) {
     try { base(value.source, [], value.path, 0); return true; }
-    catch (e) { main.replaceChildren(el('p', e.message, 'error')); return false; }
+    catch (e) { controller?.destroy?.(); controller=null; main.replaceChildren(el('p', e.message, 'error')); return false; }
   },
   receive(value) {
     if (data?.path !== value.path || data?.source !== value.source) { undo = []; redo = []; }
+    if (data?.path === value.path && value.incremental) {
+      const files = new Map((data.files ?? []).map(file => [file.path, file]));
+      for (const path of value.removed ?? []) files.delete(path);
+      for (const file of value.files ?? []) files.set(file.path, file);
+      value.files = [...files.values()];
+    }
     if (data?.path === value.path && value.files) {
       const previous = new Map((data.files ?? []).map(file => [file.path, file]));
       value.files = value.files.map(file => {
@@ -113,6 +125,13 @@ window.crowObsidian = {
     }
     data = value; render();
   },
+  stopLoading(source, warning) {
+    if (data?.kind === 'base' && data.source === source) { data = {...data, loading:false, warning}; render(); }
+  },
+  failed(message) {
+    if (data?.kind === 'base') { data = {...data, loading:false, warning:message}; render(); }
+    else { controller?.destroy?.(); controller=null; main.replaceChildren(el('div',message,'empty error')); }
+  },
   rejectSource(source) {
     data.source = source; undo = []; redo = []; render();
     notice('The document changed outside this view. Its latest content has been reloaded.', true);
@@ -120,9 +139,8 @@ window.crowObsidian = {
   saved(ok) { notice(ok ? 'Saved' : 'Could not save. Check the file conflict or connection.', !ok); },
   propertyResult(id, result) {
     const item = pending.get(id); if (!item) return; pending.delete(id);
-    if (!result.ok) { item.reject(Error(result.error || 'Could not save property.')); return; }
-    const file = data.files.find(file => file.path === item.path);
-    if (file) { file.text = item.source; file.modified = Date.now() / 1000; }
+    if (!result.ok) { syncHistory(); item.reject(Error(result.error || 'Could not save property.')); return; }
+    data.files = data.files.map(file => file.path === item.path ? {...file, text:item.source, modified:Date.now() / 1000} : file);
     if (item.options.history !== false) record(item.before, item.source, item.path);
     item.resolve();
     if (item.options.render !== false) render();

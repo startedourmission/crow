@@ -8,6 +8,7 @@ export function canvasEditor(ctx) {
   if (currentPath !== ctx.data.path) { currentPath = ctx.data.path; camera = null; selected = null; }
   if (!camera) camera = {x:0, y:0, zoom:1};
   const header = el('header', null, 'document-toolbar canvas-toolbar');
+  const creationBar = el('div', null, 'canvas-create');
   const viewport = el('div', null, 'canvas-viewport'), world = el('div', null, 'canvas-world');
   const selectionBar = el('div', null, 'selection-toolbar');
   const byID = new Map(doc.nodes.map(n => [n.id, n])), elements = new Map();
@@ -24,13 +25,14 @@ export function canvasEditor(ctx) {
     selected = {kind:'node', id}; commit();
     if (type === 'text') requestAnimationFrame(() => document.querySelector('[data-node-id="' + id + '"]')?.dispatchEvent(new MouseEvent('dblclick', {bubbles:true})));
   };
-  header.append(
+  creationBar.append(
     iconButton('note', 'Add text card', () => add('text', {text:''}), 'Note'),
     iconButton('file', 'Add file card', () => addDialog('file')),
     iconButton('link', 'Add link card', () => addDialog('link')),
     iconButton('group', 'Add group', () => add('group', {label:'Group', color:'5'}))
   );
-  header.querySelector('button').dataset.action = 'add-note';
+  creationBar.querySelector('button').dataset.action = 'add-note';
+  viewport.append(creationBar);
   ctx.tools(header);
 
   const zoomTools = el('div', null, 'canvas-zoom'), zoomLabel = el('span', '100%', 'zoom-label');
@@ -42,6 +44,7 @@ export function canvasEditor(ctx) {
     viewport.style.backgroundPosition = camera.x + 'px ' + camera.y + 'px';
     viewport.style.backgroundSize = (24 * camera.zoom) + 'px ' + (24 * camera.zoom) + 'px';
     zoomLabel.textContent = Math.round(camera.zoom * 100) + '%';
+    positionSelection();
   }
   function zoomTo(next, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
     next = Math.min(4, Math.max(.05, next));
@@ -105,7 +108,10 @@ export function canvasEditor(ctx) {
     });
     if (drag?.type === 'connect' && drag.to) {
       const from = point(byID.get(drag.id), drag.side);
-      svgPath('M' + from + ' L' + drag.to, '#365b89', 2, 'pending-edge');
+      const to = drag.to, direction = directions[drag.side], end = directions[drag.target?.side] ?? [0,0];
+      const bend = Math.max(50,Math.hypot(to[0]-from[0],to[1]-from[1])*.4);
+      svgPath('M' + from + ' C' + [from[0]+direction[0]*bend,from[1]+direction[1]*bend] + ' ' +
+        [to[0]+end[0]*bend,to[1]+end[1]*bend] + ' ' + to, '#8970db', 2, 'pending-edge');
     }
   }
   function position(node) {
@@ -120,9 +126,42 @@ export function canvasEditor(ctx) {
     if (!item) { selected = null; selectionBar.hidden = true; return; }
     const picker = input(color(item.color), 'color'); picker.title = 'Color'; picker.setAttribute('aria-label','Color');
     picker.onchange = () => { item.color = picker.value; commit(); };
-    selectionBar.append(iconButton('edit', 'Edit selected ' + value.kind, () => value.kind === 'node' ? editNode(item) : editEdge(item)),
-      picker, iconButton('trash', 'Delete selected ' + value.kind, remove));
+    selectionBar.append(iconButton('trash', 'Delete selected ' + value.kind, remove), picker,
+      iconButton('edit', 'Edit selected ' + value.kind, () => value.kind === 'node' ? editNode(item) : editEdge(item)));
+    if (value.kind === 'node') selectionBar.append(iconButton('fit','Focus card',()=>{
+      const zoom=Math.min(1.5,(viewport.clientWidth-100)/item.width,(viewport.clientHeight-150)/item.height);
+      camera={zoom:Math.max(.05,zoom),x:viewport.clientWidth/2-(item.x+item.width/2)*zoom,y:viewport.clientHeight/2-(item.y+item.height/2)*zoom,fitted:true}; transform();
+    }));
+    positionSelection();
   }
+  function positionSelection() {
+    const node = selected?.kind === 'node' ? byID.get(selected.id) : null;
+    const x = node ? (node.x + node.width / 2) * camera.zoom + camera.x : viewport.clientWidth / 2;
+    const y = node ? node.y * camera.zoom + camera.y - 52 : 12;
+    selectionBar.style.left = Math.max(8, Math.min(x - selectionBar.offsetWidth / 2, viewport.clientWidth - selectionBar.offsetWidth - 8)) + 'px';
+    selectionBar.style.top = Math.max(8, Math.min(y, viewport.clientHeight - 100)) + 'px';
+  }
+  function connectionTarget(e) {
+    const hit = document.elementFromPoint(e.clientX,e.clientY), element = hit?.closest('[data-node-id]');
+    const id = element?.dataset.nodeId;
+    if (!id || id === drag?.id) return null;
+    const node = byID.get(id); if (!node) return null;
+    let side = hit.closest('.node-port')?.dataset.side;
+    if (!side) {
+      const bounds=viewport.getBoundingClientRect(), x=(e.clientX-bounds.left-camera.x)/camera.zoom, y=(e.clientY-bounds.top-camera.y)/camera.zoom;
+      side=Object.keys(directions).sort((a,b)=>{
+        const p=point(node,a),q=point(node,b); return Math.hypot(p[0]-x,p[1]-y)-Math.hypot(q[0]-x,q[1]-y);
+      })[0];
+    }
+    return {id,side};
+  }
+  function markTarget(target) {
+    for (const [id,element] of elements) {
+      element.classList.toggle('connection-target',id===target?.id);
+      element.querySelectorAll('.node-port').forEach(port=>port.classList.toggle('connection-port',id===target?.id && port.dataset.side===target.side));
+    }
+  }
+  function clearConnection() { viewport.classList.remove('connecting'); markTarget(null); }
   function remove() {
     if (!selected) return;
     if (selected.kind === 'node') {
@@ -167,7 +206,8 @@ export function canvasEditor(ctx) {
     const moving = type === 'move' ? doc.nodes.filter(n => n.id === node.id || node.type === 'group' && n.x >= node.x && n.y >= node.y &&
       n.x + n.width <= node.x + node.width && n.y + n.height <= node.y + node.height) : [node];
     drag = {type, id:node.id, side, x:e.clientX, y:e.clientY, width:node.width, height:node.height,
-      positions:moving.map(n => [n, n.x, n.y]), moved:false};
+      positions:moving.map(n => [n, n.x, n.y]), moved:false, pointerId:e.pointerId};
+    if (type === 'connect') viewport.classList.add('connecting');
     viewport.setPointerCapture(e.pointerId);
   }
   doc.nodes.forEach((node, index) => {
@@ -222,25 +262,25 @@ export function canvasEditor(ctx) {
     }
     if (drag.type === 'connect') {
       const bounds = viewport.getBoundingClientRect();
-      drag.to = [(e.clientX - bounds.left - camera.x) / camera.zoom, (e.clientY - bounds.top - camera.y) / camera.zoom];
+      drag.target = connectionTarget(e); markTarget(drag.target);
+      drag.to = drag.target ? point(byID.get(drag.target.id),drag.target.side) : [(e.clientX - bounds.left - camera.x) / camera.zoom, (e.clientY - bounds.top - camera.y) / camera.zoom];
     }
+    positionSelection();
     cancelAnimationFrame(frame); frame = requestAnimationFrame(drawEdges);
   };
   viewport.onpointerup = e => {
-    const previous = drag; drag = null;
+    const target = drag?.type === 'connect' ? connectionTarget(e) : null;
+    const previous = drag; drag = null; clearConnection();
     if (!previous) return;
     if (previous.type === 'connect') {
-      const element = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-node-id]'), id = element?.dataset.nodeId;
-      if (id && id !== previous.id) {
-        const bounds = element.getBoundingClientRect(), x = (e.clientX - bounds.left) / bounds.width, y = (e.clientY - bounds.top) / bounds.height;
-        const side = Math.min(x,1-x) < Math.min(y,1-y) ? (x < .5 ? 'left':'right') : (y < .5 ? 'top':'bottom');
-        const edge = {id:uid(), fromNode:previous.id, fromSide:previous.side, toNode:id, toSide:side};
+      if (target) {
+        const edge = {id:uid(), fromNode:previous.id, fromSide:previous.side, toNode:target.id, toSide:target.side};
         doc.edges.push(edge); selected = {kind:'edge',id:edge.id}; commit(); return;
       }
       drawEdges();
     } else if (previous.moved && previous.type !== 'pan') commit();
   };
-  viewport.onpointercancel = () => { drag = null; ctx.render(); };
+  viewport.onpointercancel = () => { drag = null; clearConnection(); ctx.render(); };
   viewport.addEventListener('wheel', e => {
     if (e.target.closest('textarea,.node-content') && !(e.ctrlKey || e.metaKey)) return;
     e.preventDefault(); const bounds = viewport.getBoundingClientRect();
@@ -253,7 +293,10 @@ export function canvasEditor(ctx) {
   if (!camera.fitted) fit(); else transform();
   requestAnimationFrame(() => { if (!destroyed) { if (!camera.fitted) fit(); else transform(); } });
   return {
-    key(e) { if (['Delete','Backspace'].includes(e.key) && selected) { e.preventDefault(); remove(); } if (e.key === 'Escape') choose(null); },
+    key(e) { if (['Delete','Backspace'].includes(e.key) && selected) { e.preventDefault(); remove(); } if (e.key === 'Escape') {
+      if (drag) { const id=drag.pointerId; drag=null; clearConnection(); if (id != null && viewport.hasPointerCapture(id)) viewport.releasePointerCapture(id); ctx.render(); }
+      else { choose(null); drawEdges(); }
+    } },
     destroy() { destroyed = true; resize.disconnect(); cancelAnimationFrame(frame); }
   };
 }
