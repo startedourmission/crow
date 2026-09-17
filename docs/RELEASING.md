@@ -28,8 +28,8 @@ SPARKLE_PUBLIC_ED_KEY="$(build/SourcePackages/artifacts/sparkle/Sparkle/bin/gene
   --account startedourmission-crow -p)" \
 NOTARY_PROFILE=oh-my-opensnap \
 APPLE_TEAM_ID=M7NU9F8CZN \
-BUILD_NUMBER=4 \
-scripts/release-macos.sh 0.1.3 dist
+BUILD_NUMBER=6 \
+scripts/release-macos.sh 0.1.5 dist
 ```
 
 위 버전·빌드 번호는 다음 배포 예시입니다. `BUILD_NUMBER`는 반드시 명시하고,
