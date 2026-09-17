@@ -6,6 +6,18 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Crow</title>
         <item>
+            <title>0.1.4</title>
+            <pubDate>Thu, 17 Sep 2026 10:54:24 +0900</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>0.1.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[- 저장된 Crow 인증정보를 자동 SSH 연결에 사용하도록 개선
+- 기존 시스템 SSH 인증과 에이전트 인증을 연결 과정에서 보존
+- 비밀번호·저장 키 기반 SSH 연결의 안정성 개선
+]]></description>
+            <enclosure url="https://github.com/startedourmission/crow/releases/download/v0.1.4/Crow-0.1.4-macOS.zip" length="15254810" type="application/octet-stream" sparkle:edSignature="MTRtEtPxuogq4hDbDzrfqw9ERUV7APtr3Lm0fhj+4QnZ29fsBbGoU7sG0agLtwbbVBlc5e0whkk64ZeoWr96CA=="/>
+        </item>
+        <item>
             <title>0.1.3</title>
             <pubDate>Wed, 16 Sep 2026 17:32:35 +0900</pubDate>
             <sparkle:version>4</sparkle:version>
@@ -62,6 +74,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: s+YZsgNUx9QiCcVtKR76YscJOgo9Cd/D9mix0Yumfu/2O6ZgthZ8yFN5FE08OebxWYC4gpJUIoZGvKWMWElmDg==
-length: 4416
+edSignature: xQ1rpXJaTIP6SGwYiuGFK9Fn/QlXLh2SYPaaPCMhvVZIAxYy4di+uBht07bl+ZGoN/VO3YMhKiCUFyf+e2EvDw==
+length: 5328
 -->
