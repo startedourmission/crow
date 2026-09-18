@@ -17,6 +17,7 @@ struct AgentHistoryEntry: Codable, Identifiable, Sendable, Equatable {
     let recent: [AgentHistoryMessage]
     let tokens: Int?
     var started: Double? = nil
+    var cwd: String? = nil
     var key: String { provider.rawValue + ":" + id }
 }
 
@@ -52,12 +53,14 @@ struct AgentHistoryResult: Decodable {
     }
     static func list(in state: WorkspaceState, workspacePath: String? = nil, knownSignature: String? = nil) async throws -> AgentHistoryResult {
         var request: [String: Any] = ["workspace": workspacePath ?? state.agentHistoryPath]
+        request["crowmap_sessions"] = state.crowmapHistoryDirectory == (workspacePath ?? state.agentHistoryPath)
         if let knownSignature { request["known_signature"] = knownSignature }
         return try JSONDecoder().decode(AgentHistoryResult.self, from: await run(request, in: state))
     }
     static func delete(_ entry: AgentHistoryEntry, in state: WorkspaceState, workspacePath: String? = nil, closedTab: Bool = false) async throws {
         let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry))
-        _ = try await run(["workspace": workspacePath ?? state.agentHistoryPath, "action": "delete", "session": value, "closed_tab": closedTab], in: state)
+        _ = try await run(["workspace": workspacePath ?? state.agentHistoryPath, "action": "delete", "session": value, "closed_tab": closedTab,
+                          "crowmap_sessions": state.crowmapHistoryDirectory == (workspacePath ?? state.agentHistoryPath)], in: state)
     }
 }
 
@@ -72,11 +75,11 @@ extension AppModel {
             for (index, agent) in state.snapshot.agentTerminals.enumerated() {
                 guard agent.currentSessionID == nil, state.snapshot.terminalIDs.contains(agent.id),
                       (agent.reverseHostID ?? state.snapshot.workspace.hostID) == hostID,
-                      (agent.reverseServerDirectory ?? agent.directory) == path,
                       let created = agent.createdAt,
                       let prompt = agent.firstPrompt, !prompt.isEmpty else { continue }
                 let candidates = entries.filter { entry in
                     guard entry.provider == agent.provider, let started = entry.started,
+                          URL(fileURLWithPath: entry.cwd ?? path).resolvingSymlinksInPath().path == URL(fileURLWithPath: agent.reverseServerDirectory ?? agent.directory).resolvingSymlinksInPath().path,
                           started >= created.timeIntervalSince1970 + clockOffset - 2 else { return false }
                     return entry.first.text.trimmingCharacters(in: .whitespacesAndNewlines) == prompt
                 }
@@ -129,15 +132,21 @@ struct AgentHistoryPanel: View {
     @State private var loadedContext: String?
     @State private var historySignature: String?
     @State private var automaticRefreshPaused = false
-    private var focusedAgent: AgentTerminal? { model.current.snapshot.agentTerminals.first { $0.id == model.current.focusedTerminalID } }
-    private var focusedTerminal: TerminalSession? { model.current.focusedTerminalID.flatMap { model.current.terminals[$0] } }
-    private var context: String { "\(model.selectedWorkspaceID)-\(model.current.focusedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.aiUsageSource.state?.remote?.isConnected == true)" }
+    private var focusedAgent: AgentTerminal? { model.focusedPanelCrowmap != nil ? nil : model.current.snapshot.agentTerminals.first { $0.id == model.current.focusedTerminalID } }
+    private var focusedTerminal: TerminalSession? { model.focusedPanelCrowmap != nil ? nil : model.current.focusedTerminalID.flatMap { model.current.terminals[$0] } }
+    private var context: String { "\(model.selectedWorkspaceID)-\(model.current.focusedTerminalID?.uuidString ?? "")-\(model.agentContextPath)-\(model.aiUsageSource.state?.remote?.isConnected == true)" }
     private var scope: String { context + "-\(refreshID)" }
+    private var pendingCrowmapAgents: [CrowmapAgentItem] {
+        guard let directory = model.focusedPanelCrowmap.map({ ($0 as NSString).deletingLastPathComponent }) ?? model.current.crowmapHistoryDirectory else { return [] }
+        return model.crowmapAgents(in: URL(fileURLWithPath: directory)).filter { item in
+            !entries.contains { $0.provider == item.agent.provider && ($0.id == item.agent.currentSessionID || $0.cwd == item.agent.directory) }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(model.workspaceFolderName(model.current.agentHistoryPath)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(model.workspaceFolderName(model.agentContextPath)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Spacer()
                 if loading || deleting { ProgressView().controlSize(.small) }
                 Button { refreshID += 1 } label: { PanelActionIcon(symbol: "arrow.clockwise") }
@@ -149,11 +158,20 @@ struct AgentHistoryPanel: View {
             TextField("Search sessions", text: $search).textFieldStyle(.roundedBorder).padding(.horizontal, 12)
             if let error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled).padding(.horizontal, 12) }
             ForEach(warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 12) }
-            if entries.isEmpty && !loading && error == nil {
+            if entries.isEmpty && pendingCrowmapAgents.isEmpty && !loading && error == nil {
                 Text("No saved agent sessions in this folder.").font(.system(size: 12)).foregroundStyle(CrowTheme.textDim).padding(12)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(pendingCrowmapAgents) { item in
+                        Button { model.openAgentTerminal(item.agent.id, workspaceID: item.state.id) } label: {
+                            HStack(spacing: 8) {
+                                AgentProviderIcon(provider: item.agent.provider, size: 14)
+                                Text(item.agent.title).font(.system(size: 12)).lineLimit(2)
+                                Spacer(minLength: 0)
+                            }.padding(8).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }.buttonStyle(CrowButtonStyle()).accessibilityIdentifier("crow.history.pending." + item.agent.id.uuidString)
+                    }
                     ForEach(entries.filter { search.isEmpty || ($0.title + " " + ($0.recent.last?.text ?? "")).localizedCaseInsensitiveContains(search) }, id: \.key) { entry in
                         sessionRow(entry)
                     }
@@ -170,7 +188,7 @@ struct AgentHistoryPanel: View {
             }
             .task(id: scope) {
                 guard !deleting else { return }
-                let state = model.current, path = model.current.agentHistoryPath
+                let state = model.current, path = model.agentContextPath
                 if loadedContext != context {
                     loadedContext = context; historySignature = nil
                     loadedPath = path; loadedState = state; entries = []; warnings = []; expanded = []; deletion = nil
@@ -257,21 +275,28 @@ struct AgentHistoryPanel: View {
         }.padding(.leading, 12).padding(.vertical, 4)
     }
     private func resume(_ entry: AgentHistoryEntry, fork: Bool) {
-        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
+        guard let state = loadedState, state === model.current, let path = loadedPath, path == model.agentContextPath else { return }
         if let hostID = loadedReverseHost, let pane = state.snapshot.layout?.activePaneID {
             model.reverseAgentRequest = ReverseAgentRequest(workspaceID: state.id, paneID: pane,
                 directory: path, provider: entry.provider, hostID: hostID, sessionID: entry.id, fork: fork,
                 tmuxTerminalID: model.tmuxLaunchTerminal(in: state, paneID: pane)?.id)
             return
         }
+        if !fork, (model.focusedPanelCrowmap != nil || state.crowmapHistoryDirectory != nil),
+           let owner = model.states.first(where: { candidate in candidate.snapshot.agentTerminals.contains { $0.provider == entry.provider && $0.currentSessionID == entry.id && candidate.terminals[$0.id]?.running == true } }),
+           let agent = owner.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.currentSessionID == entry.id }) {
+            model.openAgentTerminal(agent.id, workspaceID: owner.id); return
+        }
         if model.tmuxLaunchTerminal(in: state) == nil, !fork,
            let agent = state.snapshot.agentTerminals.first(where: { $0.provider == entry.provider && $0.currentSessionID == entry.id }), state.terminals[agent.id]?.running == true {
             model.openAgentTerminal(agent.id, workspaceID: state.id); return
         }
-        model.newAgentTerminal(entry.provider, directory: path, sessionID: entry.id, fork: fork, conversationTitle: entry.title)
+        let mapPath = model.focusedPanelCrowmap ?? state.focusedCrowmapPath ?? model.crowmap.maps.first { $0.deletingLastPathComponent().path == state.crowmapHistoryDirectory }?.path
+        model.newAgentTerminal(entry.provider, directory: entry.cwd ?? path, sessionID: entry.id, fork: fork, conversationTitle: entry.title,
+                               reuseTmux: mapPath == nil, crowmapPath: mapPath)
     }
     private func delete(_ entry: AgentHistoryEntry) {
-        guard let state = loadedState, state === model.current, let path = loadedPath, path == state.agentHistoryPath else { return }
+        guard let state = loadedState, state === model.current, let path = loadedPath, path == model.agentContextPath else { return }
         guard let source = loadedExecutionState, let sourcePath = loadedExecutionPath else { return }
         deleting = true; error = nil
         let ids = Set(model.agentHistoryTabIDs(entry, source: source))
@@ -317,7 +342,7 @@ struct AgentSkillsPanel: View {
         providers.first { $0.rawValue == providerID } ?? providers.first
     }
     private var scope: String {
-        "\(model.selectedWorkspaceID)-\(model.current.focusedTerminalID?.uuidString ?? "")-\(model.current.agentHistoryPath)-\(model.current.remote?.isConnected == true)-\(selectedProvider?.rawValue ?? "none")-\(refreshID)"
+        "\(model.selectedWorkspaceID)-\(model.current.focusedTerminalID?.uuidString ?? "")-\(model.agentContextPath)-\(model.current.remote?.isConnected == true)-\(selectedProvider?.rawValue ?? "none")-\(refreshID)"
     }
     private var visibleEntries: [AgentSkillEntry] {
         guard loadedScope == scope else { return [] }
@@ -327,9 +352,9 @@ struct AgentSkillsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(model.workspaceFolderName(model.current.agentHistoryPath))
+                Text(model.workspaceFolderName(model.agentContextPath))
                     .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    .help(model.current.agentHistoryPath)
+                    .help(model.agentContextPath)
                 Spacer(minLength: 0)
                 if loading { ProgressView().controlSize(.small) }
                 HStack(spacing: 2) {
@@ -366,6 +391,10 @@ struct AgentSkillsPanel: View {
                     ForEach(visibleEntries) { entry in
                         Button {
                             guard loadedScope == scope else { return }
+                            if let map = model.focusedPanelCrowmap, model.current.snapshot.workspace.isRemote {
+                                if let local = model.states.first(where: { !$0.snapshot.workspace.isRemote }) { model.activateWorkspace(local.id, reconnect: false) }
+                                else { model.openFolder(URL(fileURLWithPath: map).deletingLastPathComponent()) }
+                            }
                             model.openFile(FileEntry(name: (entry.path as NSString).lastPathComponent, path: entry.path, isDirectory: false))
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
@@ -395,13 +424,14 @@ struct AgentSkillsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .windowDragExcluded().accessibilityIdentifier("crow.skills.panel")
         .task(id: scope) {
-            let requestScope = scope, state = model.current, path = model.current.agentHistoryPath
+            let requestScope = scope, state = model.current, path = model.agentContextPath
             entries = []; warnings = []; error = nil; loading = true; loadedScope = ""
             guard let selectedProvider else { loading = false; loadedScope = requestScope; return }
             do {
                 // Debounce prompt/cwd updates; no scanner or agent process stays running.
                 try await Task.sleep(for: .milliseconds(180))
-                let data = try await AgentHistoryService.run(["action": "skills", "workspace": path, "providers": [selectedProvider.rawValue]], in: state, operation: "Agent skills")
+                let execution = model.panelAgentHistorySource()?.0 ?? state
+                let data = try await AgentHistoryService.run(["action": "skills", "workspace": path, "providers": [selectedProvider.rawValue]], in: execution, operation: "Agent skills")
                 let result = try JSONDecoder().decode(AgentSkillsResult.self, from: data)
                 try Task.checkCancellation()
                 guard scope == requestScope else { return }

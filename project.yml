@@ -42,6 +42,8 @@ targetTemplates:
           - Editor/markdown-editor.js
           - Editor/obsidian-preview.js
           - Editor/obsidian-preview.css
+          - Editor/crowmap.js
+          - Editor/crowmap.css
           - Editor/MarkdownEditor-LICENSES.txt
           - Screen/screen.html
           - Screen/screen-client.js
@@ -70,6 +72,10 @@ targetTemplates:
       - path: App/Screen/noVNC-AUTHORS.txt
         buildPhase: resources
       - path: App/Editor/obsidian-preview.js
+        buildPhase: resources
+      - path: App/Editor/crowmap.js
+        buildPhase: resources
+      - path: App/Editor/crowmap.css
         buildPhase: resources
       - path: App/Editor/obsidian-preview.css
         buildPhase: resources

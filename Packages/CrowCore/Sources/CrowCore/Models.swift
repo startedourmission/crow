@@ -287,6 +287,7 @@ public struct IMEProbe: Equatable, Sendable {
 }
 
 public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
+    case crowmap
     case files
     case workspaces
     case git
@@ -296,6 +297,7 @@ public enum SidebarPane: String, Hashable, Codable, Sendable, CaseIterable {
         let container = try decoder.singleValueContainer()
         let value = try container.decode(String.self)
         switch value {
+        case "crowmap": self = .crowmap
         case "files": self = .files
         case "git": self = .git
         case "automation": self = .automation

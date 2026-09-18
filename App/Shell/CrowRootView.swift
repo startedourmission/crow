@@ -163,7 +163,7 @@ struct RegularWorkspaceView: View {
                     VStack(spacing: 0) {
                         SidebarTopBar()
                         CrowDivider()
-                        SidebarView()
+                        SplitSidebarView()
                     }
                         .frame(width: SplitSizing.sidebarWidth(liveSidebarWidth ?? sidebarWidth, available: sidebarAvailable))
                         .background(CrowTheme.bg1)
@@ -178,9 +178,11 @@ struct RegularWorkspaceView: View {
                         sidebarDragStart = nil; liveSidebarWidth = nil
                     })
                 }
-                VStack(spacing: 0) {
-                    if !model.hasWorkspace { EmptyWorkspaceView() }
-                    else { WorkspaceAreaView() }
+                CrowmapDockArea {
+                    VStack(spacing: 0) {
+                        if !model.hasWorkspace { EmptyWorkspaceView() }
+                        else { WorkspaceAreaView() }
+                    }
                 }
                 .overlay(alignment: .topLeading) {
                     if !model.sidebarVisible {
@@ -324,13 +326,13 @@ struct CompactWorkspaceView: View {
     @State var keyboard = PhoneKeyboardFocus()
 
     var body: some View {
-        Group {
+        CrowmapDockArea { Group {
             if !model.hasWorkspace && model.compactSurface != .hosts {
                 EmptyWorkspaceView()
             } else {
                 ZStack {
                     if model.compactSurface == .hosts || model.compactSurface == .files {
-                        SidebarView()
+                        SplitSidebarView()
                     }
                     if model.hasWorkspace {
                         EditorAreaView()
@@ -344,6 +346,7 @@ struct CompactWorkspaceView: View {
                     }
                 }
             }
+        }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.crowPhoneLayout, true)
@@ -588,6 +591,9 @@ private struct PhoneWorkspaceBar: View {
         Button("Web Browser", systemImage: "globe") { model.newBrowser() }.disabled(!model.hasWorkspace)
         Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             .accessibilityIdentifier("crow.phone.workspaces")
+        Button { model.showCrowmap() } label: {
+            Label { Text("Crowmap") } icon: { CrowmapIcon().frame(width: 18, height: 18) }
+        }
         Button("Git", systemImage: "point.3.connected.trianglepath.dotted") {
             model.compactSurface = .files; model.sidebarPane = .git; model.sidebarVisible = true
         }.accessibilityIdentifier("crow.phone.git")

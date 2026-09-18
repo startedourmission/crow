@@ -27,6 +27,27 @@ class HistoryTests(unittest.TestCase):
         path.write_text("".join(json.dumps(record) + "\n" for record in records))
         return path
 
+    def test_crowmap_history_includes_its_sessions_and_preserves_resume_directory(self):
+        home = self.homes["claude"]
+        cwd = str(pathlib.Path(self.workspace) / ".sessions" / "selected-notes")
+        path = home / "projects/crowmap" / (self.session_id + ".jsonl")
+        self.write(path, [{"type": "user", "sessionId": self.session_id, "cwd": cwd,
+                           "message": {"content": "Work on the selected notes"}}])
+        self.assertIsNone(history.conversation("claude", path, self.workspace, home))
+        item = history.conversation("claude", path, self.workspace, home, True)
+        self.assertEqual(item["cwd"], history.canonical(cwd))
+        self.assertIsNone(history.conversation("claude", path, self.workspace + "-other", home, True))
+        self.assertFalse(history.matches_workspace(cwd + "/notes", self.workspace, True))
+        with patch.object(history, "homes", return_value=self.homes):
+            ordinary = history.list_sessions(self.workspace)
+            grouped = history.list_sessions(self.workspace, ordinary["signature"], True)
+            self.assertEqual(len(grouped["sessions"]), 1)
+            self.assertNotEqual(ordinary["signature"], grouped["signature"])
+            with self.assertRaisesRegex(ValueError, "belongs"):
+                history.delete_session(self.workspace + "-other", item, crowmap_sessions=True)
+            history.delete_session(self.workspace, item, crowmap_sessions=True)
+        self.assertFalse(path.exists())
+
     def test_codex_filters_setup_tools_and_other_workspaces(self):
         home = self.homes["codex"]
         path = home / "sessions/2026/09/14/rollout.jsonl"

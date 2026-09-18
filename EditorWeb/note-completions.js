@@ -40,8 +40,9 @@ export function attachTagSuggestions(field, choose, existing=()=>[]) {
   const close=()=>{menu?.close();menu=null;field.setAttribute('aria-expanded','false');};
   const refresh=()=>{
     close(); if(field!==document.activeElement || field.dataset.composing==='true')return;
-    const values=suggestions('tag',field.value.replace(/^#/,''),{exclude:existing()}); if(!values.length)return;
-    menu=completionMenu(()=>field.getBoundingClientRect(),values,value=>{close();choose(value);},'Tags');
+    const wiki=field.value.match(/^(!?)\[\[(.*)$/);
+    const values=suggestions(wiki?'note':'tag',wiki?wiki[2]:field.value.replace(/^#/,''),{embed:!!wiki?.[1],exclude:existing()}); if(!values.length)return;
+    menu=completionMenu(()=>field.getBoundingClientRect(),values,value=>{close();choose(wiki?wiki[1]+'[['+value.replace(/\.md$/i,'')+']]':value);},wiki?'Notes':'Tags');
     field.setAttribute('aria-expanded','true');
   };
   field.setAttribute('role','combobox');field.setAttribute('aria-autocomplete','list');field.setAttribute('aria-expanded','false');
@@ -67,7 +68,7 @@ export const NoteCompletions = Extension.create({
       const {selection}=view.state;
       if(!enabled()||!selection.empty||view.composing||!view.hasFocus()||selection.$from.parent.type.spec.code||selection.$from.marks().some(m=>m.type.name==='code'))return;
       const before=selection.$from.parent.textBetween(0,selection.$from.parentOffset,'','\ufffc');
-      const match=before.match(/(!?)\[\[([^\]\n]*)$/);if(!match||match[2].includes('|')||match[2].includes('#'))return;
+      const match=before.match(/(!?)\[\[((?:(?!\]\])[^\n])*)$/);if(!match||match[2].includes('|')||match[2].includes('#'))return;
       const key=selection.from+':'+match[0]; if(dismissed===key)return;
       const from=selection.from-match[0].length, values=suggestions('document',match[2],{embed:!!match[1]});
       if(!values.length)return;

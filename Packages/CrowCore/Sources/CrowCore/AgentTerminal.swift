@@ -33,6 +33,15 @@ public struct AgentTerminal: Codable, Sendable, Identifiable {
     public var historySessionID: String?
     public var createdAt: Date? = Date()
     public var firstPrompt: String?
+    /// Logical owner of a Crowmap agent; its terminal remains an ordinary tab.
+    public var crowmapPath: String?
+    public var crowmapDirectory: String? {
+        if let crowmapPath { return (crowmapPath as NSString).deletingLastPathComponent }
+        // Sessions created before explicit ownership was recorded retain their map scope.
+        let parent = (directory as NSString).deletingLastPathComponent
+        guard (parent as NSString).lastPathComponent == ".sessions", parent.contains("/.crow/crowmap/") else { return nil }
+        return (parent as NSString).deletingLastPathComponent
+    }
     public var currentSessionID: String? { historySessionID ?? (forkSession == true ? nil : sessionID) }
     /// Legacy isolated-agent tabs must be reopened explicitly as ordinary agents.
     public var isManagedReverse: Bool?

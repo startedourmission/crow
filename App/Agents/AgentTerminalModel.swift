@@ -1,6 +1,12 @@
 import CrowCore
 import Foundation
 
+struct CrowmapAgentItem: Identifiable {
+    let state: WorkspaceState
+    let agent: AgentTerminal
+    var id: UUID { agent.id }
+}
+
 extension AppModel {
     var workspaceHostIDs: [HostID] {
         var ids = hosts.map(\.id)
@@ -115,14 +121,38 @@ extension AppModel {
     }
 
     @discardableResult func newAgentTerminal(_ provider: AgentProvider, in paneID: UUID? = nil, directory: String? = nil,
-                                           sessionID: String? = nil, fork: Bool = false, conversationTitle: String? = nil) -> UUID? {
+                                           sessionID: String? = nil, fork: Bool = false, conversationTitle: String? = nil, reuseTmux: Bool = true, crowmapPath: String? = nil) -> UUID? {
+        let panelPath = crowmapPath ?? (directory == nil ? focusedPanelCrowmap : nil)
+        var destinationPane = paneID
+        if let panelPath, !hasWorkspace || current.snapshot.workspace.isRemote {
+            if let local = states.first(where: { !$0.snapshot.workspace.isRemote }) { activateWorkspace(local.id, reconnect: false) }
+            else { openFolder(URL(fileURLWithPath: panelPath).deletingLastPathComponent()) }
+            destinationPane = nil
+        }
         guard hasWorkspace else { folderImporterVisible = true; return nil }
         guard !current.snapshot.workspace.isRemote || current.remote?.isConnected == true else {
             report(CommandError("Connect this workspace’s SSH host before starting an agent.")); return nil
         }
-        var agent = AgentTerminal(provider: provider, directory: directory ?? current.contextRootPath)
+        // Resolve the launching pane before opening a terminal changes tab focus.
+        let launchPane = destinationPane.flatMap { id in current.snapshot.layout?.panes.first { $0.id == id } } ?? current.snapshot.layout?.activePane
+        let focusedMap: String? = {
+            guard directory == nil, !current.snapshot.workspace.isRemote else { return nil }
+            switch launchPane?.selected {
+            case .file(let id):
+                guard let buffer = current.snapshot.buffers.first(where: { $0.id == id }), !buffer.isRemote,
+                      buffer.path.hasSuffix(".crowmap") else { return nil }
+                return buffer.path
+            case .terminal(let id):
+                return current.snapshot.agentTerminals.first { $0.id == id }?.crowmapPath
+            default: return nil
+            }
+        }()
+        let mapPath = panelPath ?? focusedMap
+        let launchDirectory = directory ?? mapPath.map { ($0 as NSString).deletingLastPathComponent } ?? current.contextRootPath
+        var agent = AgentTerminal(provider: provider, directory: launchDirectory)
+        agent.crowmapPath = mapPath
         agent.sessionID = sessionID; agent.forkSession = fork; agent.conversationTitle = conversationTitle
-        if let terminal = tmuxLaunchTerminal(in: current, paneID: paneID), let location = terminal.tmuxLocation {
+        if reuseTmux, mapPath == nil, let terminal = tmuxLaunchTerminal(in: current, paneID: paneID), let location = terminal.tmuxLocation {
             guard !terminal.tmuxAgentLaunching else { return terminal.id }
             terminal.tmuxAgentLaunching = true
             let state = current
@@ -140,8 +170,10 @@ extension AppModel {
             }
             return terminal.id
         }
+        crowmapPanelFocused = false
         current.snapshot.agentTerminals.append(agent)
-        openCommandTerminal(id: agent.id, in: paneID)
+        openCommandTerminal(id: agent.id, in: destinationPane)
+        if let mapPath { crowmap.selected = URL(fileURLWithPath: mapPath); sidebarVisible = true }
         return agent.id
     }
 
@@ -165,7 +197,21 @@ extension AppModel {
         state.snapshot.selectedTerminalID = id
         state.maximizedPaneID = nil
         terminalVisible = true; compactSurface = .terminal
+        if let agent = state.snapshot.agentTerminals.first(where: { $0.id == id }), let directory = agent.crowmapDirectory {
+            crowmap.list()
+            crowmap.selected = agent.crowmapPath.map { URL(fileURLWithPath: $0) } ?? crowmap.maps.first { $0.deletingLastPathComponent().path == directory }
+            sidebarVisible = true
+        }
         schedulePersist()
+    }
+
+    func crowmapAgents(in folder: URL) -> [CrowmapAgentItem] {
+        let root = folder.resolvingSymlinksInPath().path
+        return states.flatMap { state in state.snapshot.agentTerminals.compactMap { agent -> CrowmapAgentItem? in
+            guard state.snapshot.terminalIDs.contains(agent.id), let directory = agent.crowmapDirectory,
+                  URL(fileURLWithPath: directory).resolvingSymlinksInPath().path == root else { return nil }
+            return CrowmapAgentItem(state: state, agent: agent)
+        } }.sorted { ($0.agent.createdAt ?? .distantPast) > ($1.agent.createdAt ?? .distantPast) }
     }
 
     func renameAgentTerminal(_ id: UUID, workspaceID: WorkspaceID, name: String) {
@@ -208,6 +254,7 @@ extension AppModel {
     }
 
     func agentHistorySource(for state: WorkspaceState) throws -> (WorkspaceState, String) {
+        if let context = panelAgentHistorySource() { return context }
         guard let agent = state.selectedAgent,
               let hostID = agent.reverseHostID else { return (state, state.agentHistoryPath) }
         guard let remote = states.first(where: { $0.snapshot.workspace.hostID == hostID && $0.remote?.isConnected == true }),

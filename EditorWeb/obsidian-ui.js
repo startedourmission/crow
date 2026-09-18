@@ -10,6 +10,8 @@ export function button(title, action, cls = '') {
 const glyphs = {
   text: 'M4 6h12M4 12h16M4 18h10', checkbox: 'M4 4h16v16H4V4Zm4 8 3 3 5-6',
   plus: 'M12 5v14M5 12h14', minus: 'M5 12h14', fit: 'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5',
+  sliders: 'M4 6h6m4 0h6M4 12h12m4 0h0M4 18h2m4 0h10M10 3v6m6 0v6M6 15v6',
+  history: 'M3 4v5h5M3 9a9 9 0 1 1 0 6M12 7v5l3 2', refresh: 'M20 4v5h-5M4 20v-5h5M4 9a8 8 0 0 1 13-5l3 5M4 15l3 5a8 8 0 0 0 13-5',
   undo: 'M8 5 3 10l5 5M3 10h11a6 6 0 0 1 0 12', redo: 'm16 5 5 5-5 5m5-5H10a6 6 0 0 0 0 12',
   save: 'M5 3h12l4 4v14H3V3h2Zm2 0v6h10V3M7 21v-8h10v8',
   note: 'M5 3h14v18H5V3Zm3 5h8m-8 4h8m-8 4h5',

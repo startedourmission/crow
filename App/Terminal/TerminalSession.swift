@@ -66,6 +66,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     @ObservationIgnored var imagePasteContext: (() -> String?)?
     @ObservationIgnored var uploadImage: ((Data, String) async throws -> String)?
     @ObservationIgnored private var imagePasteTask: Task<Void, Never>?
+    @ObservationIgnored var onFileDropFocus: (() -> Void)?
     @ObservationIgnored var onBytes: (([UInt8]) -> Void)?
     private let workspace: Workspace
     private let directory: String
@@ -95,6 +96,13 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         #endif
         super.init()
         (view as? any ImagePasteTerminal)?.onImagePaste = { [weak self] in self?.pasteClipboardImage() ?? false }
+        #if os(macOS)
+        view.registerForDraggedTypes(TerminalFileDrop.types)
+        (view as? any FileDropTerminal)?.onFileDrop = { [weak self] pasteboard in
+            guard let self, self.dropFiles(from: pasteboard) else { return false }
+            self.onFileDropFocus?(); return true
+        }
+        #endif
         view.optionAsMetaKey = false
         setFontSize(fontSize)
         #if os(macOS)
@@ -402,6 +410,53 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         } catch { imagePasteMessage = error.localizedDescription; return true }
     }
 
+    #if os(macOS)
+    @discardableResult func dropFiles(from pasteboard: NSPasteboard) -> Bool {
+        guard TerminalFileDrop.accepts(pasteboard) else { return false }
+        guard running else { imagePasteMessage = "Wait for the terminal to connect before dropping files."; return false }
+        guard !imagePasteInProgress else { imagePasteMessage = "Wait for the current attachment to finish."; return false }
+        let files = TerminalFileDrop.files(from: pasteboard)
+        if files.isEmpty {
+            do { return try ClipboardImage.png(from: pasteboard).map { pasteImage($0) } ?? false }
+            catch { imagePasteMessage = error.localizedDescription; return false }
+        }
+        guard !files.contains(where: { $0.path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }) else {
+            imagePasteMessage = "A filename contains control characters and cannot be inserted into the terminal."; return false
+        }
+        guard files.contains(where: TerminalFileDrop.isImage) else {
+            view.pasteLiteralText(files.map { ClipboardImage.pastedPath($0.path) }.joined()); return true
+        }
+        guard let context = imagePasteContext?(), let uploadImage else {
+            imagePasteMessage = "Connect the terminal before attaching images."; return false
+        }
+        let targetPane = tmuxLocation
+        imagePasteInProgress = true; imagePasteMessage = "Preparing dropped images…"
+        imagePasteTask = Task { [weak self] in
+            defer { self?.imagePasteInProgress = false; self?.imagePasteTask = nil }
+            do {
+                var paths: [String] = []
+                for file in files {
+                    try Task.checkCancellation()
+                    if TerminalFileDrop.isImage(file) {
+                        let data = try await Task.detached(priority: .userInitiated) { try TerminalFileDrop.readImage(file) }.value
+                        try Task.checkCancellation()
+                        paths.append(try await uploadImage(data, context))
+                    } else { paths.append(file.path) }
+                }
+                guard !Task.isCancelled, let self, self.running else { return }
+                guard self.imagePasteContext?() == context, self.tmuxLocation == targetPane else {
+                    self.imagePasteMessage = "The connection or terminal pane changed. Dropped files were not inserted."; return
+                }
+                self.view.pasteLiteralText(paths.map(ClipboardImage.pastedPath).joined())
+                self.imagePasteMessage = "Attached \(files.count) dropped file\(files.count == 1 ? "" : "s")."
+            } catch {
+                if !Task.isCancelled { self?.imagePasteMessage = "File drop failed: " + error.localizedDescription }
+            }
+        }
+        return true
+    }
+    #endif
+
     @discardableResult func pasteImage(_ data: Data) -> Bool {
         guard let context = imagePasteContext?(), let uploadImage else { return false }
         guard !imagePasteInProgress else { return true }
@@ -548,7 +603,18 @@ class CrowIOSTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, SnippetIn
 #endif
 
 #if os(macOS)
-private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, MarkedTextTerminal {
+private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, FileDropTerminal, MarkedTextTerminal {
+    var onFileDrop: ((NSPasteboard) -> Bool)?
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        TerminalFileDrop.accepts(sender.draggingPasteboard) ? .copy : []
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { draggingEntered(sender) }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { TerminalFileDrop.accepts(sender.draggingPasteboard) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard onFileDrop?(sender.draggingPasteboard) == true else { return false }
+        window?.makeFirstResponder(self); return true
+    }
+
     let composition = TerminalComposition()
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
@@ -573,7 +639,18 @@ private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTermi
     }
 }
 
-private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteTerminal, MarkedTextTerminal {
+private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteTerminal, FileDropTerminal, MarkedTextTerminal {
+    var onFileDrop: ((NSPasteboard) -> Bool)?
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        TerminalFileDrop.accepts(sender.draggingPasteboard) ? .copy : []
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { draggingEntered(sender) }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { TerminalFileDrop.accepts(sender.draggingPasteboard) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard onFileDrop?(sender.draggingPasteboard) == true else { return false }
+        window?.makeFirstResponder(self); return true
+    }
+
     let composition = TerminalComposition()
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)

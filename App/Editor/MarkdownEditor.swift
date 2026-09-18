@@ -10,6 +10,9 @@ struct MarkdownPreviewView: View {
     var onOpenLink: ((String) -> Void)?
     var noteLinksEnabled = false
     var noteCatalog = NoteLinks.Catalog()
+    var filename: String = ""
+    var crowmapNote = false
+    var onRename: ((String, String?) async throws -> String)?
     @State private var failure: String?
     var body: some View {
         VStack(spacing: 0) {
@@ -18,7 +21,7 @@ struct MarkdownPreviewView: View {
                 NativeEditor(text: $text, fontSize: fontSize, indentWidth: 4, lineNumbers: false,
                     findRequest: 0, onSave: onSave, locationRequest: locationRequest)
             } else {
-                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled, noteCatalog: noteCatalog)
+                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled, noteCatalog: noteCatalog, filename: filename, crowmapNote: crowmapNote, onRename: onRename)
             }
         }
     }
@@ -29,6 +32,9 @@ struct MarkdownPreviewView: View {
     var onOpenLink: ((String) -> Void)?
     var noteLinksEnabled = false
     var noteCatalog = NoteLinks.Catalog()
+    var filename: String = ""
+    var crowmapNote = false
+    var onRename: ((String, String?) async throws -> String)?
     var fontSize: Double?
     var text: Binding<String> = .constant("")
     var onSave: () -> Void = {}
@@ -42,6 +48,10 @@ struct MarkdownPreviewView: View {
     private var renderID = UUID()
     private var rendering = false
     private var publishedCatalog: NoteLinks.Catalog?
+    func publishTitle(_ view: WKWebView) {
+        guard loaded else { return }
+        view.callAsyncJavaScript("window.crowMarkdown.setFilename(name, crowmapNote)", arguments: ["name": filename, "crowmapNote": crowmapNote], in: nil, in: .defaultClient) { _ in }
+    }
     func publishCatalog(_ view: WKWebView) {
         guard loaded, publishedCatalog != noteCatalog else { return }
         publishedCatalog = noteCatalog
@@ -56,7 +66,7 @@ struct MarkdownPreviewView: View {
             }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        loaded = true; publishCatalog(webView); render(webView)
+        loaded = true; publishTitle(webView); publishCatalog(webView); render(webView)
     }
     func render(_ webView: WKWebView, force: Bool = false) {
         guard loaded else { return }
@@ -118,6 +128,18 @@ struct MarkdownPreviewView: View {
             guard text.wrappedValue == base else { render(view, force: true); return }
             source = value; text.wrappedValue = value
         case "render": render(view, force: true)
+        case "rename":
+            guard let title = body["title"] as? String, let onRename else { return }
+            let expected = body["expected"] as? String, replacement = body["source"] as? String
+            Task {
+                var result: [String: String]
+                do {
+                    guard expected == text.wrappedValue else { throw CommandError("The note changed. Try renaming again.") }
+                    let name = try await onRename(title, replacement)
+                    filename = name; result = ["name": name]
+                } catch { result = ["error": error.localizedDescription] }
+                _ = try? await view.callAsyncJavaScript("window.crowMarkdown.renamed(result)", arguments: ["result": result], in: nil, contentWorld: .defaultClient)
+            }
         case "save": onSave()
         #if os(iOS)
         case "keyboardModifiersConsumed": (view as? CrowMarkdownWebView)?.keyboardAccessory.resetModifiers()
@@ -169,6 +191,9 @@ struct MarkdownPreviewView: View {
     var onOpenLink: ((String) -> Void)?
     var noteLinksEnabled = false
     var noteCatalog = NoteLinks.Catalog()
+    var filename: String = ""
+    var crowmapNote = false
+    var onRename: ((String, String?) async throws -> String)?
     func makeCoordinator() -> MarkdownNavigation { MarkdownNavigation() }
     func makeView(_ coordinator: MarkdownNavigation) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -188,6 +213,8 @@ struct MarkdownPreviewView: View {
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.fontSize = fontSize; coordinator.failure = $failure
         coordinator.locationRequest = locationRequest
         coordinator.onOpenLink = onOpenLink
+        coordinator.filename = filename; coordinator.crowmapNote = crowmapNote; coordinator.onRename = onRename
+        coordinator.publishTitle(view)
         coordinator.noteCatalog = noteCatalog
         coordinator.publishCatalog(view)
         coordinator.noteLinksEnabled = noteLinksEnabled
@@ -198,6 +225,8 @@ struct MarkdownPreviewView: View {
         coordinator.text = $text; coordinator.onSave = onSave; coordinator.failure = $failure
         coordinator.locationRequest = locationRequest
         coordinator.onOpenLink = onOpenLink
+        coordinator.filename = filename; coordinator.crowmapNote = crowmapNote; coordinator.onRename = onRename
+        coordinator.publishTitle(view)
         let linksChanged = coordinator.noteLinksEnabled != noteLinksEnabled
         coordinator.noteCatalog = noteCatalog
         coordinator.publishCatalog(view)
@@ -294,7 +323,9 @@ struct WorkspaceMarkdownView: View {
         VStack(spacing: 0) {
             MarkdownPreviewView(text: $text, fontSize: model.settings.fontSize,
                 onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest,
-                onOpenLink: { model.openMarkdownLink($0, from: buffer.id) }, noteLinksEnabled: linksEnabled, noteCatalog: owner?.noteCatalog ?? .init())
+                onOpenLink: { model.openMarkdownLink($0, from: buffer.id) }, noteLinksEnabled: linksEnabled, noteCatalog: owner?.noteCatalog ?? .init(),
+                filename: buffer.title, crowmapNote: !buffer.isRemote && buffer.path.hasPrefix(model.crowmap.root.path + "/"),
+                onRename: { try await model.renameMarkdown(buffer.id, title: $0, source: $1) })
             if let status = owner?.noteIndexStatus, owner?.snapshot.isNoteVault == true {
                 Text(status).font(.caption).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 10)
             }

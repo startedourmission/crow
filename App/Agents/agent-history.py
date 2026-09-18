@@ -63,7 +63,15 @@ def safe_file(path, home):
     return path.is_file() and not path.is_symlink() and canonical(path).startswith(canonical(home) + os.sep)
 
 
-def conversation(provider, path, workspace, home):
+def matches_workspace(cwd, workspace, crowmap_sessions=False):
+    resolved = canonical(cwd)
+    root = canonical(workspace)
+    if resolved == root:
+        return True
+    return crowmap_sessions and pathlib.Path(resolved).parent == pathlib.Path(root) / ".sessions"
+
+
+def conversation(provider, path, workspace, home, crowmap_sessions=False):
     workspace = canonical(workspace)
     first = None
     recent = collections.deque(maxlen=3)
@@ -118,7 +126,7 @@ def conversation(provider, path, workspace, home):
         else:
             if kind in ("user", "assistant") and not item.get("synthetic_reason"):
                 role, text = kind, text_content(item.get("content"))
-        if cwd and canonical(cwd) != workspace:
+        if cwd and not matches_workspace(cwd, workspace, crowmap_sessions):
             return None
         if role not in ("user", "assistant") or not text.strip():
             continue
@@ -127,11 +135,11 @@ def conversation(provider, path, workspace, home):
             first = message
         if not recent or recent[-1] != message:
             recent.append(message)
-    if not cwd or canonical(cwd) != workspace or not valid_id(session_id) or first is None:
+    if not cwd or not matches_workspace(cwd, workspace, crowmap_sessions) or not valid_id(session_id) or first is None:
         return None
     stat = path.stat()
     return {"id": session_id, "provider": provider, "path": str(path), "title": (title or first["text"].split("\n")[0])[:150],
-            "modified": stat.st_mtime, "size": stat.st_size, "first": first, "recent": list(recent), "tokens": tokens,
+            "cwd": canonical(cwd), "modified": stat.st_mtime, "size": stat.st_size, "first": first, "recent": list(recent), "tokens": tokens,
             "started": started if started is not None else getattr(stat, "st_birthtime", None)}
 
 
@@ -152,10 +160,10 @@ def homes():
             "grok": pathlib.Path(os.environ.get("GROK_HOME", "~/.grok")).expanduser()}
 
 
-def list_sessions(workspace, known_signature=None):
+def list_sessions(workspace, known_signature=None, crowmap_sessions=False):
     result, warnings = [], []
     sources = []
-    fingerprint = hashlib.sha256(canonical(workspace).encode())
+    fingerprint = hashlib.sha256((canonical(workspace) + str(crowmap_sessions)).encode())
     for provider, home in homes().items():
         paths = []
         for path in candidates(provider, home, workspace):
@@ -201,7 +209,7 @@ def list_sessions(workspace, known_signature=None):
                 warnings.append("History scan reached its time limit. Showing sessions read so far.")
                 break
             try:
-                item = conversation(provider, path, workspace, home)
+                item = conversation(provider, path, workspace, home, crowmap_sessions)
                 if item:
                     if item["id"] in names:
                         item["title"] = names[item["id"]][:150]
@@ -263,12 +271,12 @@ def codex_rpc(method, params):
         process.stdout.close()
 
 
-def delete_session(workspace, expected, closed_tab=False):
+def delete_session(workspace, expected, closed_tab=False, crowmap_sessions=False):
     provider, path = expected["provider"], pathlib.Path(expected["path"])
     home = homes().get(provider)
     if home is None or not safe_file(path, home):
         raise ValueError("Session file is outside this CLI's history directory.")
-    current = conversation(provider, path, workspace, home)
+    current = conversation(provider, path, workspace, home, crowmap_sessions)
     if not current or current["id"] != expected["id"]:
         raise ValueError("This session no longer belongs to the selected workspace.")
     if not closed_tab and (current["modified"] != expected["modified"] or current["size"] != expected["size"]):
@@ -800,9 +808,9 @@ def main():
     if action == "skills":
         return list_skills(workspace, request.get("providers"))
     if action == "list":
-        return list_sessions(workspace, request.get("known_signature"))
+        return list_sessions(workspace, request.get("known_signature"), request.get("crowmap_sessions", False))
     if action == "delete":
-        return delete_session(workspace, request["session"], request.get("closed_tab", False))
+        return delete_session(workspace, request["session"], request.get("closed_tab", False), request.get("crowmap_sessions", False))
     if action == "codex-usage":
         return codex_rpc("account/rateLimits/read", {})
     if action == "usage":
