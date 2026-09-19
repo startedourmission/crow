@@ -1,10 +1,17 @@
 import {parse, stringify} from 'yaml';
 import {noteName} from './crowmap-links.js';
 import {editFrontmatter} from './frontmatter-model.js';
-const DAY=86400000;
+const DAY=86400000,MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+export const DATE_UNITS=['day','week','month','year'],UNIT_WIDTH=56;
 export const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
 export function day(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw Error('Choose a valid date.');return Date.parse(value+'T00:00:00Z')/DAY;}
 export const today=()=>new Date().toLocaleDateString('en-CA');
+const utc=d=>new Date(d*DAY),iso=d=>utc(d).toISOString().slice(0,10);
+function unitOrigin(d,unit){const t=utc(d);if(unit==='week')return d-((t.getUTCDay()+6)%7);if(unit==='month')return Date.UTC(t.getUTCFullYear(),t.getUTCMonth(),1)/DAY;if(unit==='year')return Date.UTC(t.getUTCFullYear(),0,1)/DAY;return d;}
+function nextUnit(d,unit){const origin=unitOrigin(d,unit),t=utc(origin);if(unit==='week')return origin+7;if(unit==='month')return Date.UTC(t.getUTCFullYear(),t.getUTCMonth()+1,1)/DAY;if(unit==='year')return Date.UTC(t.getUTCFullYear()+1,0,1)/DAY;return origin+1;}
+function unitIndex(d,unit){const t=utc(d);if(unit==='week')return unitOrigin(d,'week')/7;if(unit==='month')return t.getUTCFullYear()*12+t.getUTCMonth();if(unit==='year')return t.getUTCFullYear();return d;}
+function unitProgress(d,unit){const origin=unitOrigin(d,unit),span=nextUnit(origin,unit)-origin;return span? (d-origin)/span:0;}
+function tickLabel(d,unit){const t=utc(d);if(unit==='month')return MONTHS[t.getUTCMonth()];if(unit==='year')return String(t.getUTCFullYear());return String(t.getUTCMonth()+1).padStart(2,'0')+'/'+String(t.getUTCDate()).padStart(2,'0');}
 export function emptyMap(title='Crowmap'){return {version:1,id:uid(),title,projects:[],anchors:[],edges:[],notes:[],devices:[]};}
 export function validateMap(doc){
   if(doc?.version!==1||typeof doc.id!=='string'||typeof doc.title!=='string')throw Error('Unsupported Crowmap document.');
@@ -113,12 +120,24 @@ export function reorderMilestones(source,id,targetID){
  doc.view={...doc.view,milestoneOrder:{...doc.view?.milestoneOrder,[a.project+':'+a.date]:order}};
  return {doc,writes:[]};
 }
-export function layoutMap(doc,{dateWidths={}}={}){
-  validateMap(doc);const all=[...doc.anchors,...doc.notes];const start=Math.min(...all.map(n=>day(n.date)),day(today())),end=Math.max(...all.map(n=>day(n.date)),start+14);const scale=Math.min(44,Math.max(4,1400/Math.max(14,end-start)));
-  const widths=Object.entries(dateWidths).flatMap(([date,width])=>{try{const d=day(date);return Number.isFinite(width)&&width>0&&d>=start&&d<end?[[d,width]]:[];}catch{return [];}}).sort((a,b)=>a[0]-b[0]);
-  const xAtDay=value=>100+(value-start)*scale+widths.reduce((extra,[d,width])=>extra+(width-scale)*Math.min(1,Math.max(0,value-d)),0);
-  const x=date=>xAtDay(day(date)),dateAt=position=>{let extra=0,value;for(const [d,width]of widths){const left=100+(d-start)*scale+extra;if(position<left){value=start+(position-100-extra)/scale;break;}if(position<=left+width){value=d+(position-left)/width;break;}extra+=width-scale;}value??=start+(position-100-extra)/scale;return new Date(Math.round(value)*DAY).toISOString().slice(0,10);};
-  const dateBounds=date=>({left:xAtDay(day(date)-.5),right:xAtDay(day(date)+.5)});const active=mainMilestoneIDs(doc);
+export function layoutMap(doc,{unit='day'}={}){
+  validateMap(doc);const scaleUnit=DATE_UNITS.includes(unit)?unit:'day',all=[...doc.anchors,...doc.notes];
+  const rawStart=Math.min(...all.map(n=>day(n.date)),day(today())),rawEnd=Math.max(...all.map(n=>day(n.date)),rawStart+14);
+  const start=unitOrigin(rawStart,scaleUnit);let end=unitOrigin(rawEnd,scaleUnit);if(end<=rawEnd)end=nextUnit(end,scaleUnit);if(end<=start)end=nextUnit(start,scaleUnit);
+  const origin=unitIndex(start,scaleUnit),scale=UNIT_WIDTH;
+  const xAtDay=value=>100+(unitIndex(value,scaleUnit)+unitProgress(value,scaleUnit)-origin)*scale;
+  const x=date=>xAtDay(day(date));
+  const dateAt=position=>{
+    const t=(position-100)/scale+origin;let d;
+    if(scaleUnit==='day')d=Math.round(t);
+    else if(scaleUnit==='week')d=Math.round(t*7);
+    else if(scaleUnit==='month'){const idx=Math.floor(t),frac=t-idx,year=Math.floor(idx/12),month=((idx%12)+12)%12,first=Date.UTC(year,month,1)/DAY,days=nextUnit(first,'month')-first;d=first+Math.min(days-1,Math.max(0,Math.round(frac*days)));}
+    else {const year=Math.floor(t),frac=t-year,first=Date.UTC(year,0,1)/DAY,days=nextUnit(first,'year')-first;d=first+Math.min(days-1,Math.max(0,Math.round(frac*days)));}
+    return iso(d);
+  };
+  const dateBounds=date=>{const originDay=unitOrigin(day(date),scaleUnit);return {left:xAtDay(originDay),right:xAtDay(nextUnit(originDay,scaleUnit))};};
+  const ticks=[];for(let d=start;d<=end;d=nextUnit(d,scaleUnit))ticks.push({date:iso(d),x:xAtDay(d),label:tickLabel(d,scaleUnit)});
+  const active=mainMilestoneIDs(doc);
   const anchorByID=new Map(doc.anchors.map(a=>[a.id,a])),ghostLanes=new Map();let laneCount=0;
   for(const project of doc.projects){let lane=0;for(const a of milestoneDisplayOrder(doc,project).filter(a=>!active.has(a.id)))ghostLanes.set(a.id,++lane);laneCount=Math.max(laneCount,lane);}
   const laneGap=56;let projectGap=250;const priorityY=priority=>100+(priority-1)*projectGap,priorityAt=y=>Math.max(1,Math.min(doc.projects.length,Math.round((y-100)/projectGap)+1));
@@ -146,7 +165,7 @@ export function layoutMap(doc,{dateWidths={}}={}){
     if(n.device&&!devices.has(key))devices.set(key,{key,device:n.device,x:nx,y:y+42,origin:{x:nx,y},attach:n.attach});
     notePoints.set(n.id,{...n,x:nx,y:ny+(n.device?38:0),origin:n.device?devices.get(key):{x:nx,y}});
   }
-  return {points,edgePoints,notePoints,devices,width:Math.max(1100,x(new Date(end*DAY).toISOString().slice(0,10))+240),height:Math.max(600,doc.projects.length*projectGap+180,...[...points.values()].map(n=>n.y+100),...[...notePoints.values()].map(n=>n.y+160)),start,end,scale,x,dateAt,dateBounds,priorityY,priorityAt,rankAt:(project,date)=>rank(project,date)+1};
+  return {points,edgePoints,notePoints,devices,width:Math.max(1100,xAtDay(end)+240),height:Math.max(600,doc.projects.length*projectGap+180,...[...points.values()].map(n=>n.y+100),...[...notePoints.values()].map(n=>n.y+160)),start,end,scale,unit:scaleUnit,ticks,x,dateAt,dateBounds,priorityY,priorityAt,rankAt:(project,date)=>rank(project,date)+1};
 }
 export function timelineCurveY(a,b,x){
   if(a.x===b.x)return a.y;const fraction=Math.min(1,Math.max(0,(x-a.x)/(b.x-a.x)));let low=0,high=1;

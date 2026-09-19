@@ -449,18 +449,16 @@ import WebKit
         const viewport=document.querySelector('.map-viewport'),ruler=document.querySelector('.map-date-axis');
         viewport.style.height='160px';const oldTop=ruler.getBoundingClientRect().top;viewport.scrollTop=100;
         await new Promise(r=>setTimeout(r,50));const sticky=viewport.scrollTop>0&&Math.abs(ruler.getBoundingClientRect().top-oldTop)<1;viewport.scrollTop=0;viewport.style.height='';
-        const canvas=document.querySelector('svg[aria-label="Project timeline"]'),before=Number(canvas.getAttribute('width'));
-        const boundaries=()=>[...document.querySelectorAll('.date-boundary')].map(n=>Number(n.getAttribute('x1')));const original=boundaries();
-        const handle=document.querySelectorAll('.date-resize')[2],r=handle.getBoundingClientRect();
-        handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:r.x+4,clientY:r.y+10}));
-        window.dispatchEvent(new PointerEvent('pointermove',{clientX:r.x+44,clientY:r.y+10}));window.dispatchEvent(new PointerEvent('pointerup'));
-        const wider=Number(document.querySelector('svg[aria-label="Project timeline"]').getAttribute('width'))>before;
-        const changed=boundaries(),near=(a,b)=>Math.abs(a-b)<.01;const columnOnly=near(original[2],changed[2])&&changed[3]-changed[2]>original[3]-original[2]&&near(changed[4]-changed[3],original[4]-original[3])&&near(changed[1]-changed[0],original[1]-original[0]);
-        document.querySelectorAll('.date-resize')[2].dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));
+        const gaps=()=>{const xs=[...document.querySelectorAll('.date-boundary')].map(n=>Number(n.getAttribute('x1')));return xs.slice(1).map((x,i)=>x-xs[i]);};
+        const dayGaps=gaps(),equalDays=dayGaps.length>1&&dayGaps.every(g=>Math.abs(g-dayGaps[0])<0.01);
+        const unit=document.querySelector('[aria-label="Date scale"]');unit.value='month';unit.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(r=>setTimeout(r,50));
+        const monthGaps=gaps(),equalMonths=monthGaps.length>=1&&monthGaps.every(g=>Math.abs(g-monthGaps[0])<0.01);
+        unit.value='day';unit.dispatchEvent(new Event('change',{bubbles:true}));
         document.querySelector('.map-viewport').scrollLeft=0;
-        return {sticky,wider,columnOnly,noDates:!document.querySelector('.anchor-date'),curved:document.querySelector('.timeline-edge').tagName==='path'};
+        return {sticky,equalDays,equalMonths,hasScale:unit?.options.length===4,noDates:!document.querySelector('.anchor-date'),curved:document.querySelector('.timeline-edge').tagName==='path'};
         """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? [String: Bool]
-        XCTAssertEqual(ui, ["sticky": true, "wider": true, "columnOnly": true, "noDates": true, "curved": true])
+        XCTAssertEqual(ui, ["sticky": true, "equalDays": true, "equalMonths": true, "hasScale": true, "noDates": true, "curved": true])
         try await js(#"""
         const nodes=[...document.querySelectorAll('.work-note')];for(const n of nodes)n.dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}));
         """#)
@@ -678,6 +676,41 @@ import WebKit
         var old = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
         old.removeValue(forKey: "crowmapPanel")
         XCTAssertNil(try JSONDecoder().decode(SessionSnapshot.self, from: JSONSerialization.data(withJSONObject: old)).crowmapPanel)
+    }
+
+    func testCrowmapImportFolderCreatesCacheAndLinksOutsideNotes() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps"))
+        let outside = root.appendingPathComponent("Outside/ProjectNotes")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let note = "---\nkind: start\ntitle: Project\ndate: 2026-09-18\npriority: 1\nmilestones: []\n---\nBody\n"
+        try Data(note.utf8).write(to: outside.appendingPathComponent("Project.md"))
+        let imported = try model.crowmap.importFolder(outside)
+        XCTAssertEqual(imported.lastPathComponent, "ProjectNotes.crowmap")
+        XCTAssertTrue(model.crowmap.maps.contains { $0.resolvingSymlinksInPath() == imported.resolvingSymlinksInPath() })
+        XCTAssertEqual(try TextFiles.read(outside.appendingPathComponent("Project.md")), note)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("ProjectNotes.crowmap").path))
+        XCTAssertEqual(imported.deletingLastPathComponent().resolvingSymlinksInPath(), outside.resolvingSymlinksInPath())
+        XCTAssertEqual(try imported.deletingLastPathComponent().resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, true)
+        XCTAssertTrue(model.crowmapIsLinkedFolder(imported))
+        XCTAssertFalse(model.crowmapOwnsFolder(imported))
+        model.importCrowmap(from: outside)
+        XCTAssertEqual(model.crowmapTabs.map { $0.url.resolvingSymlinksInPath() }, [imported.resolvingSymlinksInPath()])
+        XCTAssertEqual(try model.crowmap.importFolder(outside).resolvingSymlinksInPath(), imported.resolvingSymlinksInPath(), "Re-importing the same folder reopens the existing map")
+        XCTAssertEqual(model.crowmap.maps.count, 1)
+        let original = try await model.deleteCrowmap(imported)
+        XCTAssertEqual(original.resolvingSymlinksInPath(), outside.resolvingSymlinksInPath())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: imported.deletingLastPathComponent().path))
+        XCTAssertEqual(try TextFiles.read(outside.appendingPathComponent("Project.md")), note)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("ProjectNotes.crowmap").path))
+        XCTAssertTrue(model.crowmap.maps.isEmpty)
+        let inside = model.crowmap.root.appendingPathComponent("LocalNotes")
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        try Data(note.utf8).write(to: inside.appendingPathComponent("Project.md"))
+        let local = try model.crowmap.importFolder(inside)
+        XCTAssertEqual(local.deletingLastPathComponent().resolvingSymlinksInPath(), inside.resolvingSymlinksInPath())
+        XCTAssertNotEqual(try local.deletingLastPathComponent().resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: local.path))
+        do { _ = try model.crowmap.importFolder(model.crowmap.root); XCTFail("The library itself is not a map") } catch {}
     }
 
     func testCrowmapRenameDuplicateAndDeleteKeepMapsIndependent() async throws {

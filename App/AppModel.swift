@@ -109,6 +109,13 @@ final class AppModel {
             if let url = crowmap.selected { openCrowmap(url) }
         } catch { crowmap.error = error.localizedDescription; report(error) }
     }
+    func importCrowmap(from folder: URL) {
+        let accessed = folder.startAccessingSecurityScopedResource()
+        defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
+        do {
+            openCrowmap(try crowmap.importFolder(folder))
+        } catch { crowmap.error = error.localizedDescription; report(error) }
+    }
     func openCrowmap(_ url: URL) {
         do {
             let path = url.standardizedFileURL.path
@@ -191,8 +198,10 @@ final class AppModel {
     var deleteWorkspaceID: WorkspaceID?
     var hostKeyChallenge: HostKeyChallenge?
     var folderImporterVisible = false
+    var crowmapFolderImporterVisible = false
     #if os(macOS)
     @ObservationIgnored private(set) var folderSelectionPanel: NSOpenPanel?
+    @ObservationIgnored private(set) var crowmapFolderSelectionPanel: NSOpenPanel?
     func presentFolderPicker() {
         if let panel = folderSelectionPanel { panel.makeKeyAndOrderFront(nil); return }
         let panel = NSOpenPanel()
@@ -210,6 +219,26 @@ final class AppModel {
             let url = panel?.url
             self.folderSelectionPanel = nil; self.folderImporterVisible = false
             if response == .OK, let url { self.openFolder(url) }
+        }
+        panel.makeKeyAndOrderFront(nil)
+    }
+    func presentCrowmapFolderPicker() {
+        if let panel = crowmapFolderSelectionPanel { panel.makeKeyAndOrderFront(nil); return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = true
+        panel.prompt = "Open"; panel.title = "Open Folder as Crowmap"
+        let pathModel = FolderPathCompletion(panel: panel, initialDirectory: current.snapshot.workspace.isRemote ? nil : current.snapshot.rootPath)
+        let accessory = NSHostingView(rootView: FolderPathAccessory(completion: pathModel))
+        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 208)
+        panel.accessoryView = accessory; panel.isAccessoryViewDisclosed = true
+        crowmapFolderSelectionPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self, weak panel] response in
+            guard let self else { return }
+            let url = panel?.url
+            self.crowmapFolderSelectionPanel = nil; self.crowmapFolderImporterVisible = false
+            if response == .OK, let url { self.importCrowmap(from: url) }
         }
         panel.makeKeyAndOrderFront(nil)
     }

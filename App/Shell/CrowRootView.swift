@@ -35,6 +35,7 @@ struct CrowRootView: View {
         #endif
         .tint(CrowTheme.accent)
         .modifier(FolderPickerPresentation())
+        .modifier(CrowmapFolderPickerPresentation())
         .task(id: model.tmuxContextTrackingID) { await model.followTmuxContext() }
         .sheet(isPresented: Bindable(model).hostEditorVisible, onDismiss: {
             model.finishHostEditorDismissal()
@@ -800,6 +801,21 @@ private struct FolderPickerPresentation: ViewModifier {
         #else
         content.fileImporter(isPresented: Bindable(model).folderImporterVisible, allowedContentTypes: [.folder]) { result in
             do { model.openFolder(try result.get()) } catch { model.report(error) }
+        }
+        #endif
+    }
+}
+
+private struct CrowmapFolderPickerPresentation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.onChange(of: model.crowmapFolderImporterVisible) { _, visible in
+            if visible { model.presentCrowmapFolderPicker() }
+        }
+        #else
+        content.fileImporter(isPresented: Bindable(model).crowmapFolderImporterVisible, allowedContentTypes: [.folder]) { result in
+            do { model.importCrowmap(from: try result.get()) } catch { model.report(error) }
         }
         #endif
     }

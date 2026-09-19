@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {emptyMap,createProject,addNote,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,noteText,layoutMap,readNote} from './crowmap-model.js';
+import {emptyMap,createProject,addNote,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,noteText,layoutMap,readNote,UNIT_WIDTH} from './crowmap-model.js';
 import {linkedTransaction,resolveMap,deleteWorkNotes,moveNodes,movedDate,graphLinks} from './crowmap-links.js';
 import {floatOffset,nodeDegrees,nodeRadius} from './crowmap-motion.js';
 const files=r=>Object.fromEntries(r.writes.map(w=>[w.name,w.text]));
@@ -21,7 +21,7 @@ test('Date moves reattach work without copying it and milestone dates respect at
 test('Priority moves cross projects and date spacing keeps attachments aligned',()=>{
  let {doc,texts}=fixture();let r=linkedTransaction(createProject(doc,{title:'Other',date:'2026-10-01',priority:2,milestones:[{title:'End',date:'2026-11-01'}]},Object.keys(texts)),texts);Object.assign(texts,files(r));doc=r.doc;
  r=moveNodes(doc,[doc.projects[1].route[1]],{days:-15,priority:1},texts);Object.assign(texts,files(r));const layout=layoutMap(r.doc),other=r.doc.projects[1].route[1],end=r.doc.projects[0].route.at(-1);assert(layout.points.get(other).y<layout.points.get(end).y);
- const wide=layoutMap(r.doc,{dateWidths:{'2026-10-10':layout.scale+100}}),start=r.doc.projects[0].route[0];assert.equal(wide.points.get(start).x,layout.points.get(start).x);assert.equal(wide.points.get(end).x,layout.points.get(end).x+100);assert.equal(readNote(texts[r.doc.anchors.find(a=>a.id===other).note]).meta.priority,1);
+ assert.equal(readNote(texts[r.doc.anchors.find(a=>a.id===other).note]).meta.priority,1);
 });
 test('Bulk deletion handles mutually linked notes atomically and keeps surviving link labels',()=>{
  let {doc,texts}=fixture();for(const [title,body]of [['A work',''],['B work','[[A work]]'],['Keep','[[A work|first]] [[B work]]']]){const r=linkedTransaction(addNote(doc,{title,body,date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;}
@@ -32,16 +32,15 @@ test('Repeated links do not inflate node size and floating stays close to the da
  const degree=nodeDegrees(doc,graphLinks(doc,texts));assert.equal(degree.get(doc.notes[0].id),2);assert(nodeRadius('note',5)>nodeRadius('note',1));for(let t=0;t<100;t++){const offset=floatOffset('work',t);assert(Math.abs(offset.x)<44);assert(Math.abs(offset.y)<=5);}assert.notDeepEqual(floatOffset('work',0),floatOffset('work',2));
 });
 
-test('Resizing one date interval preserves neighbors, shifts later nodes, and keeps date drops accurate',()=>{
+test('Date columns keep a fixed unit width and round-trip every date',()=>{
  let {doc,texts}=fixture();const r=linkedTransaction(addNote(doc,{title:'Middle',date:'2026-10-11',attach:{kind:'edge',id:doc.edges[1].id}}),texts);doc=r.doc;
- const original=structuredClone(doc),normal=layoutMap(doc),wide=layoutMap(doc,{dateWidths:{'2026-10-10':normal.scale+80,'2026-10-11':normal.scale+80,'2026-10-15':normal.scale/2}});
- assert.equal(wide.x('2026-10-10'),normal.x('2026-10-10'));
- assert.equal(wide.x('2026-10-12')-wide.x('2026-10-10'),normal.x('2026-10-12')-normal.x('2026-10-10')+160);
- assert(Math.abs(wide.x('2026-10-13')-wide.x('2026-10-12')-normal.scale)<1e-9);
- assert(Math.abs(wide.x('2026-10-09')-wide.x('2026-10-08')-normal.scale)<1e-9);
- assert.equal(wide.notePoints.get(doc.notes[0].id).x,normal.notePoints.get(doc.notes[0].id).x+80);
- for(let d=1;d<=30;d++){const date='2026-10-'+String(d).padStart(2,'0');assert.equal(wide.dateAt(wide.x(date)),date);const bounds=wide.dateBounds(date);assert(bounds.left<wide.x(date)&&bounds.right>wide.x(date));}
- assert.equal(wide.dateAt(wide.x('2026-10-10')+(normal.scale+80)*.75),'2026-10-11');
+ const original=structuredClone(doc),days=layoutMap(doc,{unit:'day'});
+ assert.equal(days.x('2026-10-11')-days.x('2026-10-10'),UNIT_WIDTH);
+ for(let d=1;d<=30;d++){const date='2026-10-'+String(d).padStart(2,'0');assert.equal(days.dateAt(days.x(date)),date);const bounds=days.dateBounds(date);assert.equal(bounds.right-bounds.left,UNIT_WIDTH);assert(bounds.left<=days.x(date)&&days.x(date)<bounds.right);}
+ const weeks=layoutMap(doc,{unit:'week'});assert.equal(weeks.x('2026-10-12')-weeks.x('2026-10-05'),UNIT_WIDTH);assert.equal(weeks.dateAt(weeks.x('2026-10-15')),'2026-10-15');
+ const months=layoutMap(doc,{unit:'month'});assert.equal(months.x('2026-11-01')-months.x('2026-10-01'),UNIT_WIDTH);assert.equal(months.dateAt(months.x('2026-10-20')),'2026-10-20');
+ const years=layoutMap(createProject(emptyMap(),{title:'Span',date:'2025-06-01',priority:1,milestones:[{title:'Later',date:'2027-03-01'}]}).doc,{unit:'year'});
+ assert.equal(years.x('2027-01-01')-years.x('2026-01-01'),UNIT_WIDTH);assert.equal(years.dateAt(years.x('2026-08-15')),'2026-08-15');
  assert.deepEqual(doc,original);
 });
 
@@ -90,7 +89,7 @@ test('Consecutive same-date main milestones have separate vertical positions and
  assert(points.slice(1).every((p,i)=>p.y-points[i].y>=48));
  for(const edge of r.doc.edges){const line=layout.edgePoints.get(edge.id);assert.equal(line[0],layout.points.get(edge.from));assert.equal(line.at(-1),layout.points.get(edge.to));}
  assert.deepEqual(r.doc,before,'Visual stacking must not edit dates or priorities');
- const compressed=layoutMap(r.doc,{dateWidths:{'2026-10-09':1}});assert.equal(new Set(nodes.map(n=>compressed.points.get(n.id).y)).size,3);
+ assert.equal(new Set(nodes.map(n=>layoutMap(r.doc,{unit:'year'}).points.get(n.id).y)).size,3);
 });
 
 test('Same-date ordering only changes view state and survives reload without modifying Markdown',async()=>{

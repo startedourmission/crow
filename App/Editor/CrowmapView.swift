@@ -78,16 +78,19 @@ import WebKit
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             var found: [URL] = []
-            for entry in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            for entry in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) {
                 let file = root.appendingPathComponent(entry.lastPathComponent)
                 if file.pathExtension == "crowmap" { found.append(file) }
-                else if (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-                    for child in try FileManager.default.contentsOfDirectory(at: file, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) where child.pathExtension == "crowmap" {
+                else {
+                    let folder = file.resolvingSymlinksInPath()
+                    var isDirectory: ObjCBool = false
+                    guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+                    for child in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) where child.pathExtension == "crowmap" {
                         found.append(file.appendingPathComponent(child.lastPathComponent))
                     }
                 }
             }
-            maps = found.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+            maps = found.filter { FileManager.default.fileExists(atPath: $0.resolvingSymlinksInPath().path) }
                 .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             error = nil
         } catch { self.error = error.localizedDescription }
@@ -100,9 +103,52 @@ import WebKit
         let folder = root.appendingPathComponent(base, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
         let url = folder.appendingPathComponent(base + ".crowmap")
-        let value: [String: Any] = ["version": 1, "id": UUID().uuidString, "title": title, "projects": [], "anchors": [], "edges": [], "notes": [], "devices": []]
-        try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: .withoutOverwriting)
+        try writeEmptyMap(to: url, title: title)
         try load(url); list()
+    }
+    /// Open a folder of Markdown notes as a Crowmap. Folders already in the library get a display cache if needed; other folders are linked in (copied on iOS).
+    @discardableResult func importFolder(_ folder: URL) throws -> URL {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        let source = folder.standardizedFileURL.resolvingSymlinksInPath()
+        guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw CommandError("Choose a folder to open as a Crowmap.")
+        }
+        let rootPath = root.resolvingSymlinksInPath().path
+        guard source.path != rootPath else { throw CommandError("Choose a map folder, not the Crowmap library.") }
+        let deleted = root.deletingLastPathComponent().appendingPathComponent("crowmap-deleted").resolvingSymlinksInPath().path
+        if source.path == deleted || source.path.hasPrefix(deleted + "/") {
+            throw CommandError("Open a map folder, not crowmap-deleted.")
+        }
+        let title = source.lastPathComponent
+        try TextFiles.validateName(title)
+        guard !title.hasPrefix(".") else { throw CommandError("Choose a visible folder.") }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        list()
+        if let existing = maps.first(where: { $0.deletingLastPathComponent().resolvingSymlinksInPath() == source }) {
+            try load(existing); return selected ?? existing
+        }
+        let caches = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+            .filter { $0.pathExtension == "crowmap" }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let cacheName: String
+        if caches.isEmpty {
+            cacheName = title + ".crowmap"
+            try writeEmptyMap(to: source.appendingPathComponent(cacheName), title: title)
+        } else if let named = caches.first(where: { $0.deletingPathExtension().lastPathComponent == title }) {
+            cacheName = named.lastPathComponent
+        } else {
+            cacheName = caches[0].lastPathComponent
+        }
+        if source.deletingLastPathComponent().resolvingSymlinksInPath() == root.resolvingSymlinksInPath() {
+            let url = source.appendingPathComponent(cacheName)
+            try load(url); list(); return selected ?? url
+        }
+        #if os(iOS)
+        return try importFolderByCopying(source, title: title, cacheName: cacheName)
+        #else
+        return try importFolderByLinking(source, cacheName: cacheName)
+        #endif
     }
     func noteURL(_ name: String, in folder: URL? = nil) throws -> URL {
         let directory = folder ?? noteRoot
@@ -123,8 +169,9 @@ import WebKit
         guard let doc = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any], doc["version"] as? Int == 1 else { throw CommandError("Unsupported Crowmap document.") }
         var available: [String: String] = [:]
         let directory = url.deletingLastPathComponent()
-        try ensureAgentInstructions(in: directory)
-        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) where file.pathExtension == "md" && file.lastPathComponent.lowercased() != "agents.md" {
+        let listing = directory.resolvingSymlinksInPath()
+        try ensureAgentInstructions(in: listing)
+        for file in try FileManager.default.contentsOfDirectory(at: listing, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) where file.pathExtension == "md" && file.lastPathComponent.lowercased() != "agents.md" {
             let safe = try noteURL(file.lastPathComponent, in: directory)
             if (try? safe.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { available[file.lastPathComponent] = try TextFiles.read(safe) }
         }
@@ -303,6 +350,45 @@ import WebKit
         }
         try load(selected)
     }
+    private func writeEmptyMap(to url: URL, title: String) throws {
+        let value: [String: Any] = ["version": 1, "id": UUID().uuidString, "title": title, "projects": [], "anchors": [], "edges": [], "notes": [], "devices": []]
+        try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: .withoutOverwriting)
+    }
+    private func uniqueLibraryName(_ base: String) -> String {
+        var name = base, number = 2
+        while FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path)
+                || FileManager.default.fileExists(atPath: root.appendingPathComponent(name + ".crowmap").path) {
+            name = base + " \(number)"; number += 1
+        }
+        return name
+    }
+    #if os(iOS)
+    private func importFolderByCopying(_ source: URL, title: String, cacheName: String) throws -> URL {
+        let name = uniqueLibraryName(title), destination = root.appendingPathComponent(name)
+        let staging = root.appendingPathComponent(".import-" + UUID().uuidString)
+        let fm = FileManager.default
+        try fm.createDirectory(at: staging, withIntermediateDirectories: false)
+        do {
+            for entry in try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+            where entry.lastPathComponent != ".sessions" {
+                try fm.copyItem(at: entry, to: staging.appendingPathComponent(entry.lastPathComponent))
+            }
+            let copied = staging.appendingPathComponent(cacheName)
+            if !fm.fileExists(atPath: copied.path) { try writeEmptyMap(to: copied, title: name) }
+            try fm.moveItem(at: staging, to: destination)
+        } catch { try? fm.removeItem(at: staging); throw error }
+        let url = destination.appendingPathComponent(cacheName)
+        try load(url); list(); return selected ?? url
+    }
+    #else
+    private func importFolderByLinking(_ source: URL, cacheName: String) throws -> URL {
+        let link = root.appendingPathComponent(uniqueLibraryName(source.lastPathComponent))
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: source.path)
+        let url = link.appendingPathComponent(cacheName)
+        do { try load(url); list(); return selected ?? url }
+        catch { try? FileManager.default.removeItem(at: link); throw error }
+    }
+    #endif
 }
 
 struct CrowmapSidebar: View {
@@ -317,9 +403,13 @@ struct CrowmapSidebar: View {
                 Spacer()
                 Button { model.crowmap.list() } label: { PanelActionIcon(symbol: "arrow.clockwise") }
                     .buttonStyle(CrowButtonStyle()).help("Refresh Crowmap files").accessibilityLabel("Refresh Crowmap files").windowDragExcluded()
-                Button { model.createCrowmap() } label: { PanelActionIcon(symbol: "plus") }
-                    .buttonStyle(CrowButtonStyle()).help("New Crowmap").accessibilityLabel("New Crowmap")
-                    .accessibilityIdentifier("crow.crowmap.new-map").windowDragExcluded()
+                CrowMenu {
+                    Button("New Crowmap", systemImage: "plus") { model.createCrowmap() }
+                        .accessibilityIdentifier("crow.crowmap.new-map")
+                    Button("Open Folder…", systemImage: "folder") { model.crowmapFolderImporterVisible = true }
+                        .accessibilityIdentifier("crow.crowmap.open-folder")
+                } label: { PanelActionIcon(symbol: "plus") }
+                    .help("New Crowmap or open a folder").accessibilityLabel("New Crowmap or open a folder")
             }.padding(.horizontal, 12).frame(height: 40)
             ScrollView {
                 VStack(spacing: 2) {
@@ -369,8 +459,11 @@ struct CrowmapSidebar: View {
                 Button("Delete", role: .destructive) { Task { do { _ = try await model.deleteCrowmap(url) } catch { model.report(error) } } }.keyboardShortcut(.defaultAction)
                 Button("Cancel", role: .cancel) {}
             } message: { url in
-                Text(model.crowmapOwnsFolder(url)
-                     ? "Delete “\(url.deletingPathExtension().lastPathComponent)” and its notes and timelines? A recovery copy is kept in crowmap-deleted."
+                let name = url.deletingPathExtension().lastPathComponent
+                Text(model.crowmapIsLinkedFolder(url)
+                     ? "Remove “\(name)” from Crow? The original folder and notes stay where they are."
+                     : model.crowmapOwnsFolder(url)
+                     ? "Delete “\(name)” and its notes and timelines? A recovery copy is kept in crowmap-deleted."
                      : "Delete “\(url.lastPathComponent)”? Notes in this shared folder will remain.")
             }
     }
@@ -913,6 +1006,7 @@ struct CrowmapDockPanel: View {
                 }.scrollIndicators(.hidden)
                 CrowMenu {
                     Button("New Crowmap", systemImage: "plus") { model.createCrowmap() }
+                    Button("Open Folder…", systemImage: "folder") { model.crowmapFolderImporterVisible = true }
                     Divider()
                     ForEach(model.crowmap.maps, id: \.path) { url in
                         Button(url.deletingPathExtension().lastPathComponent) { model.openCrowmap(url) }
@@ -939,8 +1033,9 @@ struct CrowmapDockPanel: View {
                 if model.crowmapTabs.isEmpty {
                     VStack(spacing: 12) {
                         Text("Crowmap").font(.system(size: 16, weight: .medium))
-                        Text("Open a map from the file list or create a new one.").font(.system(size: 12)).foregroundStyle(CrowTheme.textDim)
+                        Text("Open a map from the file list, create a new one, or open a folder of notes.").font(.system(size: 12)).foregroundStyle(CrowTheme.textDim)
                         Button("New Crowmap") { model.createCrowmap() }.buttonStyle(CrowButtonStyle(kind: .filled))
+                        Button("Open Folder…") { model.crowmapFolderImporterVisible = true }.buttonStyle(CrowButtonStyle())
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 ForEach(model.crowmapTabs) { tab in
@@ -963,6 +1058,11 @@ extension AppModel {
               (try? folder.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
               let entries = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return false }
         return entries.filter { $0.pathExtension == "crowmap" }.map { $0.standardizedFileURL.path } == [url.standardizedFileURL.path]
+    }
+    func crowmapIsLinkedFolder(_ url: URL) -> Bool {
+        let folder = url.deletingLastPathComponent()
+        return folder.standardizedFileURL.deletingLastPathComponent().path == crowmap.root.path
+            && (try? folder.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
     }
     private func prepareCrowmapFileAction(_ url: URL, includingNotes: Bool) async throws -> CrowmapStore {
         let folder = url.deletingLastPathComponent().path
@@ -1061,12 +1161,19 @@ extension AppModel {
     }
     @discardableResult func deleteCrowmap(_ url: URL) async throws -> URL {
         _ = try await prepareCrowmapFileAction(url, includingNotes: true)
-        let folder = url.deletingLastPathComponent(), ownsFolder = crowmapOwnsFolder(url)
-        guard !crowmapAgents(in: folder).contains(where: { $0.state.terminals[$0.id]?.running == true }) else { throw CommandError("Close this map’s running agents before deleting it.") }
-        let archive = crowmap.root.deletingLastPathComponent().appendingPathComponent("crowmap-deleted", isDirectory: true)
-        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
-        let backup = archive.appendingPathComponent(UUID().uuidString + "-" + (ownsFolder ? folder.lastPathComponent : url.lastPathComponent))
-        try FileManager.default.moveItem(at: ownsFolder ? folder : url, to: backup)
+        let folder = url.deletingLastPathComponent(), ownsFolder = crowmapOwnsFolder(url), linked = crowmapIsLinkedFolder(url)
+        let agents = crowmapAgents(in: folder)
+        guard !agents.contains(where: { $0.state.terminals[$0.id]?.running == true }) else { throw CommandError("Close this map’s running agents before deleting it.") }
+        let backup: URL
+        if linked {
+            backup = folder.resolvingSymlinksInPath()
+            try FileManager.default.removeItem(at: folder)
+        } else {
+            let archive = crowmap.root.deletingLastPathComponent().appendingPathComponent("crowmap-deleted", isDirectory: true)
+            try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+            backup = archive.appendingPathComponent(UUID().uuidString + "-" + (ownsFolder ? folder.lastPathComponent : url.lastPathComponent))
+            try FileManager.default.moveItem(at: ownsFolder ? folder : url, to: backup)
+        }
         let removed = crowmapTabs.filter { $0.url == url || ownsFolder && $0.store.noteRoot == folder }.map(\.id)
         crowmapTabs.removeAll { removed.contains($0.id) }; orderCrowmapPins()
         if removed.contains(crowmapPanel.selectedPath ?? "") { crowmapPanel.selectedPath = crowmapTabs.first?.id }
@@ -1074,7 +1181,7 @@ extension AppModel {
         if crowmapTabs.isEmpty { crowmapPanelFocused = false }
         let buffers = states.flatMap(\.snapshot.buffers).filter { !$0.isRemote && ($0.path == url.path || ownsFolder && $0.path.hasPrefix(folder.path + "/")) }.map(\.id)
         for id in buffers { closeBuffer(id) }
-        for item in crowmapAgents(in: folder) where ownsFolder || item.agent.crowmapPath == url.path { closeTerminal(item.id) }
+        for item in agents where ownsFolder || linked || item.agent.crowmapPath == url.path { closeTerminal(item.id) }
         crowmap.list(); refreshFiles(); schedulePersist(); return backup
     }
 }
