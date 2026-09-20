@@ -13,6 +13,16 @@ test('One-click branch preserves the old path and reconnects to one existing mil
  assert.deepEqual(doc.projects[0].route,[original.projects[0].route[0],a,added.id,b,c]);assert.equal(doc.anchors.filter(n=>n.id===b).length,1);assert.equal(doc.edges.filter(e=>e.state==='superseded').length,0);
  assert(readNote(texts[added.note]).meta.next.includes('[[Project-B]]'));assert.throws(()=>connectMilestones(doc,b,a),/later date/);assert.throws(()=>connectMilestones(doc,b,b),/different/);
 });
+test('Date moves keep YAML date type so the note editor still shows a date field',()=>{
+ let {doc,texts}=fixture();const start=doc.anchors[0];
+ const r=moveNodes(doc,[start.id],{days:1},texts);Object.assign(texts,files(r));
+ const source=texts[start.note];
+ assert.match(source,/date: 2026-10-02/);
+ assert.doesNotMatch(source,/date: "2026-10-02"/);
+ assert.equal(readNote(source).meta.date,'2026-10-02');
+ assert.equal(readNote(source).meta.priority,1);
+ assert.equal(typeof readNote(source).meta.priority,'number');
+});
 test('Date moves reattach work without copying it and milestone dates respect attached work',()=>{
  let {doc,texts}=fixture();let r=linkedTransaction(addNote(doc,{title:'Work',date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;const note=doc.notes[0],milestone=doc.anchors[1];
  assert.equal(movedDate(doc,milestone.id,'2026-10-19'),'2026-10-15');
@@ -32,6 +42,14 @@ test('Repeated links do not inflate node size and floating stays close to the da
  const degree=nodeDegrees(doc,graphLinks(doc,texts));assert.equal(degree.get(doc.notes[0].id),2);assert(nodeRadius('note',5)>nodeRadius('note',1));for(let t=0;t<100;t++){const offset=floatOffset('work',t);assert(Math.abs(offset.x)<44);assert(Math.abs(offset.y)<=5);}assert.notDeepEqual(floatOffset('work',0),floatOffset('work',2));
 });
 
+test('A long date range keeps a bounded tick list',()=>{
+ const r=createProject(emptyMap(),{title:'Span',date:'2000-01-01',priority:1,milestones:[{title:'End',date:'2020-01-01'}]});
+ const layout=layoutMap(r.doc,{unit:'day'});
+ assert(layout.ticks.length<=180);
+ assert(layout.width<=29000);
+ assert(layout.x('2020-01-01')>layout.x('2000-01-01'));
+ assert.equal(layout.dateAt(layout.x('2010-06-15')),'2010-06-15');
+});
 test('Date columns keep a fixed unit width and round-trip every date',()=>{
  let {doc,texts}=fixture();const r=linkedTransaction(addNote(doc,{title:'Middle',date:'2026-10-11',attach:{kind:'edge',id:doc.edges[1].id}}),texts);doc=r.doc;
  const original=structuredClone(doc),days=layoutMap(doc,{unit:'day'});

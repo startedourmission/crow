@@ -2,13 +2,14 @@ import {parse, stringify} from 'yaml';
 import {noteName} from './crowmap-links.js';
 import {editFrontmatter} from './frontmatter-model.js';
 const DAY=86400000,MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-export const DATE_UNITS=['day','week','month','year'],UNIT_WIDTH=56;
+export const DATE_UNITS=['day','week','month','year'],UNIT_WIDTH=56,PRIORITY_GAP=80,PRIORITY_GAP_MIN=10,PRIORITY_GAP_MAX=400;
+export function clampPriorityGap(value){const n=Math.round(Number(value));return Number.isFinite(n)?Math.max(PRIORITY_GAP_MIN,Math.min(PRIORITY_GAP_MAX,n)):PRIORITY_GAP;}
 export const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
 export function day(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw Error('Choose a valid date.');return Date.parse(value+'T00:00:00Z')/DAY;}
 export const today=()=>new Date().toLocaleDateString('en-CA');
 const utc=d=>new Date(d*DAY),iso=d=>utc(d).toISOString().slice(0,10);
 function unitOrigin(d,unit){const t=utc(d);if(unit==='week')return d-((t.getUTCDay()+6)%7);if(unit==='month')return Date.UTC(t.getUTCFullYear(),t.getUTCMonth(),1)/DAY;if(unit==='year')return Date.UTC(t.getUTCFullYear(),0,1)/DAY;return d;}
-function nextUnit(d,unit){const origin=unitOrigin(d,unit),t=utc(origin);if(unit==='week')return origin+7;if(unit==='month')return Date.UTC(t.getUTCFullYear(),t.getUTCMonth()+1,1)/DAY;if(unit==='year')return Date.UTC(t.getUTCFullYear()+1,0,1)/DAY;return origin+1;}
+function nextUnit(d,unit){const origin=unitOrigin(d,unit),t=utc(origin);let next=origin+1;if(unit==='week')next=origin+7;else if(unit==='month')next=Date.UTC(t.getUTCFullYear(),t.getUTCMonth()+1,1)/DAY;else if(unit==='year')next=Date.UTC(t.getUTCFullYear()+1,0,1)/DAY;return Number.isFinite(next)&&next>origin?next:origin+1;}
 function unitIndex(d,unit){const t=utc(d);if(unit==='week')return unitOrigin(d,'week')/7;if(unit==='month')return t.getUTCFullYear()*12+t.getUTCMonth();if(unit==='year')return t.getUTCFullYear();return d;}
 function unitProgress(d,unit){const origin=unitOrigin(d,unit),span=nextUnit(origin,unit)-origin;return span? (d-origin)/span:0;}
 function tickLabel(d,unit){const t=utc(d);if(unit==='month')return MONTHS[t.getUTCMonth()];if(unit==='year')return String(t.getUTCFullYear());return String(t.getUTCMonth()+1).padStart(2,'0')+'/'+String(t.getUTCDate()).padStart(2,'0');}
@@ -38,7 +39,16 @@ export function normalizeTimeline(doc){
 }
 export const flatNote=name=>typeof name==='string'&&name.endsWith('.md')&&!/[\/\\\0]/.test(name)&&!name.startsWith('.');
 export function noteText(meta,body=''){return '---\n'+stringify(meta)+'---\n\n'+body;}
-export function readNote(text){const match=String(text??'').match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);let meta={};if(match)meta=parse(match[1],{maxAliasCount:20})??{};return {meta,body:match?text.slice(match[0].length).replace(/^\r?\n/,''):String(text??'')};}
+export function readNote(text){
+  const match=String(text??'').match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);let meta={};
+  if(match)meta=parse(match[1],{maxAliasCount:20})??{};
+  if(meta&&typeof meta==='object'){
+    if(meta.date instanceof Date&&Number.isFinite(+meta.date))meta.date=new Date(+meta.date).toISOString().slice(0,10);
+    const priority=Number(meta.priority);
+    if(meta.priority!=null&&meta.priority!==''&&Number.isInteger(priority)&&priority>=1)meta.priority=priority;
+  }
+  return {meta,body:match?text.slice(match[0].length).replace(/^\r?\n/,''):String(text??'')};
+}
 export function updateNote(text,{title,date,body}){
   let source=text;const {meta}=readNote(source);day(date);
   for(const [name,value,type] of [['title',title,'text'],['date',date,'date']]){
@@ -120,11 +130,12 @@ export function reorderMilestones(source,id,targetID){
  doc.view={...doc.view,milestoneOrder:{...doc.view?.milestoneOrder,[a.project+':'+a.date]:order}};
  return {doc,writes:[]};
 }
-export function layoutMap(doc,{unit='day'}={}){
+export function layoutMap(doc,{unit='day',priorityGap=PRIORITY_GAP}={}){
   validateMap(doc);const scaleUnit=DATE_UNITS.includes(unit)?unit:'day',all=[...doc.anchors,...doc.notes];
   const rawStart=Math.min(...all.map(n=>day(n.date)),day(today())),rawEnd=Math.max(...all.map(n=>day(n.date)),rawStart+14);
   const start=unitOrigin(rawStart,scaleUnit);let end=unitOrigin(rawEnd,scaleUnit);if(end<=rawEnd)end=nextUnit(end,scaleUnit);if(end<=start)end=nextUnit(start,scaleUnit);
-  const origin=unitIndex(start,scaleUnit),scale=UNIT_WIDTH;
+  const origin=unitIndex(start,scaleUnit),span=Math.max(1e-6,unitIndex(end,scaleUnit)+unitProgress(end,scaleUnit)-origin);
+  const scale=Math.min(UNIT_WIDTH,28000/span);
   const xAtDay=value=>100+(unitIndex(value,scaleUnit)+unitProgress(value,scaleUnit)-origin)*scale;
   const x=date=>xAtDay(day(date));
   const dateAt=position=>{
@@ -136,11 +147,16 @@ export function layoutMap(doc,{unit='day'}={}){
     return iso(d);
   };
   const dateBounds=date=>{const originDay=unitOrigin(day(date),scaleUnit);return {left:xAtDay(originDay),right:xAtDay(nextUnit(originDay,scaleUnit))};};
-  const ticks=[];for(let d=start;d<=end;d=nextUnit(d,scaleUnit))ticks.push({date:iso(d),x:xAtDay(d),label:tickLabel(d,scaleUnit)});
+  const tickCount=Math.max(1,Math.round(span)),step=Math.max(1,Math.ceil(tickCount/120));
+  const ticks=[];
+  for(let d=start,i=0,guard=0;d<=end&&guard<400;d=nextUnit(d,scaleUnit),i++,guard++){
+    if(i%step===0||nextUnit(d,scaleUnit)>end)ticks.push({date:iso(d),x:xAtDay(d),label:tickLabel(d,scaleUnit)});
+  }
+  if(!ticks.length||ticks.at(-1).x<xAtDay(end)-1)ticks.push({date:iso(end),x:xAtDay(end),label:tickLabel(end,scaleUnit)});
   const active=mainMilestoneIDs(doc);
   const anchorByID=new Map(doc.anchors.map(a=>[a.id,a])),ghostLanes=new Map();let laneCount=0;
   for(const project of doc.projects){let lane=0;for(const a of milestoneDisplayOrder(doc,project).filter(a=>!active.has(a.id)))ghostLanes.set(a.id,++lane);laneCount=Math.max(laneCount,lane);}
-  const laneGap=56;let projectGap=250;const priorityY=priority=>100+(priority-1)*projectGap,priorityAt=y=>Math.max(1,Math.min(doc.projects.length,Math.round((y-100)/projectGap)+1));
+  const laneGap=56,minProjectGap=clampPriorityGap(priorityGap);let projectGap=minProjectGap;const priorityY=priority=>100+(priority-1)*projectGap,priorityAt=y=>Math.max(1,Math.min(doc.projects.length,Math.round((y-100)/projectGap)+1));
   const events=doc.anchors.filter(a=>active.has(a.id)).sort((a,b)=>day(a.date)-day(b.date)||doc.projects.findIndex(p=>p.id===a.project)-doc.projects.findIndex(p=>p.id===b.project));
   let order=[];const ranks=[],priorities=new Map();
   for(const event of events){if(priorities.get(event.project)===event.priority)continue;priorities.set(event.project,event.priority);const index=order.indexOf(event.project);if(index>=0)order.splice(index,1);order.splice(Math.min(event.priority-1,order.length),0,event.project);ranks.push({date:event.date,order:[...order]});}
@@ -152,23 +168,24 @@ export function layoutMap(doc,{unit='day'}={}){
     const left=x(a.date)-14,right=x(a.date)+24+[...a.title].reduce((width,c)=>width+(c.codePointAt(0)>0x2e80?12:7),0);
     let lane=lanes.findIndex(ranges=>ranges.every(([l,r])=>right<l||left>r));if(lane<0){lane=lanes.length;lanes.push([]);}lanes[lane].push([left,right]);occupied.set(key,lanes);mainLanes.set(id,lane);mainLaneCount=Math.max(mainLaneCount,lane);
   }
-  projectGap=Math.max(250,(mainLaneCount+laneCount)*laneGap+150);
+  projectGap=minProjectGap+(mainLaneCount+laneCount)*laneGap;
   const points=new Map(doc.anchors.map(a=>[a.id,{x:x(a.date),y:priorityY(active.has(a.id)?rank(a.project,a.date)+1:a.priority)+(active.has(a.id)?mainLanes.get(a.id)??0:mainLaneCount+(ghostLanes.get(a.id)??1))*laneGap,...a}]));
-  const edgePoints=new Map(doc.edges.map(e=>{const a=points.get(e.from),b=points.get(e.to),offset=0;
-    const inner=[...new Set(ranks.map(r=>r.date))].filter(d=>day(d)>day(a.date)&&day(d)<day(b.date)).map(d=>({x:x(d),y:priorityY(rank(e.project,d)+1)+offset}));
+  const edgePoints=new Map(doc.edges.map(e=>{const a=points.get(e.from),b=points.get(e.to);
+    if(a.kind==='start')return [e.id,[a,b]];
+    const inner=[...new Set(ranks.map(r=>r.date))].filter(d=>day(d)>day(a.date)&&day(d)<day(b.date)).map(d=>({x:x(d),y:priorityY(rank(e.project,d)+1)}));
     inner.sort((p,q)=>p.x-q.x);return [e.id,[a,...inner,b]];
   }));
   const notePoints=new Map(),devices=new Map(),slots=new Map();
-  for(const n of [...doc.notes].sort((a,b)=>day(a.date)-day(b.date))){const a=n.attach.kind==='anchor'?points.get(n.attach.id):points.get(doc.edges.find(e=>e.id===n.attach.id).from);const edgeLine=edgePoints.get(n.attach.id);let y=a.y;
-    if(edgeLine){const nx=x(n.date),i=Math.max(0,edgeLine.findIndex((p,i)=>i<edgeLine.length-1&&p.x<=nx&&edgeLine[i+1].x>=nx));const p=edgeLine[i],q=edgeLine[i+1]??p;y=timelineCurveY(p,q,nx);}
+  for(const n of [...doc.notes].sort((a,b)=>day(a.date)-day(b.date))){const edge=n.attach.kind==='edge'?doc.edges.find(e=>e.id===n.attach.id):null,a=n.attach.kind==='anchor'?points.get(n.attach.id):points.get(edge.from);const edgeLine=edgePoints.get(n.attach.id);let y=a.y;
+    if(edgeLine){const nx=x(n.date),i=Math.max(0,edgeLine.findIndex((p,i)=>i<edgeLine.length-1&&p.x<=nx&&edgeLine[i+1].x>=nx));const p=edgeLine[i],q=edgeLine[i+1]??p;y=timelineCurveY(p,q,nx,points.get(edge?.from)?.kind==='start');}
     const key=n.attach.id+':'+(n.device??'local'),slotKey=key+':'+Math.floor(x(n.date)/180),slot=slots.get(slotKey)??0;slots.set(slotKey,slot+1);const nx=x(n.date),ny=y+70+slot*48;
     if(n.device&&!devices.has(key))devices.set(key,{key,device:n.device,x:nx,y:y+42,origin:{x:nx,y},attach:n.attach});
     notePoints.set(n.id,{...n,x:nx,y:ny+(n.device?38:0),origin:n.device?devices.get(key):{x:nx,y}});
   }
   return {points,edgePoints,notePoints,devices,width:Math.max(1100,xAtDay(end)+240),height:Math.max(600,doc.projects.length*projectGap+180,...[...points.values()].map(n=>n.y+100),...[...notePoints.values()].map(n=>n.y+160)),start,end,scale,unit:scaleUnit,ticks,x,dateAt,dateBounds,priorityY,priorityAt,rankAt:(project,date)=>rank(project,date)+1};
 }
-export function timelineCurveY(a,b,x){
-  if(a.x===b.x)return a.y;const fraction=Math.min(1,Math.max(0,(x-a.x)/(b.x-a.x)));let low=0,high=1;
+export function timelineCurveY(a,b,x,straight=false){
+  if(a.x===b.x)return a.y;const fraction=Math.min(1,Math.max(0,(x-a.x)/(b.x-a.x)));if(straight)return a.y+(b.y-a.y)*fraction;let low=0,high=1;
   for(let i=0;i<24;i++){const t=(low+high)/2,at=1.5*t-1.5*t*t+t*t*t;if(at<fraction)low=t;else high=t;}
   const t=(low+high)/2;return a.y+(b.y-a.y)*(3*t*t-2*t*t*t);
 }

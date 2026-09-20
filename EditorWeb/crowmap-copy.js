@@ -1,6 +1,6 @@
 import {uid,validateMap,readNote,flatNote} from './crowmap-model.js';
 import {linkedTransaction,noteName,noteResolver} from './crowmap-links.js';
-import {editFrontmatter} from './frontmatter-model.js';
+import {editFrontmatter,valueType} from './frontmatter-model.js';
 
 // Selection expands through project milestones only. Weak links and attached work
 // never imply file ownership and therefore never expand a copy operation.
@@ -11,7 +11,7 @@ export function copyNodes(doc,ids){
  return all.filter(n=>selected.has(n.id)||n.kind&&projects.has(n.project));
 }
 function setProperties(source,values){
- for(const [key,value]of Object.entries(values))source=editFrontmatter(source,key,{value,type:Array.isArray(value)?'list':typeof value==='number'?'number':'text',add:!Object.hasOwn(readNote(source).meta,key)});
+ for(const [key,value]of Object.entries(values))source=editFrontmatter(source,key,{value,type:valueType(key,value),add:!Object.hasOwn(readNote(source).meta,key)});
  return source;
 }
 function rewriteLinks(text,resolve,names){

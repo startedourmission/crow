@@ -687,8 +687,9 @@ struct CrowmapFileView: View {
                     try store.save(source, expected: expected, writes: writes, deletes: deletes, deletingProject: body["deletingProject"] as? String)
                     for write in writes {
                         if let name = write["name"], let text = write["text"], store.drafts[name] != nil {
-                            if store.drafts[name] == text { store.drafts.removeValue(forKey: name); store.draftBases.removeValue(forKey: name) }
-                            else { store.draftBases[name] = text }
+                            if store.drafts[name] == text || body["draftNote"] as? String == name {
+                                store.drafts.removeValue(forKey: name); store.draftBases.removeValue(forKey: name)
+                            } else { store.draftBases[name] = text }
                         }
                     }
                     for state in model.states {

@@ -10,6 +10,15 @@ test('Revision links retain old work and rejoin one shared existing milestone af
 test('Legacy object properties convert without deleting custom frontmatter or bodies',()=>{const r=createProject(emptyMap(),{title:'Legacy',date:'2026-01-01',priority:1,milestones:[{title:'Ship',date:'2026-01-10'}]}),texts=files(r);texts['Legacy.md']=texts['Legacy.md'].replace('---\n','---\n# keep comment\ncustom: kept\n')+'Body';assert.equal(resolveMap(r.doc,texts).anchors.length,2);const converted=linkedTransaction({doc:r.doc,writes:[]},texts);const text=files(converted)['Legacy.md'];assert(text.includes('# keep comment'));assert(text.includes('custom: kept'));assert(text.endsWith('Body'));assert.deepEqual(readNote(text).meta.milestones,['[[Legacy-Ship]]']);assert(converted.writes.every(w=>w.expected===texts[w.name]));});
 test('Missing, ambiguous, cyclic and invalid dated links report errors instead of silently losing a plan',()=>{const r=fixture(),texts=files(r);assert.throws(()=>resolveMap(r.doc,{...texts,'프로젝트-기획.md':texts['프로젝트-기획.md'].replace('[[프로젝트-개발]]','[[없음]]')}),/Missing/);assert.throws(()=>resolveMap(r.doc,{...texts,'프로젝트-개발.md':texts['프로젝트-개발.md'].replace('2026-01-20','2025-01-01')}),/segment|order/);const lookup=noteResolver({'A.md':noteText({title:'Same'}),'B.md':noteText({title:'Same'})});assert.throws(()=>lookup('[[Same]]'),/Ambiguous/);assert.equal(lookup('[[A|Alias]]'),'A.md');assert.equal(noteResolver({'한글.md':''})('[[한글]]'),'한글.md');});
 
+test('Editing a work note date in Markdown moves it onto the containing segment',()=>{
+ let r=fixture(),texts=files(r);
+ r=linkedTransaction(addNote(r.doc,{title:'작업',date:'2026-01-13',attach:{kind:'edge',id:r.doc.edges[1].id},body:''}),texts);Object.assign(texts,files(r));
+ texts['작업.md']=texts['작업.md'].replace('2026-01-13','2026-01-25');
+ const restored=resolveMap(r.doc,texts),note=restored.notes.find(n=>n.note==='작업.md');
+ assert.equal(note.date,'2026-01-25');
+ assert.equal(note.attach.kind,'edge');
+ assert.equal(note.attach.id,restored.edges.find(e=>e.from===restored.projects[0].route[2]&&e.to===restored.projects[0].route[3]).id);
+});
 test('Two same-day Markdown notes stay two nodes when B links A; repeated device attachments stay one node',async()=>{
  const {graphLinks}=await import('./crowmap-links.js');let r=fixture(),texts=files(r),attach={kind:'edge',id:r.doc.edges[1].id};
  r=linkedTransaction(addNote(r.doc,{title:'A',date:'2026-01-13',attach,body:''}),texts);Object.assign(texts,files(r));

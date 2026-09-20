@@ -12,6 +12,17 @@ test('Property changes preserve comments, body, BOM and CRLF and persist types',
  assert.equal(frontmatter(editFrontmatter(typed,'created',{type:'date',value:'2024-12-03'})).rows.find(r=>r.name==='created').type,'date');
  assert.deepEqual(frontmatter(edited).rows.find(r=>r.name==='custom').value,{nested:'yes'});
 });
+test('Crowmap date and priority stay typed even when YAML quotes them',()=>{
+ const source='---\ndate: "2026-09-19"\npriority: "2"\ncreated: "2024-12-03"\n---\n';
+ const rows=frontmatter(source).rows;
+ assert.equal(rows.find(r=>r.name==='date').type,'date');
+ assert.equal(rows.find(r=>r.name==='priority').type,'number');
+ assert.equal(rows.find(r=>r.name==='created').type,'text');
+ const edited=editFrontmatter(source,'date',{type:'date',value:'2026-10-02'});
+ assert.equal(frontmatter(edited).rows.find(r=>r.name==='date').type,'date');
+ assert.match(edited,/date: 2026-10-02/);
+ assert.doesNotMatch(edited,/date: "2026-10-02"/);
+});
 test('Property add, rename and remove validate without dropping unsupported values',()=>{
  let source='---\nname: old\n---\n';
  source=editFrontmatter(source,'tags',{add:true,type:'list',value:'one\ntwo'});

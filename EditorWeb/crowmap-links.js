@@ -1,5 +1,5 @@
 import {readNote,validateMap,uid,day,flatNote,linkLeaves,normalizeTimeline} from './crowmap-model.js';
-import {editFrontmatter} from './frontmatter-model.js';
+import {editFrontmatter,valueType} from './frontmatter-model.js';
 
 export const noteLink = node => '[[' + (/^[0-9a-f-]{32,36}\.md$/i.test(node.note)?node.title:node.note.replace(/\.md$/, '')) + ']]';
 const normalized = value => value.normalize('NFC').toLocaleLowerCase();
@@ -15,10 +15,10 @@ export function noteResolver(texts) {
   return link=>{if(typeof link!=='string'||!/^\[\[.+\]\]$/.test(link))throw Error('Use a note link such as [[Prototype]].');const target=link.slice(2,-2).split('|')[0].split('#')[0].replace(/\.md$/,'');const exact=Object.keys(texts).filter(n=>normalized(n.replace(/\.md$/,''))===normalized(target));const matches=exact.length?exact:[...(index.get(normalized(target))??[])];if(matches.length!==1)throw Error(matches.length?'Ambiguous note link: '+link:'Missing note: '+link);return matches[0];};
 }
 const links=(meta,key)=>{const value=meta[key]??[];if(!Array.isArray(value)||value.some(v=>typeof v!=='string'))throw Error(key+' must be a list of [[note links]].');return value;};
-function patch(source,values,remove=[]) {
+export function patch(source,values,remove=[]) {
   let meta=readNote(source).meta;
   for(const key of remove)if(Object.hasOwn(meta,key))source=editFrontmatter(source,key,{remove:true});
-  for(const [key,value] of Object.entries(values))if(JSON.stringify(meta[key])!==JSON.stringify(value))source=editFrontmatter(source,key,{value,type:Array.isArray(value)?'list':typeof value==='number'?'number':'text',add:!Object.hasOwn(meta,key)});
+  for(const [key,value] of Object.entries(values))if(JSON.stringify(meta[key])!==JSON.stringify(value))source=editFrontmatter(source,key,{value,type:valueType(key,value),add:!Object.hasOwn(meta,key)});
   return source;
 }
 
@@ -39,6 +39,16 @@ export function linkedTransaction(result,texts={}) {
   doc.noteLinks=true;const writes=[...output.values()];return {doc:resolveMap(validateMap(doc),{...texts,...Object.fromEntries(writes.map(w=>[w.name,w.text]))}),writes};
 }
 
+function attachAtDate(doc,attach,date){
+  if(attach?.kind!=='edge')return attach;
+  const edge=doc.edges.find(e=>e.id===attach.id);if(!edge)return attach;
+  const anchors=new Map(doc.anchors.map(a=>[a.id,a])),from=anchors.get(edge.from),to=anchors.get(edge.to);
+  if(from&&to&&from.date<=date&&date<=to.date)return attach;
+  const target=doc.edges.find(e=>e.project===edge.project&&e.state==='active'&&anchors.get(e.from)?.date<=date&&anchors.get(e.to)?.date>=date);
+  if(target)return {kind:'edge',id:target.id};
+  const nearest=doc.anchors.filter(a=>a.project===edge.project).sort((a,b)=>Math.abs(day(a.date)-day(date))-Math.abs(day(b.date)-day(date)))[0];
+  return nearest?{kind:'anchor',id:nearest.id}:attach;
+}
 export function resolveAttachment(meta,doc,texts,resolve=noteResolver(texts),byName=new Map(doc.anchors.map(a=>[a.note,a]))) {
   if(meta.between){const names=links(meta,'between').map(resolve);if(names.length!==2)throw Error('between needs two milestone links.');const a=byName.get(names[0]),b=byName.get(names[1]),e=doc.edges.find(e=>e.from===a?.id&&e.to===b?.id);if(!e){if(a&&b)return {kind:'anchor',id:a.id};throw Error('The linked milestones do not share a segment.');}return {kind:'edge',id:e.id};}
   if(meta.milestone){const a=byName.get(resolve(meta.milestone));if(!a)throw Error('Unknown milestone.');return {kind:'anchor',id:a.id};}
@@ -84,7 +94,7 @@ export function resolveMap(source,texts) {
   if(fullyLinked)doc.noteLinks=true;
   const byName=new Map(doc.anchors.map(a=>[a.note,a]));
   const notes=[];for(const [name,text] of Object.entries(texts)){const meta=(()=>{try{return readNote(text).meta;}catch{return {};}})();const cached=source.notes.find(n=>!n.device&&n.note===name);if(!cached&&!meta.between&&!meta.milestone)continue;if(membership.has(name))continue;
-    let attach;try{attach=resolveAttachment(meta,doc,texts,resolve,byName);}catch(error){if(cached)throw error;continue;}if(!attach){if(!cached)continue;attach=cached.attach;}notes.push({...cached,id:cached?.id??'note:'+name,note:name,title:meta.title??cached?.title??name.slice(0,-3),date:meta.date??cached?.date,attach});}
+    let attach;try{attach=resolveAttachment(meta,doc,texts,resolve,byName);}catch(error){if(cached)throw error;continue;}if(!attach){if(!cached)continue;attach=cached.attach;}const date=meta.date??cached?.date;notes.push({...cached,id:cached?.id??'note:'+name,note:name,title:meta.title??cached?.title??name.slice(0,-3),date,attach:attachAtDate(doc,attach,date)});}
   doc.notes=[...notes,...source.notes.filter(n=>n.device)];
   // A dated Markdown file reached through a body link is also a single shared node.
   const known=new Set([...doc.anchors,...notes].map(n=>n.note)),pending=[...doc.anchors,...notes];

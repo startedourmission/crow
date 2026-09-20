@@ -62,11 +62,19 @@ export function frontmatterView({node, editor, getPos, onOpenLink = url=>window.
       } else if (type==='boolean') field.checked = value;
       else field.value = type==='list' ? value.join('\n') : type==='yaml' ? JSON.stringify(value,null,2) : value ?? '';
       if (type==='number') field.step='any';
+      if (type==='date') { field.min='1970-01-01'; field.max='2100-12-31'; }
       if (type==='datetime') field.placeholder='YYYY-MM-DDTHH:mm';
       if (field.tagName==='TEXTAREA') field.rows=Math.min(6,Math.max(1,field.value.split('\n').length));
       const read = () => type==='list' ? value : type==='boolean' ? field.checked : field.value;
+      const commitValue = () => {
+        const next=read();
+        if(type==='date'&&next&&!/^\d{4}-\d{2}-\d{2}$/.test(next))return;
+        if(type==='number'&&String(next).trim()==='')return;
+        if(commit(name,{value:next,type}))field.dataset.dirty='false';
+      };
       field.oninput = () => { field.dataset.dirty='true'; };
-      if(type!=='list') field.onchange = () => { if (commit(name,{value:read(),type})) field.dataset.dirty='false'; };
+      if(type!=='list') field.onchange = commitValue;
+      if(type!=='list') field.onblur = () => { if(field.dataset.dirty==='true')commitValue(); };
       kind.onchange = () => {
         const next = kind.value;
         if (commit(name,{value:read(),type:next})) dom.querySelector('[data-property='+CSS.escape(name)+'] .frontmatter-value')?.focus();
