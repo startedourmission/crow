@@ -28,7 +28,11 @@ enum ClipboardImage {
     #if os(macOS)
     @MainActor static func png(from pasteboard: NSPasteboard) throws -> Data? {
         guard let source = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return nil }
-        guard source.count <= sizeLimit else { throw CommandError("Clipboard image exceeds 20 MB.") }
+        return try png(from: source)
+    }
+
+    static func png(from source: Data) throws -> Data {
+        guard source.count <= sizeLimit else { throw CommandError("Image exceeds 20 MB.") }
         guard let imageSource = CGImageSourceCreateWithData(source as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -79,6 +83,32 @@ enum ClipboardImage {
 }
 
 #if os(macOS)
+/// Prefer Finder's actual files to any preview image also present on its pasteboard.
+@MainActor enum TerminalFileDrop {
+    static let types: [NSPasteboard.PasteboardType] = [.fileURL, .png, .tiff]
+    static func files(from pasteboard: NSPasteboard) -> [URL] {
+        (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+    static func accepts(_ pasteboard: NSPasteboard) -> Bool {
+        !files(from: pasteboard).isEmpty || pasteboard.availableType(from: [.png, .tiff]) != nil
+    }
+    static func isImage(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true && UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true
+    }
+    nonisolated static func readImage(_ url: URL) throws -> Data {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        let source = try file.read(upToCount: ClipboardImage.sizeLimit + 1) ?? Data()
+        return try ClipboardImage.png(from: source)
+    }
+}
+
+@MainActor protocol FileDropTerminal: AnyObject {
+    var onFileDrop: ((NSPasteboard) -> Bool)? { get set }
+}
+
 enum MacTerminalKeys {
     static func character(_ event: NSEvent) -> String? {
         if let text = event.charactersIgnoringModifiers, text.utf8.count == 1,

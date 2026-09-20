@@ -113,6 +113,66 @@ final class InputToolsTests: XCTestCase {
     }
 
     #if os(macOS)
+    @MainActor func testFinderDropRoutesIntoLocalAndRemoteTerminalsWithoutSubmitting() throws {
+        let urls = [URL(fileURLWithPath: "/tmp/한글 폴더/a's $(touch nope).md"), URL(fileURLWithPath: "/tmp/Folder")]
+        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        board.writeObjects(urls.map { $0 as NSURL })
+        // Finder can include a preview: actual file URLs must win.
+        board.setData(Self.png, forType: .png)
+        for remote in [false, true] {
+            let session = TerminalSession(id: UUID(), workspace: .init(name: "Drop", kind: remote ? .remote(hostID: HostID(), path: "/tmp") : .local, connection: .connected), directory: "/tmp", remote: nil, fontSize: 14)
+            defer { session.stop() }
+            session.running = true; session.view.feed(text: "\u{1b}[?2004h")
+            var sent: [UInt8] = []; session.onBytes = { sent += $0 }
+            var focused = false; session.onFileDropFocus = { focused = true }
+            let drag = FileDropDraggingInfo(board)
+            XCTAssertTrue(session.view.registeredDraggedTypes.contains(.fileURL))
+            XCTAssertEqual(session.view.draggingEntered(drag), .copy)
+            XCTAssertTrue(session.view.prepareForDragOperation(drag))
+            XCTAssertTrue(session.view.performDragOperation(drag))
+            XCTAssertTrue(focused)
+            XCTAssertEqual(String(decoding: sent, as: UTF8.self), "\u{1b}[200~" + urls.map { ClipboardImage.pastedPath($0.path) }.joined() + "\u{1b}[201~")
+            XCTAssertFalse(sent.contains(13)); XCTAssertFalse(sent.contains(10))
+            sent = []; session.running = false
+            XCTAssertFalse(session.view.performDragOperation(drag)); XCTAssertTrue(sent.isEmpty)
+        }
+    }
+
+    @MainActor func testMixedImageDropUploadsEveryImageInOrderAndRejectsChangedTarget() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-drop-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("첫 이미지.png"), second = root.appendingPathComponent("Second.png"), note = root.appendingPathComponent("Note.md")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 8, bitsPerPixel: 32))
+        let image = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try image.write(to: first); try image.write(to: second)
+        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        board.writeObjects([first, note, second].map { $0 as NSURL })
+        let session = TerminalSession(id: UUID(), workspace: .init(name: "Remote", kind: .remote(hostID: HostID(), path: "/tmp"), connection: .connected), directory: "/tmp", remote: nil, fontSize: 14)
+        defer { session.stop() }; session.running = true
+        var context = "server-one", uploads = 0, sent: [UInt8] = []
+        session.imagePasteContext = { context }; session.onBytes = { sent += $0 }
+        session.uploadImage = { data, target in
+            try ClipboardImage.validate(data); XCTAssertEqual(target, "server-one")
+            uploads += 1; return "/remote/image \(uploads).png"
+        }
+        XCTAssertTrue(session.view.performDragOperation(FileDropDraggingInfo(board)))
+        for _ in 0..<200 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(uploads, 2)
+        XCTAssertEqual(String(decoding: sent, as: UTF8.self), ["/remote/image 1.png", note.path, "/remote/image 2.png"].map(ClipboardImage.pastedPath).joined())
+        XCTAssertFalse(sent.contains(13)); XCTAssertFalse(sent.contains(10))
+        sent = []; session.uploadImage = { _, _ in context = "server-two"; return "/old/image.png" }
+        XCTAssertTrue(session.dropFiles(from: board))
+        for _ in 0..<200 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(session.imagePasteMessage?.contains("changed") == true)
+        try Data("invalid PNG".utf8).write(to: first)
+        XCTAssertTrue(session.dropFiles(from: board))
+        for _ in 0..<200 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(session.imagePasteMessage?.contains("failed") == true)
+    }
+
     @MainActor func testLocalTmuxImagePasteSavesReadableImageAndUsesBracketedPaste() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-local-image-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)
@@ -353,3 +413,25 @@ final class InputToolsTests: XCTestCase {
     }
     #endif
 }
+
+#if os(macOS)
+@MainActor private final class FileDropDraggingInfo: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingDestinationWindow: NSWindow? = nil
+    let draggingLocation = NSPoint.zero
+    let draggingSourceOperationMask: NSDragOperation = .copy
+    let draggedImageLocation = NSPoint.zero
+    let draggedImage: NSImage? = nil
+    let draggingSource: Any? = nil
+    let draggingSequenceNumber = 1
+    var draggingFormation: NSDraggingFormation = .none
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    let springLoadingHighlight: NSSpringLoadingHighlight = .none
+    init(_ pasteboard: NSPasteboard) { draggingPasteboard = pasteboard }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    nonisolated override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? { nil }
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?, classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any], using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+}
+#endif

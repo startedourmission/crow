@@ -1627,6 +1627,11 @@ final class AppModel {
                 session.startupUnavailableMessage = "Reverse agent disconnected. Use Restart Reverse Agent from the tab menu to reconnect to the client workspace."
             }
         }
+        session.onFileDropFocus = { [weak self, weak state] in
+            guard let self, let state, let pane = state.snapshot.layout?.panes.first(where: { $0.tabs.contains(.terminal(id)) }) else { return }
+            self.selectedWorkspaceID = state.id
+            self.selectTab(.terminal(id), in: pane.id)
+        }
         session.imagePasteContext = { [weak self, weak state] in
             guard let self, let state else { return nil }
             return self.imagePasteContext(for: id, in: state)
