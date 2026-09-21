@@ -1,4 +1,4 @@
-import {readNote,validateMap,uid,day,flatNote,linkLeaves,normalizeTimeline} from './crowmap-model.js';
+import {readNote,validateMap,uid,day,flatNote,linkLeaves,normalizeTimeline,TIMELINE_COLORS} from './crowmap-model.js';
 import {editFrontmatter,valueType} from './frontmatter-model.js';
 
 export const noteLink = node => '[[' + (/^[0-9a-f-]{32,36}\.md$/i.test(node.note)?node.title:node.note.replace(/\.md$/, '')) + ']]';
@@ -66,7 +66,7 @@ export function resolveMap(source,texts) {
   starts.sort((a,b)=>(a.meta.priority??1)-(b.meta.priority??1)||a.name.localeCompare(b.name));
   for(const {name,meta} of starts){
     const id='project:'+name,start={id:'note:'+name,project:id,note:name,title:meta.title??name.slice(0,-3),date:meta.date,priority:meta.priority??1,kind:'start'};
-    doc.projects.push({id,title:start.title,color:['#476fa8','#9d6b48','#6b8d63','#9575aa','#b77582'][doc.projects.length%5],route:[start.id]});original.push(start);oldByName.set(name,start);discovered.add(id);
+    doc.projects.push({id,title:start.title,color:TIMELINE_COLORS[doc.projects.length%TIMELINE_COLORS.length],route:[start.id]});original.push(start);oldByName.set(name,start);discovered.add(id);
   }
   // Keep pre-link maps readable until their next successful save converts the properties.
   const linked=doc.noteLinks||discovered.size||original.some(a=>Object.hasOwn(readNote(texts[a.note]??'').meta,'next'));
@@ -157,22 +157,88 @@ function removeNoteFiles(doc,nodes,texts){
   return {doc:resolveMap(doc,remaining),writes,deletes:[...removed].map(name=>({name,expected:texts[name]}))};
 }
 
+const isoDay=d=>new Date(d*86400000).toISOString().slice(0,10);
+function connectedMilestoneIDs(doc,id,forward){
+ const found=new Set(),queue=[id],seen=new Set([id]);
+ while(queue.length){const current=queue.shift();for(const e of doc.edges){const next=forward?e.from===current&&e.to:e.to===current&&e.from;if(!next||seen.has(next))continue;seen.add(next);found.add(next);queue.push(next);}}
+ return found;
+}
+export function followingMilestoneIDs(doc,id){return connectedMilestoneIDs(doc,id,true);}
+export function precedingMilestoneIDs(doc,id){return connectedMilestoneIDs(doc,id,false);}
 export function movedDate(doc,id,requested){
  const node=[...doc.anchors,...doc.notes].find(n=>n.id===id);if(!node)throw Error('Note no longer exists.');let value=day(requested);
  if(node.kind){
   let min=-Infinity,max=Infinity;const anchors=new Map(doc.anchors.map(a=>[a.id,a]));
-  for(const edge of doc.edges){if(edge.to===id)min=Math.max(min,day(anchors.get(edge.from).date));if(edge.from===id)max=Math.min(max,day(anchors.get(edge.to).date));}
-  for(const note of doc.notes){if(note.attach.kind!=='edge')continue;const edge=doc.edges.find(e=>e.id===note.attach.id);if(edge.to===id)min=Math.max(min,day(note.date));if(edge.from===id)max=Math.min(max,day(note.date));}
+  const following=followingMilestoneIDs(doc,id),preceding=precedingMilestoneIDs(doc,id);
+  if(![...preceding].some(fid=>day(anchors.get(fid).date)>value)){
+   for(const edge of doc.edges){if(edge.to===id)min=Math.max(min,day(anchors.get(edge.from).date));}
+   for(const note of doc.notes){if(note.attach.kind!=='edge')continue;const edge=doc.edges.find(e=>e.id===note.attach.id);if(edge.to===id)min=Math.max(min,day(note.date));}
+  }
+  if(![...following].some(fid=>day(anchors.get(fid).date)<value)){
+   for(const edge of doc.edges){if(edge.from===id)max=Math.min(max,day(anchors.get(edge.to).date));}
+   for(const note of doc.notes){if(note.attach.kind!=='edge')continue;const edge=doc.edges.find(e=>e.id===note.attach.id);if(edge.from===id)max=Math.min(max,day(note.date));}
+  }
   value=Math.min(max,Math.max(min,value));
  }
- return new Date(value*86400000).toISOString().slice(0,10);
+ return isoDay(value);
+}
+function applyDateShift(doc,id,requested,preserveGaps=false){
+ const node=doc.anchors.find(a=>a.id===id);if(!node)return new Set();
+ const from=day(node.date),to=day(requested),delta=to-from,following=followingMilestoneIDs(doc,id),preceding=precedingMilestoneIDs(doc,id),changed=new Set([id]);
+ node.date=requested;
+ const chain=delta>0?following:delta<0?preceding:new Set();
+ const crosses=delta>0?[...following].some(fid=>day(doc.anchors.find(a=>a.id===fid).date)<to):delta<0?[...preceding].some(fid=>day(doc.anchors.find(a=>a.id===fid).date)>to):false;
+ if(!crosses)return changed;
+ if(preserveGaps){
+  for(const a of doc.anchors){if(!chain.has(a.id))continue;a.date=isoDay(day(a.date)+delta);changed.add(a.id);}
+  const shifted=new Set([id,...chain]);
+  for(const n of doc.notes){if(n.device)continue;const edge=n.attach.kind==='edge'?doc.edges.find(e=>e.id===n.attach.id):null,toward=delta>0?edge?.from:edge?.to;if(edge&&shifted.has(toward)||n.attach.kind==='anchor'&&chain.has(n.attach.id)){n.date=isoDay(day(n.date)+delta);changed.add(n.id);}}
+ }else{
+  const gathered=new Set([id]);
+  for(const a of doc.anchors){if(!chain.has(a.id)||(delta>0?day(a.date)>=to:day(a.date)<=to))continue;a.date=requested;changed.add(a.id);gathered.add(a.id);}
+  for(const n of doc.notes){if(!n.device&&n.attach.kind==='anchor'&&gathered.has(n.attach.id)&&n.attach.id!==id){n.date=requested;changed.add(n.id);}}
+ }
+ const anchors=new Map(doc.anchors.map(a=>[a.id,a]));
+ for(const n of doc.notes){
+  if(n.device||n.attach.kind!=='edge')continue;
+  const edge=doc.edges.find(e=>e.id===n.attach.id),start=anchors.get(edge?.from),end=anchors.get(edge?.to);if(!start||!end)continue;
+  let date=n.date;if(day(date)<day(start.date))date=start.date;if(day(date)>day(end.date))date=end.date;
+  if(date!==n.date){n.date=date;changed.add(n.id);}
+ }
+ return changed;
+}
+export function shiftFollowingDates(source,id,requested,texts){
+ const doc=structuredClone(source),node=doc.anchors.find(a=>a.id===id);if(!node)return null;
+ const from=day(node.date),to=day(requested),following=followingMilestoneIDs(doc,id),preceding=precedingMilestoneIDs(doc,id);
+ if(!(to>from&&[...following].some(fid=>day(doc.anchors.find(a=>a.id===fid).date)<to)||to<from&&[...preceding].some(fid=>day(doc.anchors.find(a=>a.id===fid).date)>to)))return null;
+ const changed=applyDateShift(doc,id,requested),writes=[];
+ for(const cid of changed){const n=[...doc.anchors,...doc.notes].find(x=>x.id===cid),before=texts[n.note];if(before==null)throw Error('Markdown note not found.');const text=patch(before,{date:n.date});if(text!==before)writes.push({name:n.note,expected:before,text});}
+ return linkedTransaction({doc:validateMap(doc),writes},texts);
+}
+export function applyNoteDate(doc,name,source,texts){
+ const next={...texts,[name]:source};
+ try{return {doc:resolveMap(doc,next),source,writes:[{name,text:source,expected:texts[name]}]};}
+ catch(error){
+  const item=doc.anchors.find(a=>a.note===name);if(!item)throw error;
+  const requested=readNote(source).meta.date,cascaded=shiftFollowingDates(doc,item.id,requested,texts);
+  if(cascaded){
+   const writes=[{name,text:source,expected:texts[name]},...cascaded.writes.filter(w=>w.name!==name)];
+   const combined={...texts,...Object.fromEntries(writes.map(w=>[w.name,w.text]))};
+   return {doc:resolveMap(doc,combined),source,writes};
+  }
+  const clamped=movedDate(doc,item.id,requested);if(clamped===requested)throw error;
+  source=editFrontmatter(source,'date',{value:clamped,type:'date'});
+  return {doc:resolveMap(doc,{...texts,[name]:source}),source,writes:[{name,text:source,expected:texts[name]}]};
+ }
 }
 
-export function moveNodes(source,ids,{days=0,priority,cascadePriority=false},texts){
+export function moveNodes(source,ids,{days=0,priority,cascadePriority=false,preserveGaps=false},texts){
  const doc=structuredClone(source),writes=[],changed=new Set();
  for(const id of new Set(ids)){
   const node=[...doc.anchors,...doc.notes].find(n=>n.id===id);if(!node||node.device)throw Error('Only local Markdown notes can be moved.');
-  const date=movedDate(doc,id,new Date((day(node.date)+days)*86400000).toISOString().slice(0,10));node.date=date;
+  const date=movedDate(doc,id,isoDay(day(node.date)+days));
+  if(node.kind)for(const cid of applyDateShift(doc,id,date,preserveGaps))changed.add(cid);
+  else node.date=date;
   if(node.kind&&priority!=null){const value=Math.max(1,Math.min(doc.projects.length,Math.round(priority)));for(const sibling of doc.anchors.filter(a=>a.project===node.project&&(cascadePriority?a.date>=date:a.date===date))){sibling.priority=value;changed.add(sibling.id);}}
   if(!node.kind&&node.attach.kind==='edge'){
    const current=doc.edges.find(e=>e.id===node.attach.id),anchors=new Map(doc.anchors.map(a=>[a.id,a]));

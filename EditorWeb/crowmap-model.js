@@ -3,7 +3,15 @@ import {noteName} from './crowmap-links.js';
 import {editFrontmatter} from './frontmatter-model.js';
 const DAY=86400000,MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 export const DATE_UNITS=['day','week','month','year'],UNIT_WIDTH=56,PRIORITY_GAP=80,PRIORITY_GAP_MIN=10,PRIORITY_GAP_MAX=400;
+export const TIMELINE_COLORS=['#476fa8','#9d6b48','#6b8d63','#9575aa','#b77582','#3f8a86','#c08a3e','#5d7394'];
+export function setProjectColor(doc,projectID,color){
+ if(!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color))throw Error('Choose a color.');
+ const next=structuredClone(doc),project=next.projects.find(p=>p.id===projectID);if(!project)throw Error('Project no longer exists.');
+ project.color=color.length===4?'#'+[...color.slice(1)].map(c=>c+c).join(''):color.toLowerCase();
+ return {doc:validateMap(next),writes:[]};
+}
 export function clampPriorityGap(value){const n=Math.round(Number(value));return Number.isFinite(n)?Math.max(PRIORITY_GAP_MIN,Math.min(PRIORITY_GAP_MAX,n)):PRIORITY_GAP;}
+export function dateLabelStride(zoom,minPx=54){return Math.max(1,Math.ceil(minPx/(UNIT_WIDTH*Math.max(0.01,Number(zoom)||1))));}
 export const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
 export function day(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw Error('Choose a valid date.');return Date.parse(value+'T00:00:00Z')/DAY;}
 export const today=()=>new Date().toLocaleDateString('en-CA');
@@ -64,7 +72,7 @@ export function createProject(doc,{title,date,priority,milestones},occupied=[]){
   const anchors=[start,...milestones.map(m=>anchor(id,m.title,m.date,m.priority??priority))];
   const used=[...occupied,...doc.anchors.map(a=>a.note),...doc.notes.filter(n=>!n.device).map(n=>n.note)];for(const a of anchors){a.note=noteName(a.kind==='start'?a.title:start.title+'-'+a.title,used);if(a.kind==='start')a.title=a.note.slice(0,-3);used.push(a.note);}
   for(let i=1;i<anchors.length;i++)if(day(anchors[i].date)<day(anchors[i-1].date))throw Error('Milestones must be in date order.');
-  next.projects.push({id,title:start.title,color:['#476fa8','#9d6b48','#6b8d63','#9575aa','#b77582'][next.projects.length%5],route:anchors.map(a=>a.id)});next.anchors.push(...anchors);
+  next.projects.push({id,title:start.title,color:TIMELINE_COLORS[next.projects.length%TIMELINE_COLORS.length],route:anchors.map(a=>a.id)});next.anchors.push(...anchors);
   for(let i=1;i<anchors.length;i++)next.edges.push(edge(id,anchors[i-1].id,anchors[i].id));
   const writes=anchors.map(a=>({name:a.note,text:noteText({title:a.title,date:a.date,priority:a.priority,kind:a.kind,crowmap:doc.id,project:id,...(a===start?{milestones:anchors.slice(1).map(m=>({id:m.id,title:m.title,date:m.date,priority:m.priority}))}:{})})}));
   return {doc:validateMap(next),writes};
@@ -134,8 +142,8 @@ export function layoutMap(doc,{unit='day',priorityGap=PRIORITY_GAP}={}){
   validateMap(doc);const scaleUnit=DATE_UNITS.includes(unit)?unit:'day',all=[...doc.anchors,...doc.notes];
   const rawStart=Math.min(...all.map(n=>day(n.date)),day(today())),rawEnd=Math.max(...all.map(n=>day(n.date)),rawStart+14);
   const start=unitOrigin(rawStart,scaleUnit);let end=unitOrigin(rawEnd,scaleUnit);if(end<=rawEnd)end=nextUnit(end,scaleUnit);if(end<=start)end=nextUnit(start,scaleUnit);
-  const origin=unitIndex(start,scaleUnit),span=Math.max(1e-6,unitIndex(end,scaleUnit)+unitProgress(end,scaleUnit)-origin);
-  const scale=Math.min(UNIT_WIDTH,28000/span);
+  const origin=unitIndex(start,scaleUnit);
+  const scale=UNIT_WIDTH;
   const xAtDay=value=>100+(unitIndex(value,scaleUnit)+unitProgress(value,scaleUnit)-origin)*scale;
   const x=date=>xAtDay(day(date));
   const dateAt=position=>{
@@ -147,20 +155,19 @@ export function layoutMap(doc,{unit='day',priorityGap=PRIORITY_GAP}={}){
     return iso(d);
   };
   const dateBounds=date=>{const originDay=unitOrigin(day(date),scaleUnit);return {left:xAtDay(originDay),right:xAtDay(nextUnit(originDay,scaleUnit))};};
-  const tickCount=Math.max(1,Math.round(span)),step=Math.max(1,Math.ceil(tickCount/120));
   const ticks=[];
-  for(let d=start,i=0,guard=0;d<=end&&guard<400;d=nextUnit(d,scaleUnit),i++,guard++){
-    if(i%step===0||nextUnit(d,scaleUnit)>end)ticks.push({date:iso(d),x:xAtDay(d),label:tickLabel(d,scaleUnit)});
-  }
+  for(let d=start,guard=0;d<=end&&guard<20000;d=nextUnit(d,scaleUnit),guard++)ticks.push({date:iso(d),x:xAtDay(d),label:tickLabel(d,scaleUnit)});
   if(!ticks.length||ticks.at(-1).x<xAtDay(end)-1)ticks.push({date:iso(end),x:xAtDay(end),label:tickLabel(end,scaleUnit)});
   const active=mainMilestoneIDs(doc);
   const anchorByID=new Map(doc.anchors.map(a=>[a.id,a])),ghostLanes=new Map();let laneCount=0;
   for(const project of doc.projects){let lane=0;for(const a of milestoneDisplayOrder(doc,project).filter(a=>!active.has(a.id)))ghostLanes.set(a.id,++lane);laneCount=Math.max(laneCount,lane);}
   const laneGap=56,minProjectGap=clampPriorityGap(priorityGap);let projectGap=minProjectGap;const priorityY=priority=>100+(priority-1)*projectGap,priorityAt=y=>Math.max(1,Math.min(doc.projects.length,Math.round((y-100)/projectGap)+1));
   const events=doc.anchors.filter(a=>active.has(a.id)).sort((a,b)=>day(a.date)-day(b.date)||doc.projects.findIndex(p=>p.id===a.project)-doc.projects.findIndex(p=>p.id===b.project));
-  let order=[];const ranks=[],priorities=new Map();
-  for(const event of events){if(priorities.get(event.project)===event.priority)continue;priorities.set(event.project,event.priority);const index=order.indexOf(event.project);if(index>=0)order.splice(index,1);order.splice(Math.min(event.priority-1,order.length),0,event.project);ranks.push({date:event.date,order:[...order]});}
-  function rank(project,date){const r=ranks.filter(r=>day(r.date)<=day(date)).at(-1);return Math.max(0,r?.order.indexOf(project)??0);}
+  const ranks=[],priorities=new Map(),claimed=new Map();
+  for(const event of events){if(priorities.get(event.project)===event.priority)continue;priorities.set(event.project,event.priority);claimed.set(event.project,event.date);ranks.push({date:event.date,priorities:new Map(priorities),claimed:new Map(claimed)});}
+  function snapshot(date){return ranks.filter(r=>day(r.date)<=day(date)).at(-1);}
+  function rank(project,date){return Math.max(0,(snapshot(date)?.priorities.get(project)??1)-1);}
+  function stackAt(project,date){const s=snapshot(date);if(!s)return 0;const p=s.priorities.get(project);if(p==null)return 0;const peers=[...s.priorities.entries()].filter(([,value])=>value===p).map(([id])=>id);peers.sort((a,b)=>day(s.claimed.get(b))-day(s.claimed.get(a))||doc.projects.findIndex(x=>x.id===a)-doc.projects.findIndex(x=>x.id===b));return Math.max(0,peers.indexOf(project));}
   // Dates and priorities are data, not unique visual positions. Stack colliding milestones
   // (including parallel branches on one date) without changing either property.
   const mainLanes=new Map(),occupied=new Map();let mainLaneCount=0;
@@ -168,11 +175,12 @@ export function layoutMap(doc,{unit='day',priorityGap=PRIORITY_GAP}={}){
     const left=x(a.date)-14,right=x(a.date)+24+[...a.title].reduce((width,c)=>width+(c.codePointAt(0)>0x2e80?12:7),0);
     let lane=lanes.findIndex(ranges=>ranges.every(([l,r])=>right<l||left>r));if(lane<0){lane=lanes.length;lanes.push([]);}lanes[lane].push([left,right]);occupied.set(key,lanes);mainLanes.set(id,lane);mainLaneCount=Math.max(mainLaneCount,lane);
   }
-  projectGap=minProjectGap+(mainLaneCount+laneCount)*laneGap;
-  const points=new Map(doc.anchors.map(a=>[a.id,{x:x(a.date),y:priorityY(active.has(a.id)?rank(a.project,a.date)+1:a.priority)+(active.has(a.id)?mainLanes.get(a.id)??0:mainLaneCount+(ghostLanes.get(a.id)??1))*laneGap,...a}]));
+  let maxStack=0;for(const s of ranks){const counts=new Map();for(const value of s.priorities.values())counts.set(value,(counts.get(value)??0)+1);maxStack=Math.max(maxStack,...counts.values(),1);}
+  projectGap=minProjectGap+(mainLaneCount+laneCount+Math.max(0,maxStack-1))*laneGap;
+  const points=new Map(doc.anchors.map(a=>[a.id,{x:x(a.date),y:priorityY(active.has(a.id)?rank(a.project,a.date)+1:a.priority)+((active.has(a.id)?stackAt(a.project,a.date):0)+(active.has(a.id)?mainLanes.get(a.id)??0:mainLaneCount+(ghostLanes.get(a.id)??1)))*laneGap,...a}]));
   const edgePoints=new Map(doc.edges.map(e=>{const a=points.get(e.from),b=points.get(e.to);
     if(a.kind==='start')return [e.id,[a,b]];
-    const inner=[...new Set(ranks.map(r=>r.date))].filter(d=>day(d)>day(a.date)&&day(d)<day(b.date)).map(d=>({x:x(d),y:priorityY(rank(e.project,d)+1)}));
+    const inner=[...new Set(ranks.map(r=>r.date))].filter(d=>day(d)>day(a.date)&&day(d)<day(b.date)).map(d=>({x:x(d),y:priorityY(rank(e.project,d)+1)+stackAt(e.project,d)*laneGap}));
     inner.sort((p,q)=>p.x-q.x);return [e.id,[a,...inner,b]];
   }));
   const notePoints=new Map(),devices=new Map(),slots=new Map();

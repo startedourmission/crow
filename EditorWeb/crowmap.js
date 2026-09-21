@@ -1,9 +1,8 @@
 import {copyNodes,duplicateNodes} from './crowmap-copy.js';
 import {fileTitle,renamedNoteSource} from './file-title.js';
 import {embeddedNoteEditor} from './crowmap-note-editor.js';
-import {linkedTransaction,resolveMap,resolveAttachment,noteResolver,graphLinks,noteLink,deleteWorkNotes,moveNodes,movedDate,timelineNodes,deleteTimeline,patch} from './crowmap-links.js';
-import {uid,validateMap,createProject,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,reorderMilestones,addNote,linkLeaves,layoutMap,readNote,today,day,DATE_UNITS,PRIORITY_GAP,PRIORITY_GAP_MIN,PRIORITY_GAP_MAX,clampPriorityGap} from './crowmap-model.js';
-import {editFrontmatter} from './frontmatter-model.js';
+import {linkedTransaction,resolveMap,resolveAttachment,noteResolver,graphLinks,noteLink,deleteWorkNotes,moveNodes,applyNoteDate,timelineNodes,deleteTimeline,patch} from './crowmap-links.js';
+import {uid,validateMap,createProject,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,reorderMilestones,addNote,linkLeaves,layoutMap,readNote,today,day,DATE_UNITS,dateLabelStride,TIMELINE_COLORS,setProjectColor,PRIORITY_GAP,PRIORITY_GAP_MIN,PRIORITY_GAP_MAX,clampPriorityGap} from './crowmap-model.js';
 import {el,button,input,select,field,dialog,actions,iconButton} from './obsidian-ui.js';
 import {animateNotes,nodeDegrees,nodeRadius} from './crowmap-motion.js';
 import {graphGestures} from './crowmap-gestures.js';
@@ -98,11 +97,19 @@ async function confirmTimelineDeletion(startID){
   });modal.querySelector('[data-confirm]').focus();
  }catch(e){notice(e.message);}
 }
+function timelineColorPicker(menu,projectID){
+ const current=data.doc.projects.find(p=>p.id===projectID)?.color,label=el('p','Timeline color','muted');label.style.padding='4px 8px 0';menu.append(label);
+ const row=el('div',null,'color-swatches');row.setAttribute('role','group');row.setAttribute('aria-label','Timeline color');
+ const apply=async color=>{menu.remove();try{await transaction(setProjectColor(data.doc,projectID,color),{links:false});render();}catch(e){notice(e.message);}};
+ for(const color of TIMELINE_COLORS){const swatch=button('');swatch.className='color-swatch';swatch.style.background=color;swatch.setAttribute('aria-label',color);if(color===current)swatch.setAttribute('aria-pressed','true');swatch.onclick=()=>apply(color);row.append(swatch);}
+ const custom=input(current??TIMELINE_COLORS[0],'color');custom.setAttribute('aria-label','Custom timeline color');custom.onchange=()=>apply(custom.value);row.append(custom);menu.append(row);
+}
 async function nodeMenu(event,item){
  event.preventDefault();event.stopPropagation();if(!await flushNote())return;
  if(item.kind)selectedNotes.clear();else if(!selectedNotes.has(item.id)){selectedNotes.clear();selectedNotes.add(item.id);}selected=null;render();
  const ids=item.kind?[item.id]:[...selectedNotes],items=data.doc.notes.filter(n=>selectedNotes.has(n.id)),menu=el('section',null,'map-popup node-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label','Note actions');
  const action=(title,callback)=>{const control=button(title,callback);control.setAttribute('role','menuitem');menu.append(control);return control;};
+ if(item.kind)timelineColorPicker(menu,item.project);
  action('Copy',()=>{menu.remove();try{const nodes=copyNodes(data.doc,ids);for(const n of nodes)if(data.drafts?.[n.note]&&!n.device)throw Error('Save the selected notes before copying.');send({action:'copyNotes',files:nodes.map(n=>({name:n.note,...(n.device?{text:n.cachedText??''}:{expected:data.texts[n.note]})}))});}catch(e){notice(e.message);}});
  action('Duplicate',async()=>{menu.remove();try{if(graphError)throw Error(graphError);const nodes=copyNodes(data.doc,ids);for(const n of nodes)if(data.drafts?.[n.note]&&!n.device)throw Error('Save the selected notes before duplicating.');const result=duplicateNodes(data.doc,ids,data.texts);await transaction(result,{links:false,forget:true});selectedNotes.clear();for(const id of result.copiedIDs)if(data.doc.notes.some(n=>n.id===id))selectedNotes.add(id);selected=result.copiedIDs.length===1?{kind:item.kind?'anchor':'note',id:result.copiedIDs[0]}:null;render();}catch(e){notice(e.message);}});
  if(item.kind==='start')action('Delete timeline',()=>{menu.remove();confirmTimelineDeletion(item.id);}).classList.add('danger');
@@ -111,6 +118,13 @@ async function nodeMenu(event,item){
   for(const provider of data.agentProviders??[])action('Run '+provider.title+' with '+ids.length+' note'+(ids.length===1?'':'s'),()=>{menu.remove();send({action:'runAgent',provider:provider.id,nodeIDs:ids});}).disabled=items.some(n=>n.device);
   action(ids.length>1?'Delete '+ids.length+' notes':item.device?'Remove from map':'Delete note',async()=>{menu.remove();try{await transaction(deleteWorkNotes(data.doc,ids,data.texts),{links:false,forget:true});selectedNotes.clear();render();}catch(e){notice(e.message);}});
  }
+ main.append(menu);popupPoint={x:event.clientX,y:event.clientY};placePopup(menu);menu.querySelector('button')?.focus();
+}
+async function edgeMenu(event,edge){
+ event.preventDefault();event.stopPropagation();if(!await flushNote())return;
+ selectedNotes.clear();selected=null;render();
+ const menu=el('section',null,'map-popup node-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label','Timeline actions');
+ timelineColorPicker(menu,edge.project);
  main.append(menu);popupPoint={x:event.clientX,y:event.clientY};placePopup(menu);menu.querySelector('button')?.focus();
 }
 async function attachDevice(attach){if(!await flushNote())return;dialog('Attach notes from a device',(form,close)=>{const available=data.hosts??[],host=select(available.map(h=>[h.id,h.label]),available[0]?.id??'');const list=el('div',null,'remote-notes');let loaded=[],selectedHost=null;
@@ -145,18 +159,11 @@ async function flushNote(){
  if(state.saving){const okay=await state.saving;return okay&&state.dirty?flushNote():okay;}
  let source=state.read();state.saving=(async()=>{try{
   if(pending){state.status.textContent='Waiting to save…';state.timer=setTimeout(()=>flushNote(),100);return false;}
-  let texts={...data.texts,[state.name]:source},doc;
-  try{doc=resolveMap(data.doc,texts);}
-  catch(error){
-    const item=data.doc.anchors.find(a=>a.note===state.name);
-    if(!item)throw error;
-    const requested=readNote(source).meta.date,clamped=movedDate(data.doc,item.id,requested);
-    if(clamped===requested)throw error;
-    source=editFrontmatter(source,'date',{value:clamped,type:'date'});
-    texts={...data.texts,[state.name]:source};doc=resolveMap(data.doc,texts);
-  }
+  const applied=applyNoteDate(data.doc,state.name,source,data.texts);
+  source=applied.source;
+  let texts={...data.texts,...Object.fromEntries(applied.writes.map(w=>[w.name,w.text]))},doc=applied.doc;
   const previous=data.doc.notes.find(n=>n.note===state.name&&!n.device),next=doc.notes.find(n=>n.note===state.name&&!n.device);
-  let result={doc,writes:[{name:state.name,text:source,expected:data.texts[state.name]}]};
+  let result={doc,writes:applied.writes};
   if(previous&&next&&JSON.stringify(previous.attach)!==JSON.stringify(next.attach))result=linkedTransaction(result,texts);
   state.dirty=false;
   try{await transaction(result,{links:false,draftNote:state.name});state.status.textContent='Saved';return true;}
@@ -199,7 +206,7 @@ function render(){
  const dateAxis=el('div',null,'map-date-axis'),dateLabels=svg('svg',{width:width*zoom,height:32,'aria-label':'Timeline dates'}),yearLabel=svg('text',{x:12,y:23,class:'date-year','aria-label':'Timeline year'}),ticks=[];
  dateAxis.style.width=width*zoom+'px';dateAxis.append(dateLabels);if(doc.projects.length)viewport.append(dateAxis);
  const canvas=svg('svg',{width:width*zoom,height:height*zoom,viewBox:`0 0 ${width} ${height}`,role:'group','aria-label':'Project timeline'});viewport.append(canvas);
- function updateTicks(){const left=viewport.scrollLeft;yearLabel.setAttribute('x',left+12);yearLabel.style.display=layout.unit==='year'?'none':'';if(layout.unit!=='year')yearLabel.textContent=layout.dateAt(Math.max(layout.x(dateString(layout.start)),Math.min(layout.x(dateString(layout.end)),left/zoom))).slice(0,4);let previous=-Infinity;for(const tick of ticks){const x=tick.x*zoom,center=tick.center*zoom;tick.label?.setAttribute('x',center);tick.border.setAttribute('x1',x);tick.border.setAttribute('x2',x);if(!tick.label)continue;const visible=center-left>=72&&center-previous>=54;tick.label.style.display=visible?'':'none';if(visible)previous=center;}}
+ function updateTicks(){const left=viewport.scrollLeft,stride=dateLabelStride(zoom);yearLabel.setAttribute('x',left+12);yearLabel.style.display=layout.unit==='year'?'none':'';if(layout.unit!=='year')yearLabel.textContent=layout.dateAt(Math.max(layout.x(dateString(layout.start)),Math.min(layout.x(dateString(layout.end)),left/zoom))).slice(0,4);for(const [index,tick]of ticks.entries()){const x=tick.x*zoom,center=tick.center*zoom;tick.label?.setAttribute('x',center);tick.border.setAttribute('x1',x);tick.border.setAttribute('x2',x);if(tick.label)tick.label.style.display=index%stride===0&&center-left>=72?'':'none';}}
  viewport.addEventListener('scroll',updateTicks,{passive:true});
  function setZoom(value,anchor={x:viewport.clientWidth/2,y:viewport.clientHeight/2}){
   const next=Math.max(.15,Math.min(3,value));if(next===zoom)return;
@@ -209,6 +216,7 @@ function render(){
   viewport.scrollLeft=point.x*zoom-anchor.x;viewport.scrollTop=point.y*zoom-anchor.y;updateTicks();
  }
  viewport.addEventListener('wheel',e=>{if(e.metaKey||e.ctrlKey){e.preventDefault();const rect=viewport.getBoundingClientRect();setZoom(zoom*Math.exp(-e.deltaY*.01),{x:e.clientX-rect.left-viewport.clientLeft,y:e.clientY-rect.top-viewport.clientTop});}},{passive:false});
+ const todayBounds=layout.dateBounds(today());canvas.append(svg('rect',{x:todayBounds.left,y:0,width:Math.max(0,todayBounds.right-todayBounds.left),height:layout.height,class:'today-column'}));
  for(const [index,tick]of layout.ticks.entries()){
   const next=layout.ticks[index+1],border=svg('line',{y1:0,y2:32,class:'date-boundary','data-date':tick.date});
   canvas.append(svg('line',{x1:tick.x,x2:tick.x,y1:32,y2:layout.height,class:'date-grid'}));dateLabels.append(border);
@@ -225,7 +233,7 @@ function render(){
  function edgePath(points,straight){return straight?straightPath(points):curvePath(points);}
  function timelineLine(points,cls,color,straight){const element=svg('path',{d:edgePath(points,straight),class:cls,fill:'none',stroke:color});timelineShapes.push({points,element,straight:!!straight});return element;}
  for(const edge of doc.edges){const points=layout.edgePoints.get(edge.id),stem=layout.points.get(edge.from).kind==='start';
- const color=projects.get(edge.project).color,visible=timelineLine(points,'timeline-edge active'+(stem?' start-stem':''),color,stem);canvas.append(visible);const hit=timelineLine(points,'edge-hit','transparent',stem);hit.dataset.edgeId=edge.id;interactive(hit,'Segment: '+layout.points.get(edge.from).title+' to '+layout.points.get(edge.to).title,()=>choose({kind:'edge',id:edge.id}));canvas.append(hit);
+ const color=projects.get(edge.project).color,visible=timelineLine(points,'timeline-edge active'+(stem?' start-stem':''),color,stem);canvas.append(visible);const hit=timelineLine(points,'edge-hit','transparent',stem);hit.dataset.edgeId=edge.id;interactive(hit,'Segment: '+layout.points.get(edge.from).title+' to '+layout.points.get(edge.to).title,()=>choose({kind:'edge',id:edge.id}));hit.oncontextmenu=e=>edgeMenu(e,edge);canvas.append(hit);
 
  }
  for(const connection of links.connections){const a=layout.points.get(connection.from)??layout.notePoints.get(connection.from),b=layout.points.get(connection.to)??layout.notePoints.get(connection.to);if(!a||!b)continue;canvas.append(movingLine(a,b,'weak-line note-connection','#788ca5'));}
@@ -242,7 +250,7 @@ function render(){
  if(focusDate){viewport.scrollLeft=Math.max(0,layout.x(focusDate)*zoom-Math.min(120,viewport.clientWidth*.25));focusDate=null;}
  else if(camera){viewport.scrollLeft=camera.x;viewport.scrollTop=camera.y;}updateTicks();if(search)find.oninput();
  const resumeMotion=()=>{stopMotion();if(!viewActive)return;stopMotion=animateNotes({canvas,viewport,notes:floating,edges:movingEdges,zoom:()=>zoom});};resumeMotion();
- stopGestures=graphGestures({canvas,viewport,notes:floating,selection:selectedNotes,doc,layout,onSelect:async()=>{if(!await flushNote()){resumeMotion();return;}selected=null;render();},onConnect:async(from,to)=>{try{if(await flushNote())await transaction(connectMilestones(data.doc,from,to),{forget:true});}catch(e){notice(e.message);}if(canvas.isConnected)resumeMotion();},preview:()=>{for(const edge of movingEdges)edge.line.setAttribute('points',`${edge.from.x},${edge.from.y} ${edge.to.x},${edge.to.y}`);for(const edge of timelineShapes)edge.element.setAttribute('d',edgePath(edge.points,edge.straight));},onReorder:async(id,target)=>{try{await applyMove(()=>reorderMilestones(data.doc,id,target));}catch(e){notice(e.message);}render();},onMove:async(ids,days,priority,cascadePriority)=>{try{await applyMove(()=>moveNodes(data.doc,ids,{days,priority,cascadePriority},data.texts));}catch(e){render();notice(e.message);return;}render();},pause:()=>stopMotion(),resume:resumeMotion});
+ stopGestures=graphGestures({canvas,viewport,notes:floating,selection:selectedNotes,doc,layout,onSelect:async()=>{if(!await flushNote()){resumeMotion();return;}selected=null;render();},onConnect:async(from,to)=>{try{if(await flushNote())await transaction(connectMilestones(data.doc,from,to),{forget:true});}catch(e){notice(e.message);}if(canvas.isConnected)resumeMotion();},preview:()=>{for(const edge of movingEdges)edge.line.setAttribute('points',`${edge.from.x},${edge.from.y} ${edge.to.x},${edge.to.y}`);for(const edge of timelineShapes)edge.element.setAttribute('d',edgePath(edge.points,edge.straight));},onReorder:async(id,target)=>{try{await applyMove(()=>reorderMilestones(data.doc,id,target));}catch(e){notice(e.message);}render();},onMove:async(ids,days,priority,cascadePriority,preserveGaps)=>{try{await applyMove(()=>moveNodes(data.doc,ids,{days,priority,cascadePriority,preserveGaps},data.texts));}catch(e){render();notice(e.message);return;}render();},pause:()=>stopMotion(),resume:resumeMotion});
 }
 window.crowMap={flush:flushNote,setActive(active){viewActive=active;if(!active){stopMotion();document.activeElement?.blur();}else if(data)render();},addSampleProject:sampleProject,renamed(value){const pending=renamePending;renamePending=null;if(value.error){pending?.reject(Error(value.error));return;}if(embedded){clearTimeout(embedded.timer);embedded.destroy();embedded=null;}this.receive(value);pending?.resolve(value.name);},draftError(name,message){if(embedded?.name===name){embedded.blocked=true;embedded.status.textContent=message;}},async refreshDevice(value){
  if(data?.doc.id!==value.mapID||pending)return;

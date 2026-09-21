@@ -1,9 +1,28 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {updateNote,emptyMap,createProject,revisePlan,addNote,validateMap,linkLeaves,layoutMap,readNote,timelineCurveY,PRIORITY_GAP,clampPriorityGap} from './crowmap-model.js';
+import {updateNote,emptyMap,createProject,revisePlan,addNote,validateMap,linkLeaves,layoutMap,readNote,timelineCurveY,PRIORITY_GAP,clampPriorityGap,dateLabelStride,setProjectColor} from './crowmap-model.js';
 function fixture(){return createProject(emptyMap(),{title:'Project',date:'2026-01-01',priority:1,milestones:[{title:'A',date:'2026-01-10'},{title:'B',date:'2026-01-20'},{title:'C',date:'2026-01-30'}]});}
 test('Start note carries complete plan and notes stay flat with mandatory dates',()=>{const r=fixture();assert.equal(readNote(r.writes[0].text).meta.milestones.length,3);assert.equal(r.writes.length,4);assert.throws(()=>addNote(r.doc,{title:'No date',date:'',body:'',attach:{kind:'edge',id:r.doc.edges[0].id}}));assert.throws(()=>addNote(r.doc,{title:'Outside segment',date:'2026-02-01',attach:{kind:'edge',id:r.doc.edges[0].id}}));});
 test('Partial plan changes preserve work and both main branches and rejoin the SAME milestone',()=>{let {doc}=fixture();const p=doc.projects[0],a=p.route[1],b=p.route[2],c=p.route[3],segment=doc.edges[1];doc=addNote(doc,{title:'Work',date:'2026-01-13',body:'[ref](https://example.com)',attach:{kind:'edge',id:segment.id}}).doc;const oldNote=structuredClone(doc.notes[0]);const r=revisePlan(doc,{project:p.id,from:a,rejoin:c,date:'2026-01-14',priority:1,title:'Scope change',milestones:[{title:'New B',date:'2026-01-23'}]});assert.equal(r.doc.anchors.filter(n=>n.id===c).length,1);assert(r.doc.projects[0].route.includes(b));assert.equal(r.doc.projects[0].route.at(-1),c);assert.deepEqual(r.doc.notes[0],oldNote);assert.equal(r.doc.edges.find(e=>e.id===segment.id).state,'active');assert.equal(r.writes.length,2);assert(r.doc.edges.every(e=>e.state==='active'));assert.equal(doc.anchors.length,4);validateMap(r.doc);});
-test('Rank changes cross project paths and edge notes retain their own date coordinates',()=>{let {doc}=fixture();doc=createProject(doc,{title:'Other',date:'2026-01-01',priority:2,milestones:[{title:'Urgent',date:'2026-01-15',priority:1}]}).doc;const map=layoutMap(doc);const first=doc.projects[0],second=doc.projects[1];assert.equal(map.priorityY(2)-map.priorityY(1),PRIORITY_GAP);assert.equal(layoutMap(doc,{priorityGap:120}).priorityY(2)-layoutMap(doc,{priorityGap:120}).priorityY(1),120);assert.equal(clampPriorityGap(20),20);assert.equal(clampPriorityGap(5),10);assert.equal(clampPriorityGap(900),400);assert(map.points.get(first.route[0]).y<map.points.get(second.route[0]).y);assert(map.points.get(first.route.at(-1)).y>map.points.get(second.route.at(-1)).y);doc=addNote(doc,{title:'Process',date:'2026-01-12',attach:{kind:'edge',id:doc.edges[1].id},body:''}).doc;const l=layoutMap(doc);assert.equal(l.notePoints.get(doc.notes[0].id).x,l.x('2026-01-12'));});
+test('Rank changes cross project paths and edge notes retain their own date coordinates',()=>{let {doc}=fixture();assert.equal(layoutMap(doc).priorityY(2)-layoutMap(doc).priorityY(1),PRIORITY_GAP);assert.equal(layoutMap(doc,{priorityGap:120}).priorityY(2)-layoutMap(doc,{priorityGap:120}).priorityY(1),120);assert.equal(clampPriorityGap(20),20);assert.equal(clampPriorityGap(5),10);assert.equal(clampPriorityGap(900),400);doc=createProject(doc,{title:'Other',date:'2026-01-01',priority:2,milestones:[{title:'Urgent',date:'2026-01-15',priority:1}]}).doc;const map=layoutMap(doc);const first=doc.projects[0],second=doc.projects[1];assert(map.points.get(first.route[0]).y<map.points.get(second.route[0]).y);assert(map.points.get(first.route.at(-1)).y>map.points.get(second.route.at(-1)).y);doc=addNote(doc,{title:'Process',date:'2026-01-12',attach:{kind:'edge',id:doc.edges[1].id},body:''}).doc;const l=layoutMap(doc);assert.equal(l.notePoints.get(doc.notes[0].id).x,l.x('2026-01-12'));});
+test('Changing a timeline color updates only the display cache',()=>{
+ const r=fixture(),id=r.doc.projects[0].id,colored=setProjectColor(r.doc,id,'#3F8A86');
+ assert.equal(r.doc.projects[0].color,'#476fa8');assert.equal(colored.doc.projects[0].color,'#3f8a86');assert.equal(colored.writes.length,0);
+ assert.throws(()=>setProjectColor(r.doc,id,'blue'));
+});
+test('Zoomed-out date labels skip a regular interval instead of changing scale',()=>{
+ assert.equal(dateLabelStride(1),1);
+ assert.equal(dateLabelStride(2),1);
+ assert(dateLabelStride(.15)>1);
+ assert.equal(dateLabelStride(.15),dateLabelStride(.15));
+});
+test('A later priority 2 project sits above an earlier priority 4 project',()=>{
+ let doc=createProject(emptyMap(),{title:'Old',date:'2026-01-01',priority:4,milestones:[{title:'End',date:'2026-06-01',priority:4}]}).doc;
+ doc=createProject(doc,{title:'New',date:'2026-03-01',priority:2,milestones:[{title:'End',date:'2026-06-01',priority:2}]}).doc;
+ const layout=layoutMap(doc),old=doc.projects[0],neu=doc.projects[1];
+ assert.equal(layout.rankAt(neu.id,'2026-03-01'),2);
+ assert.equal(layout.rankAt(old.id,'2026-03-01'),4);
+ assert(layout.points.get(neu.route[0]).y<layout.points.get(old.route.at(-1)).y);
+});
 test('Start-to-first milestone edges stay straight while later segments still bend',()=>{
  let doc=createProject(emptyMap(),{title:'Project',date:'2026-10-01',priority:1,milestones:[{title:'A',date:'2026-10-10'},{title:'B',date:'2026-10-20'}]}).doc;
  doc=createProject(doc,{title:'Other',date:'2026-10-08',priority:1,milestones:[{title:'Urgent',date:'2026-10-15',priority:2}]}).doc;

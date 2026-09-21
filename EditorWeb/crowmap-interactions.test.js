@@ -1,10 +1,18 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {emptyMap,createProject,addNote,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,noteText,layoutMap,readNote,UNIT_WIDTH} from './crowmap-model.js';
-import {linkedTransaction,resolveMap,deleteWorkNotes,moveNodes,movedDate,graphLinks} from './crowmap-links.js';
+import {linkedTransaction,resolveMap,deleteWorkNotes,moveNodes,movedDate,applyNoteDate,shiftFollowingDates,graphLinks} from './crowmap-links.js';
 import {floatOffset,nodeDegrees,nodeRadius} from './crowmap-motion.js';
+import {edgeScrollDelta} from './crowmap-gestures.js';
 const files=r=>Object.fromEntries(r.writes.map(w=>[w.name,w.text]));
 function fixture(){const result=linkedTransaction(createProject(emptyMap(),{title:'Project',date:'2026-10-01',priority:1,milestones:[{title:'A',date:'2026-10-10'},{title:'B',date:'2026-10-20'},{title:'C',date:'2026-10-30'}]}));return {...result,texts:files(result)};}
+test('Dragging near a viewport edge produces a scroll delta toward that edge',()=>{
+ const box={left:0,top:0,right:400,bottom:300};
+ assert.deepEqual(edgeScrollDelta(200,150,box),{x:0,y:0});
+ assert(edgeScrollDelta(10,150,box).x<0);assert.equal(edgeScrollDelta(10,150,box).y,0);
+ assert(edgeScrollDelta(390,150,box).x>0);assert(edgeScrollDelta(200,10,box).y<0);assert(edgeScrollDelta(200,290,box).y>0);
+ assert(Math.abs(edgeScrollDelta(-20,150,box).x)>=Math.abs(edgeScrollDelta(20,150,box).x));
+});
 test('One-click branch preserves the old path and reconnects to one existing milestone',()=>{
  let {doc,texts}=fixture();const original=structuredClone(doc),a=doc.projects[0].route[1],b=doc.projects[0].route[2],c=doc.projects[0].route[3];
  let result=linkedTransaction(addMilestone(doc,a,Object.keys(texts)),texts);Object.assign(texts,files(result));doc=result.doc;const added=doc.anchors.at(-1);
@@ -23,9 +31,91 @@ test('Date moves keep YAML date type so the note editor still shows a date field
  assert.equal(readNote(source).meta.priority,1);
  assert.equal(typeof readNote(source).meta.priority,'number');
 });
+test('Note properties that delay a milestone past the next one gather crossed milestones on that date',()=>{
+ let {doc,texts}=fixture();const a=doc.anchors[1],b=doc.anchors[2],c=doc.anchors[3];
+ const source=texts[a.note].replace('2026-10-10','2026-10-25')+'\nKept body\n';
+ const r=applyNoteDate(doc,a.note,source,texts),dates=id=>r.doc.anchors.find(n=>n.id===id).date;
+ assert.equal(dates(a.id),'2026-10-25');assert.equal(dates(b.id),'2026-10-25');assert.equal(dates(c.id),'2026-10-30');
+ assert.equal(readNote(r.writes.find(w=>w.name===a.note).text).meta.date,'2026-10-25');
+ assert.equal(readNote(r.writes.find(w=>w.name===b.note).text).meta.date,'2026-10-25');
+ assert.equal(r.writes.find(w=>w.name===c.note),undefined);
+ assert(r.writes.find(w=>w.name===a.note).text.endsWith('Kept body\n'));
+ assert.deepEqual(resolveMap(r.doc,{...texts,...Object.fromEntries(r.writes.map(w=>[w.name,w.text]))}),r.doc);
+ assert.equal(shiftFollowingDates(doc,a.id,'2026-10-15',texts),null);
+ const both=applyNoteDate(doc,a.note,texts[a.note].replace('2026-10-10','2026-11-05'),texts);
+ assert.equal(both.doc.anchors.find(n=>n.id===a.id).date,'2026-11-05');
+ assert.equal(both.doc.anchors.find(n=>n.id===b.id).date,'2026-11-05');
+ assert.equal(both.doc.anchors.find(n=>n.id===c.id).date,'2026-11-05');
+});
+test('Note properties keep later milestones when the new date is still before the next one',()=>{
+ let {doc,texts}=fixture();const a=doc.anchors[1],b=doc.anchors[2];
+ const r=applyNoteDate(doc,a.note,texts[a.note].replace('2026-10-10','2026-10-15'),texts);
+ assert.equal(r.doc.anchors.find(n=>n.id===a.id).date,'2026-10-15');
+ assert.equal(r.doc.anchors.find(n=>n.id===b.id).date,'2026-10-20');
+ assert.equal(r.writes.length,1);
+});
+test('Note properties that move a milestone earlier pull crossed previous milestones onto that date',()=>{
+ let {doc,texts}=fixture();const start=doc.anchors[0],a=doc.anchors[1],b=doc.anchors[2],c=doc.anchors[3];
+ const r=applyNoteDate(doc,b.note,texts[b.note].replace('2026-10-20','2026-10-05'),texts),dates=id=>r.doc.anchors.find(n=>n.id===id).date;
+ assert.equal(dates(start.id),'2026-10-01');assert.equal(dates(a.id),'2026-10-05');assert.equal(dates(b.id),'2026-10-05');assert.equal(dates(c.id),'2026-10-30');
+ const pulled=applyNoteDate(doc,a.note,texts[a.note].replace('2026-10-10','2026-09-20'),texts);
+ assert.equal(pulled.doc.anchors.find(n=>n.id===start.id).date,'2026-09-20');
+ assert.equal(pulled.doc.anchors.find(n=>n.id===a.id).date,'2026-09-20');
+ assert.equal(pulled.doc.anchors.find(n=>n.id===b.id).date,'2026-10-20');
+ const stayed=applyNoteDate(doc,b.note,texts[b.note].replace('2026-10-20','2026-10-12'),texts);
+ assert.equal(stayed.doc.anchors.find(n=>n.id===a.id).date,'2026-10-10');
+ assert.equal(stayed.doc.anchors.find(n=>n.id===b.id).date,'2026-10-12');
+ assert.equal(stayed.writes.length,1);
+});
+test('Delaying a milestone past the next one moves later-segment work and leaves incoming work',()=>{
+ let {doc,texts}=fixture();
+ let r=linkedTransaction(addNote(doc,{title:'Incoming',date:'2026-10-05',attach:{kind:'edge',id:doc.edges[0].id}}),texts);Object.assign(texts,files(r));doc=r.doc;
+ r=linkedTransaction(addNote(doc,{title:'Outgoing',date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;
+ r=linkedTransaction(addNote(doc,{title:'Later',date:'2026-10-25',attach:{kind:'edge',id:doc.edges[2].id}}),texts);Object.assign(texts,files(r));doc=r.doc;
+ const a=doc.anchors[1],applied=applyNoteDate(doc,a.note,texts[a.note].replace('2026-10-10','2026-10-25'),texts);
+ const note=title=>applied.doc.notes.find(n=>n.title===title);
+ assert.equal(note('Incoming').date,'2026-10-05');
+ assert.equal(note('Outgoing').date,'2026-10-25');
+ assert.equal(note('Later').date,'2026-10-25');
+ assert.equal(note('Outgoing').attach.kind,'edge');assert.equal(note('Later').attach.kind,'edge');
+ const pulled=applyNoteDate(doc,a.note,texts[a.note].replace('2026-10-10','2026-09-20'),texts),after=title=>pulled.doc.notes.find(n=>n.title===title);
+ assert.equal(after('Incoming').date,'2026-09-20');
+ assert.equal(after('Outgoing').date,'2026-10-15');
+});
+test('A delayed milestone does not shift a parallel branch that is not downstream',()=>{
+ let {doc,texts}=fixture();const a=doc.anchors[1],c=doc.anchors[3];
+ let r=linkedTransaction(addMilestone(doc,a.id,Object.keys(texts)),texts);Object.assign(texts,files(r));doc=r.doc;
+ const added=doc.anchors.find(n=>n.title==='New milestone');
+ r=linkedTransaction(connectMilestones(doc,added.id,c.id),texts);Object.assign(texts,files(r));doc=r.doc;
+ const b=doc.anchors.find(n=>n.title==='B'),applied=applyNoteDate(doc,b.note,texts[b.note].replace('2026-10-20','2026-11-05'),texts);
+ assert.equal(applied.doc.anchors.find(n=>n.id===b.id).date,'2026-11-05');
+ assert.equal(applied.doc.anchors.find(n=>n.id===c.id).date,'2026-11-05');
+ assert.equal(applied.doc.anchors.find(n=>n.id===added.id).date,added.date);
+});
+test('Dragging a milestone past the next one gathers crossed milestones on that date',()=>{
+ let {doc,texts}=fixture();const a=doc.anchors[1],b=doc.anchors[2],c=doc.anchors[3];
+ assert.equal(movedDate(doc,a.id,'2026-10-25'),'2026-10-25');
+ const r=moveNodes(doc,[a.id],{days:15},texts),dates=id=>r.doc.anchors.find(n=>n.id===id).date;
+ assert.equal(dates(a.id),'2026-10-25');assert.equal(dates(b.id),'2026-10-25');assert.equal(dates(c.id),'2026-10-30');
+ assert.equal(readNote(files(r)[b.note]).meta.date,'2026-10-25');
+ const stayed=moveNodes(doc,[a.id],{days:5},texts);
+ assert.equal(stayed.doc.anchors.find(n=>n.id===a.id).date,'2026-10-15');
+ assert.equal(stayed.doc.anchors.find(n=>n.id===b.id).date,'2026-10-20');
+ const spaced=moveNodes(doc,[a.id],{days:15,preserveGaps:true},texts),keep=id=>spaced.doc.anchors.find(n=>n.id===id).date;
+ assert.equal(keep(a.id),'2026-10-25');assert.equal(keep(b.id),'2026-11-04');assert.equal(keep(c.id),'2026-11-14');
+});
+test('Dragging a milestone earlier pulls crossed previous milestones onto that date',()=>{
+ let {doc,texts}=fixture();const start=doc.anchors[0],a=doc.anchors[1],b=doc.anchors[2],c=doc.anchors[3];
+ assert.equal(movedDate(doc,b.id,'2026-10-05'),'2026-10-05');
+ const r=moveNodes(doc,[b.id],{days:-15},texts),dates=id=>r.doc.anchors.find(n=>n.id===id).date;
+ assert.equal(dates(b.id),'2026-10-05');assert.equal(dates(a.id),'2026-10-05');assert.equal(dates(start.id),'2026-10-01');assert.equal(dates(c.id),'2026-10-30');
+ const spaced=moveNodes(doc,[b.id],{days:-15,preserveGaps:true},texts),keep=id=>spaced.doc.anchors.find(n=>n.id===id).date;
+ assert.equal(keep(b.id),'2026-10-05');assert.equal(keep(a.id),'2026-09-25');assert.equal(keep(start.id),'2026-09-16');assert.equal(keep(c.id),'2026-10-30');
+});
 test('Date moves reattach work without copying it and milestone dates respect attached work',()=>{
  let {doc,texts}=fixture();let r=linkedTransaction(addNote(doc,{title:'Work',date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;const note=doc.notes[0],milestone=doc.anchors[1];
  assert.equal(movedDate(doc,milestone.id,'2026-10-19'),'2026-10-15');
+ assert.equal(movedDate(doc,milestone.id,'2026-10-25'),'2026-10-25');
  r=moveNodes(doc,[note.id],{days:10},texts);Object.assign(texts,files(r));assert.equal(r.doc.notes.length,1);assert.equal(r.doc.notes[0].id,note.id);assert.equal(r.doc.notes[0].date,'2026-10-25');assert.equal(r.doc.notes[0].attach.id,doc.edges[2].id);assert.equal(readNote(texts[note.note]).meta.date,'2026-10-25');assert.deepEqual(resolveMap(r.doc,texts),r.doc);
 });
 test('Priority moves cross projects and date spacing keeps attachments aligned',()=>{
@@ -42,12 +132,13 @@ test('Repeated links do not inflate node size and floating stays close to the da
  const degree=nodeDegrees(doc,graphLinks(doc,texts));assert.equal(degree.get(doc.notes[0].id),2);assert(nodeRadius('note',5)>nodeRadius('note',1));for(let t=0;t<100;t++){const offset=floatOffset('work',t);assert(Math.abs(offset.x)<44);assert(Math.abs(offset.y)<=5);}assert.notDeepEqual(floatOffset('work',0),floatOffset('work',2));
 });
 
-test('A long date range keeps a bounded tick list',()=>{
+test('A long date range keeps one tick per day at a fixed column width',()=>{
  const r=createProject(emptyMap(),{title:'Span',date:'2000-01-01',priority:1,milestones:[{title:'End',date:'2020-01-01'}]});
  const layout=layoutMap(r.doc,{unit:'day'});
- assert(layout.ticks.length<=180);
- assert(layout.width<=29000);
- assert(layout.x('2020-01-01')>layout.x('2000-01-01'));
+ assert(layout.ticks.length>7000);
+ assert(layout.ticks.every((t,i)=>!i||Math.abs(t.x-layout.ticks[i-1].x-UNIT_WIDTH)<1e-6));
+ assert.equal(layout.x('2000-01-02')-layout.x('2000-01-01'),UNIT_WIDTH);
+ assert(layout.ticks.some(t=>t.date==='2010-06-15'));
  assert.equal(layout.dateAt(layout.x('2010-06-15')),'2010-06-15');
 });
 test('Date columns keep a fixed unit width and round-trip every date',()=>{
