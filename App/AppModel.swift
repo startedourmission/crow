@@ -1759,6 +1759,17 @@ final class AppModel {
                 $0.snapshot.workspace.connection == .connected
         }?.systemSSH
     }
+    func uploadClipboardImage(_ data: Data, toReverseHost hostID: HostID, sessionSpec: SystemSSHSpec? = nil) async throws -> String {
+        if let spec = sessionSpec ?? connectedSystemSSH(for: hostID) {
+            let files = try SystemSFTP(spec: spec)
+            defer { files.close() }
+            return try await files.uploadClipboardImage(data)
+        }
+        if let remote = connectedNativeSSH(for: hostID) {
+            return try await remote.uploadClipboardImage(data)
+        }
+        throw CommandError("Connect Reverse SSH before attaching images.")
+    }
     #endif
     private func disconnect(_ state: WorkspaceState, stopReverseSSH: Bool = true) {
         if state.snapshot.workspace.isRemote { state.browsers.values.forEach { $0.disconnect() } }
@@ -1839,8 +1850,12 @@ final class AppModel {
         }
         session.uploadImage = { [weak self, weak state] data, context in
             guard let self, let state, self.imagePasteContext(for: id, in: state) == context else { throw FileFailure.disconnected }
-            if let root = self.reverseAgentWorkspace(for: id, in: state) {
-                return try ClipboardImage.save(data, underWorkspace: root)
+            if let hostID = self.reverseAgentHostID(for: id, in: state) {
+                #if os(macOS)
+                return try await self.uploadClipboardImage(data, toReverseHost: hostID, sessionSpec: session.systemSSH)
+                #else
+                throw FileFailure.disconnected
+                #endif
             }
             if state.snapshot.workspace.isRemote {
                 guard let remote = state.remote else { throw FileFailure.disconnected }
@@ -1859,18 +1874,14 @@ final class AppModel {
             #endif
         }
     }
-    private func reverseAgentWorkspace(for terminalID: UUID, in state: WorkspaceState) -> String? {
-        if let agent = state.snapshot.agentTerminals.first(where: { $0.id == terminalID }), agent.reverseHostID != nil {
-            return agent.directory
-        }
+    private func reverseAgentHostID(for terminalID: UUID, in state: WorkspaceState) -> HostID? {
+        if let agent = state.snapshot.agentTerminals.first(where: { $0.id == terminalID }) { return agent.reverseHostID }
         let session = state.terminals[terminalID]
-        if let pane = session?.tmuxLocation?.paneID, let agent = session?.tmuxReverseAgents[pane], agent.reverseHostID != nil {
-            return agent.directory
-        }
+        if let pane = session?.tmuxLocation?.paneID { return session?.tmuxReverseAgents[pane]?.reverseHostID }
         return nil
     }
     private func imagePasteContext(for terminalID: UUID, in state: WorkspaceState) -> String? {
-        if let root = reverseAgentWorkspace(for: terminalID, in: state) { return "reverse:" + root }
+        if let hostID = reverseAgentHostID(for: terminalID, in: state) { return "reverse:" + hostID.rawValue.uuidString }
         if state.snapshot.workspace.isRemote {
             guard let remote = state.remote, remote.isConnected else { return nil }
             #if os(macOS)

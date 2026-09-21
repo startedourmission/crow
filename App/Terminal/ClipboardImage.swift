@@ -69,24 +69,6 @@ enum ClipboardImage {
         return file.path
     }
 
-    /// Reverse agents can only read the client workspace through crow_client tools.
-    static func save(_ data: Data, underWorkspace root: String) throws -> String {
-        try validate(data)
-        let workspace = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath()
-        guard (try workspace.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
-            throw CommandError("The workspace folder is unavailable.")
-        }
-        let directory = workspace.appendingPathComponent(".crow/clipboard")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        let file = directory.appendingPathComponent(UUID().uuidString + ".png")
-        try data.write(to: file, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        let path = file.resolvingSymlinksInPath().path
-        guard path.hasPrefix(workspace.path + "/") else { throw CommandError("The workspace folder is unavailable.") }
-        return path
-    }
-
     static func pastedPath(_ path: String) -> String {
         // No newline or command execution. Shell quoting also handles server paths containing spaces.
         if path.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-").contains($0) }) {
