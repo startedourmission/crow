@@ -367,6 +367,7 @@ extension AppModel {
             Task { try? await Self.cleanReverseAgentLaunch(prepared.launch, on: source) }
         }
         owner.snapshot.agentTerminals.append(agent)
+        configureTerminalImagePaste(session, id: agent.id, in: owner)
         owner.terminals[agent.id] = session; owner.terminalGeneration += 1
         owner.snapshot.terminalIDs.append(agent.id); owner.snapshot.selectedTerminalID = agent.id
         owner.snapshot.layout?.open(.terminal(agent.id), in: request.paneID)

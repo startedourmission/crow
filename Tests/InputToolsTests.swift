@@ -197,6 +197,87 @@ final class InputToolsTests: XCTestCase {
         XCTAssertFalse(sent.contains(13)); XCTAssertFalse(sent.contains(10))
     }
 
+    func testClipboardImageSavesInsideWorkspaceForReverseAgents() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-clip-ws-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = try ClipboardImage.save(Self.png, underWorkspace: root.path)
+        XCTAssertTrue(path.hasPrefix(root.path + "/"))
+        XCTAssertTrue(path.contains("/.crow/clipboard/"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), Self.png)
+        XCTAssertThrowsError(try ClipboardImage.save(Self.png, underWorkspace: root.appendingPathComponent("missing").path))
+    }
+
+    @MainActor func testReverseAgentImagePasteSavesInsideClientWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-image-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        var agent = AgentTerminal(provider: .codex, directory: model.current.snapshot.rootPath)
+        agent.reverseHostID = HostID(rawValue: UUID())
+        model.current.snapshot.agentTerminals.append(agent)
+        model.current.snapshot.terminalIDs.append(agent.id)
+        model.current.snapshot.selectedTerminalID = agent.id
+        let session = model.terminal(agent.id, in: model.current)
+        session.running = true
+        var sent: [UInt8] = []
+        session.onBytes = { sent += $0 }
+        XCTAssertEqual(session.imagePasteContext?(), "reverse:" + agent.directory)
+        XCTAssertTrue(session.pasteImage(Self.png))
+        for _ in 0..<100 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        let text = String(decoding: sent, as: UTF8.self)
+        let path = text.trimmingCharacters(in: .whitespaces)
+        XCTAssertTrue(path.hasPrefix(agent.directory + "/.crow/clipboard/"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), Self.png)
+        XCTAssertFalse(session.imagePasteMessage?.contains("failed") == true)
+    }
+
+    @MainActor func testDedicatedReverseAgentSessionWiresImagePasteOntoDirectSession() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-direct-image-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        var agent = AgentTerminal(provider: .codex, directory: model.current.snapshot.rootPath)
+        agent.reverseHostID = HostID(rawValue: UUID())
+        model.current.snapshot.agentTerminals.append(agent)
+        model.current.snapshot.terminalIDs.append(agent.id)
+        let execution = Workspace(name: "Server", kind: .remote(hostID: agent.reverseHostID!, path: "/server"), connection: .connected)
+        let session = TerminalSession(id: agent.id, workspace: execution, directory: "/server", remote: nil, fontSize: 14)
+        session.running = true
+        XCTAssertNil(session.imagePasteContext?())
+        XCTAssertNil(session.uploadImage)
+        model.configureTerminalImagePaste(session, id: agent.id, in: model.current)
+        model.current.terminals[agent.id] = session
+        var sent: [UInt8] = []
+        session.onBytes = { sent += $0 }
+        XCTAssertEqual(session.imagePasteContext?(), "reverse:" + agent.directory)
+        XCTAssertTrue(session.pasteImage(Self.png))
+        for _ in 0..<100 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        let path = String(decoding: sent, as: UTF8.self).trimmingCharacters(in: .whitespaces)
+        XCTAssertTrue(path.hasPrefix(agent.directory + "/.crow/clipboard/"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), Self.png)
+    }
+
+    @MainActor func testTmuxReverseAgentImagePasteSavesInsideClientWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-tmux-reverse-image-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        model.newTerminal()
+        let id = try XCTUnwrap(model.current.snapshot.selectedTerminalID)
+        let session = model.terminal(id, in: model.current)
+        session.running = true
+        session.tmuxLocation = .init(sessionID: "$0", windowID: "@0", paneID: "%9")
+        var agent = AgentTerminal(provider: .codex, directory: model.current.snapshot.rootPath)
+        agent.reverseHostID = HostID(rawValue: UUID())
+        session.tmuxReverseAgents["%9"] = agent
+        var sent: [UInt8] = []
+        session.onBytes = { sent += $0 }
+        XCTAssertEqual(session.imagePasteContext?(), "reverse:" + agent.directory)
+        XCTAssertTrue(session.pasteImage(Self.png))
+        for _ in 0..<100 where session.imagePasteInProgress { try await Task.sleep(for: .milliseconds(10)) }
+        let path = String(decoding: sent, as: UTF8.self).trimmingCharacters(in: .whitespaces)
+        XCTAssertTrue(path.hasPrefix(agent.directory + "/.crow/clipboard/"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), Self.png)
+    }
+
     @MainActor func testMacSnippetRestoresCapturedSelectionAndSupportsTerminal() throws {
         let editor = CodeTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 400))
         editor.isRichText = false; editor.allowsUndo = true; editor.string = "before after"

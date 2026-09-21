@@ -1,6 +1,8 @@
 import CrowCore
 import SwiftUI
-#if os(iOS)
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
 import UIKit
 import WebKit
 
@@ -283,6 +285,8 @@ struct SnippetsView: View {
     @Environment(\.dismiss) private var dismiss
     var onInsert: ((String) -> Void)?
     @State private var editing: TextSnippet?
+    @State private var copiedID: UUID?
+    @State private var copiedReset: Task<Void, Never>?
     var body: some View {
         NavigationStack {
             List {
@@ -299,7 +303,16 @@ struct SnippetsView: View {
                                 Text(snippet.text).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }.buttonStyle(.plain)
+                        Button { copySnippet(snippet) } label: {
+                            Image(systemName: copiedID == snippet.id ? "checkmark" : "doc.on.doc")
+                                .frame(width: 36, height: 44)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .buttonStyle(.plain).fixedSize()
+                        .accessibilityLabel((copiedID == snippet.id ? "Copied " : "Copy ") + snippet.name)
+                        .accessibilityIdentifier("crow.snippet.copy")
                         CrowMenu {
+                            Button("Copy") { copySnippet(snippet) }
                             Button("Edit") { editing = snippet }
                             Button("Delete", role: .destructive) { model.settings.textSnippets?.removeAll { $0.id == snippet.id } }
                         } label: { Image(systemName: "ellipsis").frame(width: 36, height: 44) }
@@ -326,6 +339,21 @@ struct SnippetsView: View {
         #if os(macOS)
         .frame(minWidth: 380, minHeight: 420)
         #endif
+    }
+    private func copySnippet(_ snippet: TextSnippet) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(snippet.text, forType: .string)
+        #else
+        UIPasteboard.general.string = snippet.text
+        #endif
+        copiedID = snippet.id
+        copiedReset?.cancel()
+        copiedReset = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled, copiedID == snippet.id else { return }
+            copiedID = nil
+        }
     }
 }
 
