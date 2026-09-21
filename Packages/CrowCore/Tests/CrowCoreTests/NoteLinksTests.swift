@@ -8,6 +8,12 @@ final class NoteLinksTests: XCTestCase {
         var enabled = old; enabled.noteLinksEnabled = true
         XCTAssertTrue(try JSONDecoder().decode(EditorSettings.self, from: JSONEncoder().encode(enabled)).effectiveNoteLinksEnabled)
     }
+    func testCrowmapIsOptInAndPersist() throws {
+        let old = try JSONDecoder().decode(EditorSettings.self, from: JSONEncoder().encode(EditorSettings()))
+        XCTAssertFalse(old.effectiveCrowmapEnabled)
+        var enabled = old; enabled.crowmapEnabled = true
+        XCTAssertTrue(try JSONDecoder().decode(EditorSettings.self, from: JSONEncoder().encode(enabled)).effectiveCrowmapEnabled)
+    }
     func testLinksExcludeFrontmatterCodeAndExternalLinks() {
         let text = "---\nproperty: '[[Not a backlink]]'\n---\n[[Project|label]] [Sibling](../Sibling.md) `[[Code]]` ![[Image]] [Web](https://example.com)\n```\n[[Fenced]]\n```"
         XCTAssertEqual(NoteLinks.targets(in: text), ["Project", "../Sibling.md"])

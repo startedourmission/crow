@@ -904,7 +904,7 @@ extension AppModel {
         for state in states {
             let legacy = state.snapshot.buffers.filter { !$0.isRemote && !$0.isDirty && $0.path.hasSuffix(".crowmap") && FileManager.default.fileExists(atPath: $0.path) }
             for buffer in legacy {
-                if !paths.contains(buffer.path) { paths.append(buffer.path); crowmapPanel.visible = true }
+                if !paths.contains(buffer.path) { paths.append(buffer.path); if settings.effectiveCrowmapEnabled { crowmapPanel.visible = true } }
                 state.snapshot.layout?.remove(.file(buffer.id))
                 state.snapshot.buffers.removeAll { $0.id == buffer.id }
                 if state.snapshot.selectedBufferID == buffer.id { state.snapshot.selectedBufferID = state.snapshot.buffers.last?.id }
@@ -930,6 +930,7 @@ extension AppModel {
         if !crowmapTabs.contains(where: { $0.id == crowmapPanel.selectedPath }) { crowmapPanel.selectedPath = crowmapTabs.first?.id }
         crowmap.selected = crowmapPanel.selectedPath.map { URL(fileURLWithPath: $0) }
         crowmapPanelFocused = false
+        if !settings.effectiveCrowmapEnabled { crowmapPanel.visible = false }
     }
     func panelAgentHistorySource() -> (WorkspaceState, String)? {
         guard let path = focusedPanelCrowmap else { return nil }

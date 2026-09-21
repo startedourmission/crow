@@ -11,6 +11,16 @@ import WebKit
         root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-file-actions-" + UUID().uuidString)
         model = AppModel(vaultURL: root)
     }
+    func testCrowmapPanelStaysHiddenUntilEnabled() {
+        XCTAssertFalse(model.crowmapEnabled)
+        model.showCrowmap()
+        XCTAssertFalse(model.crowmapPanel.visible)
+        model.crowmapEnabled = true
+        model.showCrowmap()
+        XCTAssertTrue(model.crowmapPanel.visible)
+        model.crowmapEnabled = false
+        XCTAssertFalse(model.crowmapPanel.visible)
+    }
     func testRenderedFilenameRenamesFileWithoutChangingMarkdownOrLosingDraft() async throws {
         let file = root.appendingPathComponent("Original.md")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

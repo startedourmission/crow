@@ -102,6 +102,8 @@ public struct EditorSettings: Codable, Equatable, Sendable {
     }
     public var noteLinksEnabled: Bool?
     public var effectiveNoteLinksEnabled: Bool { noteLinksEnabled ?? false }
+    public var crowmapEnabled: Bool?
+    public var effectiveCrowmapEnabled: Bool { crowmapEnabled ?? false }
     public var markdownPreviewEnabled: Bool?
     public var effectiveMarkdownPreviewEnabled: Bool { markdownPreviewEnabled ?? true }
     public var fileDeletionDestination: FileDeletionDestination?

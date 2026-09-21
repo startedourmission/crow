@@ -29,7 +29,7 @@ struct ActivityBar: View {
                 .frame(maxWidth: .infinity)
                 .overlay { WindowDragRegion() }
                 #endif
-            paneButton(.crowmap, symbol: "point.3.connected.trianglepath.dotted")
+            if model.crowmapEnabled { paneButton(.crowmap, symbol: "point.3.connected.trianglepath.dotted") }
             Button { model.settingsVisible = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))

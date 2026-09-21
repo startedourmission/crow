@@ -53,6 +53,16 @@ final class AppModel {
     var crowmapPanel = CrowmapPanelSnapshot() { didSet { schedulePersist() } }
     var crowmapTabs: [CrowmapPanelTab] = []
     var crowmapPanelFocused = false
+    var crowmapEnabled: Bool {
+        get { settings.effectiveCrowmapEnabled }
+        set {
+            settings.crowmapEnabled = newValue
+            if !newValue {
+                hideCrowmapPanel()
+                if sidebarPane == .crowmap { sidebarPane = .workspaces }
+            }
+        }
+    }
     @ObservationIgnored var crowmapHistoryContext: WorkspaceState?
     private var tabHistory: [TabNavigationEntry] = []
     private var tabHistoryIndex = -1
@@ -91,6 +101,7 @@ final class AppModel {
         refreshFiles(); schedulePersist()
     }
     func showCrowmap() {
+        guard crowmapEnabled else { return }
         crowmap.list()
         if sidebarPane == .crowmap { sidebarPane = .workspaces }
         sidebarVisible = true
@@ -822,7 +833,7 @@ final class AppModel {
 
     func openFile(_ entry: FileEntry) {
         if entry.isDirectory { navigate(to: entry.path); return }
-        if !current.snapshot.workspace.isRemote, (entry.path as NSString).pathExtension.lowercased() == "crowmap" { openCrowmap(URL(fileURLWithPath: entry.path)); return }
+        if crowmapEnabled, !current.snapshot.workspace.isRemote, (entry.path as NSString).pathExtension.lowercased() == "crowmap" { openCrowmap(URL(fileURLWithPath: entry.path)); return }
         crowmapPanelFocused = false
         let state = current
         if let existing = state.snapshot.buffers.first(where: { $0.path == entry.path }) {

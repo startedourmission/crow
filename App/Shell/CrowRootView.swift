@@ -592,8 +592,10 @@ private struct PhoneWorkspaceBar: View {
         Button("Web Browser", systemImage: "globe") { model.newBrowser() }.disabled(!model.hasWorkspace)
         Button("Workspaces", systemImage: "square.stack.3d.up") { model.showWorkspaces() }
             .accessibilityIdentifier("crow.phone.workspaces")
-        Button { model.showCrowmap() } label: {
-            Label { Text("Crowmap") } icon: { CrowmapIcon().frame(width: 18, height: 18) }
+        if model.crowmapEnabled {
+            Button { model.showCrowmap() } label: {
+                Label { Text("Crowmap") } icon: { CrowmapIcon().frame(width: 18, height: 18) }
+            }
         }
         Button("Git", systemImage: "point.3.connected.trianglepath.dotted") {
             model.compactSurface = .files; model.sidebarPane = .git; model.sidebarVisible = true

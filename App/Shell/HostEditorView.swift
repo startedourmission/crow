@@ -272,7 +272,14 @@ struct CrowSettingsView: View {
                 CrowSettingsRow("Sidebar") { Toggle("Sidebar", isOn: $model.settings.sidebarVisible).labelsHidden() }
                 Divider()
                 CrowSettingsRow("Terminal") { Toggle("Terminal", isOn: $model.settings.terminalVisible).labelsHidden() }
+                Divider()
+                CrowSettingsRow("Crowmap") {
+                    Toggle("Crowmap", isOn: $model.crowmapEnabled).labelsHidden()
+                        .accessibilityIdentifier("crow.settings.crowmap")
+                }
             }
+            Text("Crowmap is a separate map panel for dated project notes. Turn it on to show the activity-bar icon and bottom panel.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
         }
         CrowSettingsSection("Files") {
             CrowSettingsCard {

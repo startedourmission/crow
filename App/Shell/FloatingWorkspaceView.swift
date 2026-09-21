@@ -69,7 +69,7 @@ struct FloatingWorkspaceView: View {
                     Divider()
                     Button("Git") { model.compactSurface = .files; model.sidebarPane = .git }
                     Button("SSH Keys…") { model.sshKeysVisible = true }
-                    Button("Crowmap") { model.showCrowmap() }
+                    if model.crowmapEnabled { Button("Crowmap") { model.showCrowmap() } }
                     Button("Settings…") { model.settingsVisible = true }
                 } label: { Image(systemName: "square.grid.2x2").frame(width: 32, height: 36) }
                     .fixedSize()
