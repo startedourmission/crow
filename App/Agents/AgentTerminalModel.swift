@@ -519,7 +519,10 @@ private struct TmuxRelayWriter: @unchecked Sendable { let value: TTYStdinWriter 
                 let writer = TmuxRelayWriter(value: outbound)
                 var startup = SSHStartupOutput()
                 try await outbound.write(ByteBuffer(string: startup.command("exec sh -lc " + TerminalCommand.quote(command) + "\n")))
-                let input = Task { try await self?.pumpInput(writer) }
+                let input = Task { @MainActor [weak self, writer] in
+                    guard let self else { return }
+                    try await self.pumpInput(writer)
+                }
                 defer { input.cancel() }
                 for try await output in inbound {
                     try Task.checkCancellation()
