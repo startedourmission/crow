@@ -6,6 +6,19 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Crow</title>
         <item>
+            <title>0.1.5</title>
+            <pubDate>Mon, 21 Sep 2026 13:58:52 +0900</pubDate>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>0.1.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[- Markdown 노트를 프로젝트 일정과 우선순위로 시각화하는 Crowmap 추가
+- Obsidian 호환 속성, 위키 링크, Canvas와 Base 편집 기능 개선
+- 터미널 파일·이미지 드롭과 역방향 에이전트 이미지 첨부 지원
+- 작업 공간, tmux, 플로팅 창과 편집기 상호작용 안정성 개선
+]]></description>
+            <enclosure url="https://github.com/startedourmission/crow/releases/download/v0.1.5/Crow-0.1.5-macOS.zip" length="16281543" type="application/octet-stream" sparkle:edSignature="0wxlh3HmHP8Hd/YwlgV/NWKiFNHg8maClYErhADCrlhR2weNZ26SXxhW8R2+rfLdLFbiKWo6Yz24ebTsg9wtDg=="/>
+        </item>
+        <item>
             <title>0.1.4</title>
             <pubDate>Thu, 17 Sep 2026 10:54:24 +0900</pubDate>
             <sparkle:version>5</sparkle:version>
@@ -74,6 +87,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: xQ1rpXJaTIP6SGwYiuGFK9Fn/QlXLh2SYPaaPCMhvVZIAxYy4di+uBht07bl+ZGoN/VO3YMhKiCUFyf+e2EvDw==
-length: 5328
+edSignature: gu6xicXYpQ736/RSaNYesR/hGHa6uEQU3aCDsa2c9KssbYEgiELTfi2YuJnr1qq+hj7eyNTwD4fkOpEV+TzdAQ==
+length: 6350
 -->
