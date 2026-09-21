@@ -19,8 +19,8 @@ struct FloatingWorkspaceView: View {
             }
             .padding(.horizontal, 8).frame(height: 36).background(CrowTheme.bg1).windowDragBackground()
             CrowDivider()
-            ZStack {
-                if model.compactSurface == .files || model.compactSurface == .hosts { SidebarView() }
+            CrowmapDockArea { ZStack {
+                if model.compactSurface == .files || model.compactSurface == .hosts { SplitSidebarView() }
                 if model.hasWorkspace {
                     EditorAreaView()
                         .opacity(model.compactSurface == .editor ? 1 : 0)
@@ -31,6 +31,7 @@ struct FloatingWorkspaceView: View {
                         .allowsHitTesting(model.compactSurface == .terminal)
                         .accessibilityHidden(model.compactSurface != .terminal)
                 }
+            }
             }
             // Hidden editor/terminal views must not impose their ideal size on the window.
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -68,6 +69,7 @@ struct FloatingWorkspaceView: View {
                     Divider()
                     Button("Git") { model.compactSurface = .files; model.sidebarPane = .git }
                     Button("SSH Keys…") { model.sshKeysVisible = true }
+                    Button("Crowmap") { model.showCrowmap() }
                     Button("Settings…") { model.settingsVisible = true }
                 } label: { Image(systemName: "square.grid.2x2").frame(width: 32, height: 36) }
                     .fixedSize()

@@ -60,6 +60,7 @@
 		49B00569CD011820DEE94DB0 /* screen-client.js in Resources */ = {isa = PBXBuildFile; fileRef = 3034D3C221FEB585F2E1C669 /* screen-client.js */; };
 		4DAC07AC3C62A8A337CCBC46 /* GitSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE727E5075C5BE8A3631D8B /* GitSettingsView.swift */; };
 		4E6547A99A9E9B5774243757 /* obsidian-preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 2C4EBF407F4D98D53A926C34 /* obsidian-preview.js */; };
+		F7B671194E7E42F6B395B5FE /* crowmap.js in Resources */ = {isa = PBXBuildFile; fileRef = 727633EF9E7149F2926E0CA3 /* crowmap.js */; };
 		5021315983A367254FC391AF /* RemoteScreenSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53A8A766C91093D5BB4978A /* RemoteScreenSession.swift */; };
 		5213FCEAC768AC7DED943F60 /* noVNC-BSD-2-Clause.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9959DE8F729C51EF2EE34523 /* noVNC-BSD-2-Clause.txt */; };
 		52F0C7DCC3DE13464614DBBC /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
@@ -123,6 +124,7 @@
 		ABACF798FB51E0E27B5574D6 /* ReverseSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0DC14E5D6A0759676BB451 /* ReverseSSH.swift */; };
 		AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */; };
 		AD91989787BF5A7C12FEAE99 /* obsidian-preview.css in Resources */ = {isa = PBXBuildFile; fileRef = 52664EA2D3352E84D423F7A6 /* obsidian-preview.css */; };
+		A1713F37B1B84DF7851ED6A5 /* crowmap.css in Resources */ = {isa = PBXBuildFile; fileRef = 4EAB665A87964576A434B2C1 /* crowmap.css */; };
 		AE31354632215BBCFA3E2E38 /* GitAccountTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907A6D50427DA2785D5BD7D0 /* GitAccountTests.swift */; };
 		AF3E140C7BE0D639268D14ED /* WorkspaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA566B3B7FC5A1045FB65CD /* WorkspaceState.swift */; };
 		AF4FF75AED678256F680A44D /* AgentProviderIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4095AA7991A062BD3C25C772 /* AgentProviderIcon.swift */; };
@@ -133,6 +135,7 @@
 		B89B09460A8C7E81D77F90CC /* screen-client.js in Resources */ = {isa = PBXBuildFile; fileRef = 3034D3C221FEB585F2E1C669 /* screen-client.js */; };
 		B8A759DC5A35A1E937BA1700 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F615327A09249D69F58FB1F /* AppModel.swift */; };
 		BC43348D2909F9956DBB3616 /* obsidian-preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 2C4EBF407F4D98D53A926C34 /* obsidian-preview.js */; };
+		D211ED5445E34FD48E95CA8E /* crowmap.js in Resources */ = {isa = PBXBuildFile; fileRef = 727633EF9E7149F2926E0CA3 /* crowmap.js */; };
 		BE37FD9491B1F61883D63C35 /* CrowCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2095F40A89154572BBF0B9AA /* CrowCore */; };
 		BF4AF95C56770D6B7EB35793 /* RemoteScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AA3034A580AD90BE6284FE8 /* RemoteScreenView.swift */; };
 		BF5C23BF3701F93C0F3921B1 /* AgentTerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD4480BF3D0A25FFA1A5902 /* AgentTerminalIntegrationTests.swift */; };
@@ -149,6 +152,7 @@
 		CE947F6659C0C839353BC407 /* TmuxPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CDC97BFAAD71B9C38097178 /* TmuxPanel.swift */; };
 		D0891CEA047B4F2EE9D04E48 /* BrowserTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A1D93117DA8A8D6047D3965 /* BrowserTunnel.swift */; };
 		D0F38D26670FE194C98785D2 /* obsidian-preview.css in Resources */ = {isa = PBXBuildFile; fileRef = 52664EA2D3352E84D423F7A6 /* obsidian-preview.css */; };
+		A94D488663DE484592576BE3 /* crowmap.css in Resources */ = {isa = PBXBuildFile; fileRef = 4EAB665A87964576A434B2C1 /* crowmap.css */; };
 		D24DE5DBCABB77ED892C319D /* WorkspaceWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2063D83DB3FB2D009C3709B /* WorkspaceWindowStore.swift */; };
 		D3963F717A1C0166859C87A5 /* EditorIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E547330B27D26BCBEF4B0E6 /* EditorIntegrationTests.swift */; };
 		D550D42C0D1DE6E4F04A5FC4 /* AgentWorkspaceBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DD85957B8C689F91EB98BE /* AgentWorkspaceBrowser.swift */; };
@@ -157,6 +161,7 @@
 		DAD61F96BAC61755BCFD24C8 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = DE53485A258DA8FF8E438A1C /* Citadel */; };
 		DB0AB24C8555A62CB34E60E3 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 22349BC58B8FD19F9A28CF2B /* Citadel */; };
 		DC437DE65D97D66069367B6A /* ObsidianPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B85D763E57E196A15D3A78E /* ObsidianPreview.swift */; };
+		FDCA05454B104D5FA5C38609 /* CrowmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F574E752A1B4BDDB2163CF5 /* CrowmapView.swift */; };
 		DD4F6B69AAD6938989797A11 /* FileRevision.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B0182A2707E63DEF43B27F /* FileRevision.swift */; };
 		DD79F454BF6855023C332AF5 /* InputToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1060A874F96F1D04933A95A4 /* InputToolsTests.swift */; };
 		DFACF071DF461B8E8B3D7DE6 /* WindowDragRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C603D2C1525D197887432FC /* WindowDragRegion.swift */; };
@@ -174,6 +179,7 @@
 		F4615645CEFDAA975B5A3EAC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81CDA3E505278504B945809C /* SidebarView.swift */; };
 		F59C882D23AB86434EEF74E2 /* AgentTerminalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD4480BF3D0A25FFA1A5902 /* AgentTerminalIntegrationTests.swift */; };
 		F6914E3AC737AA692DE9BE33 /* ObsidianPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B85D763E57E196A15D3A78E /* ObsidianPreview.swift */; };
+		2730F86283CC49D481DE055B /* CrowmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F574E752A1B4BDDB2163CF5 /* CrowmapView.swift */; };
 		F834C55CE5E20F8B4CADDD72 /* TmuxModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 716281610798F89A6806D06E /* TmuxModel.swift */; };
 		F876095CBC3D5023BA3F155C /* SystemSSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64421F4C0BC85E5DEB52ECF /* SystemSSH.swift */; };
 /* End PBXBuildFile section */
@@ -208,6 +214,7 @@
 		2A1D93117DA8A8D6047D3965 /* BrowserTunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTunnel.swift; sourceTree = "<group>"; };
 		2C353EAB1B7F7FBE0784989C /* EchoTerminalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalTests.swift; sourceTree = "<group>"; };
 		2C4EBF407F4D98D53A926C34 /* obsidian-preview.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "obsidian-preview.js"; sourceTree = "<group>"; };
+		727633EF9E7149F2926E0CA3 /* crowmap.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "crowmap.js"; sourceTree = "<group>"; };
 		2C603D2C1525D197887432FC /* WindowDragRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDragRegion.swift; sourceTree = "<group>"; };
 		3034D3C221FEB585F2E1C669 /* screen-client.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "screen-client.js"; sourceTree = "<group>"; };
 		3108F71F95FFCA2BBECE3761 /* EditorFileMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFileMenu.swift; sourceTree = "<group>"; };
@@ -219,12 +226,14 @@
 		4095AA7991A062BD3C25C772 /* AgentProviderIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProviderIcon.swift; sourceTree = "<group>"; };
 		4F5CE459FBFDAD4C623FBFA2 /* AutomationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationTests.swift; sourceTree = "<group>"; };
 		52664EA2D3352E84D423F7A6 /* obsidian-preview.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = "obsidian-preview.css"; sourceTree = "<group>"; };
+		4EAB665A87964576A434B2C1 /* crowmap.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = "crowmap.css"; sourceTree = "<group>"; };
 		5B85D763E57E196A15D3A78E /* ObsidianPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianPreview.swift; sourceTree = "<group>"; };
+		9F574E752A1B4BDDB2163CF5 /* CrowmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrowmapView.swift; sourceTree = "<group>"; };
 		5D62E4109A64D19EB1B58385 /* ScreenIntegrationChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenIntegrationChecks.swift; sourceTree = "<group>"; };
 		61B3B2623FE25570F04A96B0 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitRepository.swift; sourceTree = "<group>"; };
 		624990E2268E1F485C34E974 /* SSHKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyStore.swift; sourceTree = "<group>"; };
 		624F64C25FAB07DDF7AEAF65 /* EchoTerminalFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoTerminalFixture.swift; sourceTree = "<group>"; };
-		643351A73DF6ED8D3D6E4193 /* Crow.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		643351A73DF6ED8D3D6E4193 /* Crow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		661CBE9EFE11FEC7219B9482 /* InputToolsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputToolsSettingsView.swift; sourceTree = "<group>"; };
 		6A3FFAB2E0A71622EA1EEA37 /* ExternalFileRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalFileRefreshTests.swift; sourceTree = "<group>"; };
 		6CB7503B9851D9F1900409A4 /* noVNC-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "noVNC-LICENSE.txt"; sourceTree = "<group>"; };
@@ -343,8 +352,11 @@
 				DFD86389EC36971CA5AE241B /* MarkdownEditor.swift */,
 				C6FCB86B2C0FDA5493B944CF /* NativeEditor.swift */,
 				52664EA2D3352E84D423F7A6 /* obsidian-preview.css */,
+				4EAB665A87964576A434B2C1 /* crowmap.css */,
 				2C4EBF407F4D98D53A926C34 /* obsidian-preview.js */,
+				727633EF9E7149F2926E0CA3 /* crowmap.js */,
 				5B85D763E57E196A15D3A78E /* ObsidianPreview.swift */,
+				9F574E752A1B4BDDB2163CF5 /* CrowmapView.swift */,
 			);
 			path = Editor;
 			sourceTree = "<group>";
@@ -611,8 +623,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = B682C1620F6EAE7A1E66AC71 /* Build configuration list for PBXProject "Crow" */;
 			developmentRegion = en;
@@ -659,7 +669,9 @@
 				8A418EC2E91A9E5D3A8090EE /* noVNC-MPL-2.0.txt in Resources */,
 				F1D875AE7E648744754BA3F2 /* noVNC-pako-LICENSE.txt in Resources */,
 				D0F38D26670FE194C98785D2 /* obsidian-preview.css in Resources */,
+				A94D488663DE484592576BE3 /* crowmap.css in Resources */,
 				BC43348D2909F9956DBB3616 /* obsidian-preview.js in Resources */,
+				D211ED5445E34FD48E95CA8E /* crowmap.js in Resources */,
 				49B00569CD011820DEE94DB0 /* screen-client.js in Resources */,
 				53C028605600716885587243 /* screen.html in Resources */,
 			);
@@ -680,7 +692,9 @@
 				3E6B60C39B3E7E3592E51621 /* noVNC-MPL-2.0.txt in Resources */,
 				39A77266349A693C436CBD2C /* noVNC-pako-LICENSE.txt in Resources */,
 				AD91989787BF5A7C12FEAE99 /* obsidian-preview.css in Resources */,
+				A1713F37B1B84DF7851ED6A5 /* crowmap.css in Resources */,
 				4E6547A99A9E9B5774243757 /* obsidian-preview.js in Resources */,
+				F7B671194E7E42F6B395B5FE /* crowmap.js in Resources */,
 				B89B09460A8C7E81D77F90CC /* screen-client.js in Resources */,
 				6EC2ED1BA987EFD6E0C6B6F7 /* screen.html in Resources */,
 			);
@@ -724,6 +738,7 @@
 				F0CB3D4F2984862CA938F72D /* MarkdownEditor.swift in Sources */,
 				AD1E53E274AEECCAD376720E /* NativeEditor.swift in Sources */,
 				DC437DE65D97D66069367B6A /* ObsidianPreview.swift in Sources */,
+				FDCA05454B104D5FA5C38609 /* CrowmapView.swift in Sources */,
 				48B4929D869B9665BE21A67B /* RemoteConnection.swift in Sources */,
 				B86EDD8210B36668CEABE612 /* RemoteScreenSession.swift in Sources */,
 				EFE59F8F94B5B9DF43E597FD /* RemoteScreenView.swift in Sources */,
@@ -804,6 +819,7 @@
 				C196D401442A59AC0511ACB7 /* MarkdownEditor.swift in Sources */,
 				62CCACF3AEC8D62E0950CD92 /* NativeEditor.swift in Sources */,
 				F6914E3AC737AA692DE9BE33 /* ObsidianPreview.swift in Sources */,
+				2730F86283CC49D481DE055B /* CrowmapView.swift in Sources */,
 				C924A241512F3DBDC6710442 /* RemoteConnection.swift in Sources */,
 				5021315983A367254FC391AF /* RemoteScreenSession.swift in Sources */,
 				BF4AF95C56770D6B7EB35793 /* RemoteScreenView.swift in Sources */,
@@ -872,6 +888,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "App/Crow-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = X2V64W34GP;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Config/Crow-iOS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;
@@ -1010,6 +1027,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "App/Crow-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = X2V64W34GP;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Config/Crow-iOS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Crow;

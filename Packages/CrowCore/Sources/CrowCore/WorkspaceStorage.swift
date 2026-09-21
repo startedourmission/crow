@@ -110,19 +110,34 @@ public struct EditorSettings: Codable, Equatable, Sendable {
     public init() {}
 }
 
+/// Window-level Crowmap tabs are independent of workspace layouts.
+public struct CrowmapPanelSnapshot: Codable, Sendable, Equatable {
+    public var paths: [String] = []
+    public var pinnedPaths: [String]? = nil
+    public var selectedPath: String?
+    public var visible = false
+    public var height: Double = 340
+    public var maximized = false
+    public var drafts: [String: [String: String]] = [:]
+    public var draftBases: [String: [String: String]] = [:]
+    public init() {}
+}
+
 public struct SessionSnapshot: Codable, Sendable {
     public var version = 1
     public var hosts: [SSHHost]
     public var workspaces: [WorkspaceSnapshot]
     public var selectedWorkspaceID: WorkspaceID
     public var settings: EditorSettings
+    public var crowmapPanel: CrowmapPanelSnapshot?
 
     public init(hosts: [SSHHost], workspaces: [WorkspaceSnapshot], selectedWorkspaceID: WorkspaceID,
-                settings: EditorSettings) {
+                settings: EditorSettings, crowmapPanel: CrowmapPanelSnapshot? = nil) {
         self.hosts = hosts
         self.workspaces = workspaces
         self.selectedWorkspaceID = selectedWorkspaceID
         self.settings = settings
+        self.crowmapPanel = crowmapPanel
     }
 }
 

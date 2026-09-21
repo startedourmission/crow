@@ -44,7 +44,7 @@ public enum NoteLinks {
         }
         return tags
     }
-    private static let links = try! NSRegularExpression(pattern: #"(?<!!)\[\[([^\]\n]+)\]\]|(?<!!)\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"#)
+    private static let links = try! NSRegularExpression(pattern: #"(?<!!)\[\[([^\n]+?)\]\]|(?<!!)\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"#)
     private static let code = try! NSRegularExpression(pattern: #"(`+).*?\1"#)
     public static func targets(in source: String) -> [String] {
         var result: [String] = [], fence: Character?, frontmatter = false

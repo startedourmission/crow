@@ -14,6 +14,11 @@ struct WorkspaceTabDrag: Codable, Equatable {
     let tab: WorkspaceTab
 }
 
+struct TabNavigationEntry: Equatable {
+    let workspaceID: WorkspaceID
+    let tab: WorkspaceTab
+}
+
 struct CloseOtherTabsRequest {
     let id = UUID()
     let workspaceID: WorkspaceID
@@ -44,6 +49,91 @@ final class AppModel {
     var workspaceSearch = ""
     var workspaceTmuxVisible = true
     var settings = EditorSettings() { didSet { schedulePersist() } }
+    var crowmap = CrowmapStore()
+    var crowmapPanel = CrowmapPanelSnapshot() { didSet { schedulePersist() } }
+    var crowmapTabs: [CrowmapPanelTab] = []
+    var crowmapPanelFocused = false
+    @ObservationIgnored var crowmapHistoryContext: WorkspaceState?
+    private var tabHistory: [TabNavigationEntry] = []
+    private var tabHistoryIndex = -1
+    @ObservationIgnored private var traversingTabHistory = false
+    var canNavigateBack: Bool { historyDestination(-1) != nil }
+    var canNavigateForward: Bool { historyDestination(1) != nil }
+    private func historyDestination(_ direction: Int) -> Int? {
+        var index = tabHistoryIndex + direction
+        let selected = current.snapshot.layout?.activePane?.selected
+        while tabHistory.indices.contains(index) {
+            let item = tabHistory[index]
+            if let state = states.first(where: { $0.id == item.workspaceID }), state.snapshot.layout?.allTabs.contains(item.tab) == true,
+               !(item.workspaceID == selectedWorkspaceID && item.tab == selected) { return index }
+            index += direction
+        }
+        return nil
+    }
+    private func recordTabNavigation() {
+        guard !traversingTabHistory, let tab = current.snapshot.layout?.activePane?.selected else { return }
+        let entry = TabNavigationEntry(workspaceID: current.id, tab: tab)
+        guard !tabHistory.indices.contains(tabHistoryIndex) || tabHistory[tabHistoryIndex] != entry else { return }
+        tabHistory = Array(tabHistory.prefix(tabHistoryIndex + 1))
+        tabHistory.append(entry)
+        if tabHistory.count > 200 { tabHistory.removeFirst() }
+        tabHistoryIndex = tabHistory.count - 1
+    }
+    func navigateTabHistory(_ direction: Int) {
+        guard direction == -1 || direction == 1, let index = historyDestination(direction) else { return }
+        let entry = tabHistory[index]
+        guard let state = states.first(where: { $0.id == entry.workspaceID }),
+              let pane = state.snapshot.layout?.panes.first(where: { $0.tabs.contains(entry.tab) }) else { return }
+        traversingTabHistory = true; defer { traversingTabHistory = false }
+        selectedWorkspaceID = state.id; tabHistoryIndex = index
+        selectTab(entry.tab, in: pane.id)
+        if case .terminal = entry.tab { compactSurface = .terminal; terminalVisible = true } else { compactSurface = .editor }
+        refreshFiles(); schedulePersist()
+    }
+    func showCrowmap() {
+        crowmap.list()
+        if sidebarPane == .crowmap { sidebarPane = .workspaces }
+        sidebarVisible = true
+        crowmapPanel.visible = true
+        if crowmapPanel.selectedPath != nil { crowmapPanelFocused = true }
+        compactSurface = .files
+        if let error = crowmap.error { errorMessage = error }
+    }
+    func createCrowmap() {
+        do {
+            var name = "Crowmap", number = 2
+            while FileManager.default.fileExists(atPath: crowmap.root.appendingPathComponent(name).path) || FileManager.default.fileExists(atPath: crowmap.root.appendingPathComponent(name + ".crowmap").path) {
+                name = "Crowmap \(number)"; number += 1
+            }
+            try crowmap.create(name)
+            if let url = crowmap.selected { openCrowmap(url) }
+        } catch { crowmap.error = error.localizedDescription; report(error) }
+    }
+    func importCrowmap(from folder: URL) {
+        let accessed = folder.startAccessingSecurityScopedResource()
+        defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
+        do {
+            openCrowmap(try crowmap.importFolder(folder))
+        } catch { crowmap.error = error.localizedDescription; report(error) }
+    }
+    func openCrowmap(_ url: URL) {
+        do {
+            let path = url.standardizedFileURL.path
+            let tab: CrowmapPanelTab
+            if let existing = crowmapTabs.first(where: { $0.id == path }) { tab = existing }
+            else {
+                let store = CrowmapStore(root: crowmap.root); try store.load(url)
+                let loadedURL = (store.selected ?? url).standardizedFileURL
+                if let existing = crowmapTabs.first(where: { $0.id == loadedURL.path }) { tab = existing }
+                else {
+                    tab = CrowmapPanelTab(url: loadedURL, store: store)
+                    crowmapTabs.append(tab); crowmapPanel.paths.append(tab.id)
+                }
+            }
+            crowmapPanel.selectedPath = tab.id; crowmap.selected = tab.url
+            crowmapPanel.visible = true; crowmapPanelFocused = true
+        } catch { report(error) }
+    }
     var sidebarPane: SidebarPane = .workspaces
     var inspectorVisible = true
     var inspectorTab = "Agents"
@@ -108,8 +198,10 @@ final class AppModel {
     var deleteWorkspaceID: WorkspaceID?
     var hostKeyChallenge: HostKeyChallenge?
     var folderImporterVisible = false
+    var crowmapFolderImporterVisible = false
     #if os(macOS)
     @ObservationIgnored private(set) var folderSelectionPanel: NSOpenPanel?
+    @ObservationIgnored private(set) var crowmapFolderSelectionPanel: NSOpenPanel?
     func presentFolderPicker() {
         if let panel = folderSelectionPanel { panel.makeKeyAndOrderFront(nil); return }
         let panel = NSOpenPanel()
@@ -127,6 +219,26 @@ final class AppModel {
             let url = panel?.url
             self.folderSelectionPanel = nil; self.folderImporterVisible = false
             if response == .OK, let url { self.openFolder(url) }
+        }
+        panel.makeKeyAndOrderFront(nil)
+    }
+    func presentCrowmapFolderPicker() {
+        if let panel = crowmapFolderSelectionPanel { panel.makeKeyAndOrderFront(nil); return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = true
+        panel.prompt = "Open"; panel.title = "Open Folder as Crowmap"
+        let pathModel = FolderPathCompletion(panel: panel, initialDirectory: current.snapshot.workspace.isRemote ? nil : current.snapshot.rootPath)
+        let accessory = NSHostingView(rootView: FolderPathAccessory(completion: pathModel))
+        accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 208)
+        panel.accessoryView = accessory; panel.isAccessoryViewDisclosed = true
+        crowmapFolderSelectionPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self, weak panel] response in
+            guard let self else { return }
+            let url = panel?.url
+            self.crowmapFolderSelectionPanel = nil; self.crowmapFolderImporterVisible = false
+            if response == .OK, let url { self.importCrowmap(from: url) }
         }
         panel.makeKeyAndOrderFront(nil)
     }
@@ -199,6 +311,7 @@ final class AppModel {
                 guard saved.version == 1 else { throw CocoaError(.fileReadCorruptFile) }
                 restoredSession = true
                 hosts = saved.hosts; settings = saved.settings
+                crowmapPanel = saved.crowmapPanel ?? CrowmapPanelSnapshot()
                 states = saved.workspaces.map { snapshot in
                     var restored = snapshot
                     if restored.workspace.isRemote {
@@ -246,6 +359,7 @@ final class AppModel {
             if let text = try? TextFiles.read(readme) { addBuffer(path: readme.path, text: text, to: states[0]) }
         }
         for state in states { ensureLayout(state) }
+        restoreCrowmapPanel()
         refreshFiles()
     }
 
@@ -293,6 +407,7 @@ final class AppModel {
 
     func selectWorkspace(_ id: WorkspaceID, showFiles: Bool = true) {
         guard states.contains(where: { $0.id == id }) else { return }
+        crowmapPanelFocused = false
         selectedWorkspaceID = id
         current.snapshot.lastOpenedAt = Date()
         if showFiles {
@@ -309,11 +424,24 @@ final class AppModel {
             selectedTerminal: state.snapshot.selectedTerminalID, terminalFraction: settings.terminalFraction)
     }
     func activatePane(_ paneID: UUID) {
+        crowmapPanelFocused = false
         guard let pane = current.snapshot.layout?.panes.first(where: { $0.id == paneID }) else { return }
         if let tab = pane.selected { selectTab(tab, in: paneID) }
         else { current.snapshot.layout?.activePaneID = paneID }
     }
+    func toggleTabPin(_ tab: WorkspaceTab) {
+        let pinned = current.snapshot.layout?.isPinned(tab) == true
+        current.snapshot.layout?.setPinned(tab, !pinned); schedulePersist()
+    }
+    var orderedEditorBuffers: [OpenBuffer] {
+        buffers.filter { current.snapshot.layout?.isPinned(.file($0.id)) == true } + buffers.filter { current.snapshot.layout?.isPinned(.file($0.id)) != true }
+    }
+    var orderedTerminalIDs: [UUID] {
+        let ids = current.snapshot.terminalIDs
+        return ids.filter { current.snapshot.layout?.isPinned(.terminal($0)) == true } + ids.filter { current.snapshot.layout?.isPinned(.terminal($0)) != true }
+    }
     func selectTab(_ tab: WorkspaceTab, in paneID: UUID) {
+        crowmapPanelFocused = false
         guard current.snapshot.layout?.panes.contains(where: { $0.id == paneID && $0.tabs.contains(tab) }) == true else { return }
         let previousRoot = current.contextRootPath
         current.snapshot.layout?.select(tab, in: paneID)
@@ -353,7 +481,7 @@ final class AppModel {
     func closeOtherTabs(except tab: WorkspaceTab, in paneID: UUID) {
         let state = current
         guard let pane = state.snapshot.layout?.panes.first(where: { $0.id == paneID }), pane.tabs.contains(tab) else { return }
-        let tabs = pane.tabs.filter { $0 != tab }
+        let tabs = pane.tabs.filter { $0 != tab && state.snapshot.layout?.isPinned($0) != true }
         guard !tabs.isEmpty else { return }
         let dirty = tabs.contains { candidate in
             guard case .file(let id) = candidate else { return false }
@@ -393,7 +521,7 @@ final class AppModel {
     private func finishClosingOtherTabs(_ request: CloseOtherTabsRequest, in state: WorkspaceState) {
         guard states.contains(where: { $0 === state }),
               state.snapshot.layout?.panes.contains(where: { $0.id == request.paneID && $0.tabs.contains(request.keptTab) }) == true else { return }
-        for tab in request.tabs { closeTab(tab, in: request.paneID, workspace: state, confirmed: true) }
+        for tab in request.tabs where state.snapshot.layout?.isPinned(tab) != true { closeTab(tab, in: request.paneID, workspace: state, confirmed: true) }
         // Keep the clicked tab selected, even if another tab was active originally.
         state.snapshot.layout?.select(request.keptTab, in: request.paneID)
         switch request.keptTab {
@@ -694,6 +822,8 @@ final class AppModel {
 
     func openFile(_ entry: FileEntry) {
         if entry.isDirectory { navigate(to: entry.path); return }
+        if !current.snapshot.workspace.isRemote, (entry.path as NSString).pathExtension.lowercased() == "crowmap" { openCrowmap(URL(fileURLWithPath: entry.path)); return }
+        crowmapPanelFocused = false
         let state = current
         if let existing = state.snapshot.buffers.first(where: { $0.path == entry.path }) {
             state.snapshot.selectedBufferID = existing.id
@@ -855,6 +985,7 @@ final class AppModel {
                 externallyChangedBuffers.remove(id); externalFileErrors.removeValue(forKey: id)
             }
             ObsidianFiles.updateCachedNote(buffer.path, text: buffer.text, in: state)
+            if !buffer.isRemote { refreshCrowmapPanels(containing: (buffer.path as NSString).deletingLastPathComponent) }
             statusMessage = "Saved \(buffer.title)"; schedulePersist()
             // A remote save can finish after another edit. Do not let a pending
             // Save-and-Close or Quit discard those newer, still-unsaved edits.
@@ -932,6 +1063,53 @@ final class AppModel {
                 if state.id == selectedWorkspaceID { refreshFiles() }; schedulePersist()
             } catch { report(error) }
         }
+    }
+    func renameMarkdown(_ id: BufferID, title: String, source: String? = nil) async throws -> String {
+        guard let (state, index) = locate(id) else { throw CommandError("This file is no longer open.") }
+        let buffer = state.snapshot.buffers[index]
+        let name = title.hasSuffix(".md") ? title : title + ".md"
+        try TextFiles.validateName(name)
+        let parent = (buffer.path as NSString).deletingLastPathComponent
+        let destination = (parent as NSString).appendingPathComponent(name)
+        guard destination != buffer.path else { return name }
+        var changes: [String: String] = [:]
+        let isCrowmap = !buffer.isRemote && (parent == crowmap.root.path || parent.hasPrefix(crowmap.root.path + "/"))
+        if isCrowmap {
+            if source != nil {
+                guard try TextFiles.read(URL(fileURLWithPath: buffer.path)) == buffer.savedText else { throw CommandError("This note changed on disk. Refresh before renaming.") }
+                guard !states.contains(where: { owner in owner.snapshot.buffers.contains { !$0.isRemote && $0.path == buffer.path && $0.isDirty && $0.text != buffer.text } }) else { throw CommandError("This note has another unsaved draft. Save it before renaming.") }
+            }
+            guard !states.contains(where: { owner in owner.snapshot.buffers.contains { !$0.isRemote && $0.isDirty && $0.path.hasSuffix(".crowmap") && ($0.path as NSString).deletingLastPathComponent == parent } }) else { throw CommandError("Save the open map before renaming its notes.") }
+            // Linked open files keep their unsaved body edits; only references change.
+            let store = CrowmapStore(root: crowmap.root)
+            let folder = URL(fileURLWithPath: parent, isDirectory: true)
+            guard let map = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).first(where: { $0.pathExtension == "crowmap" }) else { throw CommandError("This note's Crowmap file is missing.") }
+            try store.load(folder.appendingPathComponent(map.lastPathComponent))
+            changes = try store.renameNote(buffer.title, to: name, source: source)
+        } else if buffer.isRemote {
+            guard let remote = state.remote else { throw FileFailure.disconnected }
+            try await remote.rename(buffer.path, to: destination)
+        } else { try FileManager.default.moveItem(atPath: buffer.path, toPath: destination) }
+        for owner in states where owner.id == state.id || !buffer.isRemote && !owner.snapshot.workspace.isRemote {
+            owner.explorer.didRename(from: buffer.path, to: destination)
+            for i in owner.snapshot.buffers.indices {
+                var open = owner.snapshot.buffers[i]
+                let renamed = open.path == buffer.path
+                if renamed { open.path = destination; open.title = name }
+                if isCrowmap, (open.path as NSString).deletingLastPathComponent == parent {
+                    if renamed, let source { open.text = CrowmapStore.renamedLinks(source, from: buffer.title, to: name) }
+                    else if open.isDirty { open.text = CrowmapStore.renamedLinks(open.text, from: buffer.title, to: name) }
+                    else if let text = changes[open.path] { open.text = text }
+                    if let text = changes[open.path] { open.savedText = text }
+                    open.isDirty = open.text != open.savedText
+                }
+                owner.snapshot.buffers[i] = open
+            }
+        }
+        if isCrowmap, let selected = crowmap.selected { try crowmap.load(selected) }
+        if isCrowmap { refreshCrowmapPanels(containing: parent) }
+        refreshFiles(); schedulePersist()
+        return name
     }
     func canMoveFile(_ drag: ExplorerFileDrag, to folder: String) -> Bool {
         guard drag.workspaceID == selectedWorkspaceID, hasWorkspace else { return false }
@@ -1743,6 +1921,7 @@ final class AppModel {
         #endif
     }
     func schedulePersist() {
+        recordTabNavigation()
         persistenceTask?.cancel()
         persistenceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
@@ -1750,7 +1929,7 @@ final class AppModel {
         }
     }
     var sessionSnapshot: SessionSnapshot {
-        SessionSnapshot(hosts: hosts, workspaces: states.map(\.snapshot), selectedWorkspaceID: selectedWorkspaceID, settings: settings)
+        SessionSnapshot(hosts: hosts, workspaces: states.map(\.snapshot), selectedWorkspaceID: selectedWorkspaceID, settings: settings, crowmapPanel: savedCrowmapPanel)
     }
     func persist() {
         guard persistenceAvailable else { return }

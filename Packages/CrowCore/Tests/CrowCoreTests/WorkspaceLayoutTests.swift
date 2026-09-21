@@ -64,6 +64,42 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertFalse(layout.move(.terminal(id), from: pane, to: UUID()))
         XCTAssertEqual(layout, original)
     }
+    func testPinnedTabsStayLeftThroughMovesSplitsAndRestoration() throws {
+        let a = WorkspaceTab.file(BufferID()), b = WorkspaceTab.file(BufferID()), c = WorkspaceTab.browser(UUID())
+        var layout = WorkspaceLayout(files: [], selectedFile: nil, terminals: [], selectedTerminal: nil)
+        layout.open(a); layout.open(b); layout.open(c)
+        let pane = try XCTUnwrap(layout.activePaneID)
+        layout.setPinned(b, true)
+        XCTAssertEqual(layout.activePane?.tabs, [b, a, c])
+        XCTAssertEqual(layout.activePane?.selected, c)
+        XCTAssertTrue(layout.move(c, from: pane, to: pane, before: b))
+        XCTAssertEqual(layout.activePane?.tabs, [b, c, a], "Dragging an ordinary tab cannot displace pins")
+        XCTAssertTrue(layout.move(b, from: pane, to: pane))
+        XCTAssertEqual(layout.activePane?.tabs.first, b)
+        XCTAssertTrue(layout.move(b, from: pane, to: pane, placement: .right, copy: true))
+        let split = try XCTUnwrap(layout.activePaneID)
+        layout.remove(b, from: pane)
+        XCTAssertTrue(layout.isPinned(b), "The other split still owns the pinned file")
+        let restored = try JSONDecoder().decode(WorkspaceLayout.self, from: JSONEncoder().encode(layout))
+        XCTAssertEqual(restored, layout)
+        XCTAssertTrue(restored.isPinned(b))
+        layout.remove(b, from: split)
+        XCTAssertFalse(layout.isPinned(b))
+        var old = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(restored)) as? [String: Any])
+        old.removeValue(forKey: "pinnedTabs")
+        XCTAssertNil(try JSONDecoder().decode(WorkspaceLayout.self, from: JSONSerialization.data(withJSONObject: old)).pinnedTabs)
+    }
+
+    func testPinnedStartPageTransfersPinToItsOpenedFile() throws {
+        let page = WorkspaceTab.start(UUID()), file = WorkspaceTab.file(BufferID()), other = WorkspaceTab.browser(UUID())
+        var layout = WorkspaceLayout(files: [], selectedFile: nil, terminals: [], selectedTerminal: nil)
+        layout.open(other); layout.open(page); layout.setPinned(page, true); layout.open(file)
+        XCTAssertEqual(layout.activePane?.tabs, [file, other])
+        XCTAssertTrue(layout.isPinned(file)); XCTAssertFalse(layout.isPinned(page))
+        layout.setPinned(other, true); layout.setPinned(file, false)
+        XCTAssertEqual(layout.activePane?.tabs, [other, file])
+    }
+
     func testLegacySnapshotWithoutLayoutStillDecodes() throws {
         let snapshot = WorkspaceSnapshot(workspace: Workspace(name: "Vault", kind: .local, connection: .local), rootPath: "/vault")
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])

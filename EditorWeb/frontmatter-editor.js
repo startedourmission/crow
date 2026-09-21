@@ -3,11 +3,11 @@ import {frontmatter, editFrontmatter, propertyTypes} from './frontmatter-model.j
 import {attachTagSuggestions} from './note-completions.js';
 import {el, icon, button, input, select} from './obsidian-ui.js';
 
-export function frontmatterView({node, editor, getPos}) {
+export function frontmatterView({node, editor, getPos, onOpenLink = url=>window.webkit.messageHandlers.markdown.postMessage({action:'openLink',url}), onSave = ()=>window.webkit.messageHandlers.markdown.postMessage({action:'save'})}) {
   let current = node, renderedShape = '';
   let cleanup=[];
   const emptyTypes = new Map();
-  const linkField=(parent,field)=>attachPropertyLink(parent,field,()=>document.documentElement.dataset.noteLinks==='true',url=>window.webkit.messageHandlers.markdown.postMessage({action:'openLink',url}));
+  const linkField=(parent,field)=>attachPropertyLink(parent,field,()=>document.documentElement.dataset.noteLinks==='true',onOpenLink);
   const readRows = () => frontmatter(current.attrs.source).rows.map(row => row.value === '' && emptyTypes.has(row.name) ? {...row,type:emptyTypes.get(row.name)} : row);
   const shape = rows => JSON.stringify(rows.map(({name,type,value})=>[name,type,type==='list'?value:typeof value==='string' && value.includes('\n')]));
   const displayValue = ({type,value}) => type==='list' ? value.join('\n') : type==='yaml' ? JSON.stringify(value,null,2) : value ?? '';
@@ -27,7 +27,7 @@ export function frontmatterView({node, editor, getPos}) {
   }
   function render() {
     cleanup.forEach(close=>close());cleanup=[];
-    dom.replaceChildren(el('h2','Properties'),error);
+    dom.replaceChildren(el('div','Properties','frontmatter-heading'),error);
     let rows;
     try { rows = readRows(); renderedShape=shape(rows); }
     catch(e) { error.textContent = e.message; dom.append(el('pre',current.attrs.source)); return; }
@@ -62,11 +62,19 @@ export function frontmatterView({node, editor, getPos}) {
       } else if (type==='boolean') field.checked = value;
       else field.value = type==='list' ? value.join('\n') : type==='yaml' ? JSON.stringify(value,null,2) : value ?? '';
       if (type==='number') field.step='any';
+      if (type==='date') { field.min='1970-01-01'; field.max='2100-12-31'; }
       if (type==='datetime') field.placeholder='YYYY-MM-DDTHH:mm';
       if (field.tagName==='TEXTAREA') field.rows=Math.min(6,Math.max(1,field.value.split('\n').length));
       const read = () => type==='list' ? value : type==='boolean' ? field.checked : field.value;
+      const commitValue = () => {
+        const next=read();
+        if(type==='date'&&next&&!/^\d{4}-\d{2}-\d{2}$/.test(next))return;
+        if(type==='number'&&String(next).trim()==='')return;
+        if(commit(name,{value:next,type}))field.dataset.dirty='false';
+      };
       field.oninput = () => { field.dataset.dirty='true'; };
-      if(type!=='list') field.onchange = () => { if (commit(name,{value:read(),type})) field.dataset.dirty='false'; };
+      if(type!=='list') field.onchange = commitValue;
+      if(type!=='list') field.onblur = () => { if(field.dataset.dirty==='true')commitValue(); };
       kind.onchange = () => {
         const next = kind.value;
         if (commit(name,{value:read(),type:next})) dom.querySelector('[data-property='+CSS.escape(name)+'] .frontmatter-value')?.focus();
@@ -94,7 +102,7 @@ export function frontmatterView({node, editor, getPos}) {
   }
   dom.addEventListener('keydown',event=>{
     if ((event.metaKey||event.ctrlKey) && event.key.toLowerCase()==='s') {
-      event.preventDefault(); document.activeElement?.blur(); window.webkit.messageHandlers.markdown.postMessage({action:'save'});
+      event.preventDefault(); document.activeElement?.blur(); onSave();
     }
     if ((event.metaKey||event.ctrlKey) && event.key.toLowerCase()==='z' && event.target.dataset.dirty!=='true' && !event.isComposing) {
       event.preventDefault(); event.shiftKey ? editor.commands.redo() : editor.commands.undo();

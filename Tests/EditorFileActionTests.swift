@@ -11,6 +11,816 @@ import WebKit
         root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-file-actions-" + UUID().uuidString)
         model = AppModel(vaultURL: root)
     }
+    func testRenderedFilenameRenamesFileWithoutChangingMarkdownOrLosingDraft() async throws {
+        let file = root.appendingPathComponent("Original.md")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let saved = "---\ntags: [test]\n---\n\n# Body heading\n\nOriginal body\n"
+        try Data(saved.utf8).write(to: file)
+        model.openFolder(root); model.openFile(.init(name: file.lastPathComponent, path: file.path, isDirectory: false))
+        let id = try XCTUnwrap(model.selectedBufferID)
+        let draft = saved + "Unsaved body edit\n"
+        model.updateBufferText(id, draft)
+        let hosting = NSHostingView(rootView: MarkdownTitleFixture(id: id).environment(model))
+        let window = NSWindow(contentRect: .init(x: 100, y: 100, width: 800, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+        var loaded: WKWebView?
+        for _ in 0..<150 {
+            if let view = web(hosting), (try? await view.callAsyncJavaScript("return document.querySelector('.note-file-title')?.value === 'Original' && !!document.querySelector('.frontmatter-heading')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { loaded = view; break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let view = try XCTUnwrap(loaded)
+        let wraps = try await view.callAsyncJavaScript("const t=document.querySelector('.note-file-title');t.focus();t.value='긴 제목이 오른쪽에서 잘리지 않고 여러 줄로 모두 보여야 합니다 '.repeat(10);t.dispatchEvent(new Event('input'));await new Promise(r=>setTimeout(r,50));const good=t.clientHeight>parseFloat(getComputedStyle(t).lineHeight)*2&&t.scrollWidth<=t.clientWidth+1;t.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));return good", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertEqual(wraps, true)
+        _ = try await view.callAsyncJavaScript("const title=document.querySelector('.note-file-title');title.focus();title.value='새 제목';title.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));", arguments: [:], in: nil, contentWorld: .defaultClient)
+        for _ in 0..<100 where model.selectedBuffer?.title != "새 제목.md" { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertEqual(model.selectedBuffer?.title, "새 제목.md")
+        XCTAssertEqual(model.selectedBufferID, id)
+        XCTAssertEqual(model.selectedBuffer?.text, draft)
+        XCTAssertEqual(model.selectedBuffer?.isDirty, true)
+        XCTAssertEqual(try TextFiles.read(root.appendingPathComponent("새 제목.md")), saved)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        let size = try await view.callAsyncJavaScript("return parseFloat(getComputedStyle(document.querySelector('.frontmatter-heading')).fontSize)", arguments: [:], in: nil, contentWorld: .defaultClient) as? Double
+        XCTAssertEqual(size, 11)
+        try Data("Keep existing".utf8).write(to: root.appendingPathComponent("Taken.md"))
+        _ = try await view.callAsyncJavaScript("const title=document.querySelector('.note-file-title');title.focus();title.value='Taken';title.blur();", arguments: [:], in: nil, contentWorld: .defaultClient)
+        for _ in 0..<100 {
+            if (try? await view.callAsyncJavaScript("return !!document.querySelector('.note-title-error')?.textContent", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        XCTAssertEqual(model.selectedBuffer?.title, "새 제목.md")
+        XCTAssertEqual(try TextFiles.read(root.appendingPathComponent("Taken.md")), "Keep existing")
+    }
+
+    func testCrowmapRenameKeepsNodeIDsAndRewritesProjectAndBodyLinks() throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Crowmap"))
+        try store.create("Map")
+        let old = "Project-Research.md", renamed = "Project-Discovery.md"
+        let body = "---\ntitle: Research\ndate: 2026-09-18\n---\n\nKeep body\n"
+        try Data(body.utf8).write(to: store.noteURL(old))
+        let links = "---\nmilestones: ['[[Project-Research]]']\n---\n[[Project-Research#Heading|alias]] ![[Project-Research.md]] [[Unrelated]]"
+        let start = try store.noteURL("Project.md"); try Data(links.utf8).write(to: start)
+        var doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.source.utf8)) as? [String: Any])
+        doc["anchors"] = [["id": "same-node", "note": old]]
+        try JSONSerialization.data(withJSONObject: doc).write(to: try XCTUnwrap(store.selected))
+        let replacement = body.replacingOccurrences(of: "title: Research", with: "title: Discovery")
+        let changes = try store.renameNote(old, to: renamed, source: replacement)
+        XCTAssertEqual(try TextFiles.read(store.noteURL(renamed)), replacement)
+        XCTAssertTrue(try TextFiles.read(start).contains("[[Project-Discovery#Heading|alias]]"))
+        XCTAssertTrue(try TextFiles.read(start).contains("![[Project-Discovery.md]] [[Unrelated]]"))
+        XCTAssertTrue(changes[start.path]?.contains("milestones: ['[[Project-Discovery]]']") == true)
+        try store.load(try XCTUnwrap(store.selected))
+        let updated = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.source.utf8)) as? [String: Any])
+        XCTAssertEqual((updated["anchors"] as? [[String: String]])?.first, ["id": "same-node", "note": renamed])
+        XCTAssertThrowsError(try store.renameNote(renamed, to: "Project.md"))
+        XCTAssertEqual(try TextFiles.read(store.noteURL(renamed)), replacement)
+    }
+
+    func testCrowmapDockKeepsWebViewsAcrossWorkspaceAndVisibilityChanges() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Crowmap"))
+        let workspace = model.current, layout = workspace.snapshot.layout
+        let hosting = NSHostingView(rootView: CrowmapClickFixture().environment(model).windowDragBackground())
+        let window = NSWindow(contentRect: .init(x: 100, y: 100, width: 1148, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        model.showCrowmap(); model.createCrowmap()
+        let first = try XCTUnwrap(model.crowmapTabs.first)
+        XCTAssertEqual(workspace.snapshot.layout, layout)
+        XCTAssertEqual(model.crowmapPanel.selectedPath, first.id)
+        func webs(_ view: NSView) -> [WKWebView] { (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap { webs($0) } }
+        var loaded: WKWebView?
+        for _ in 0..<150 {
+            if let view = webs(hosting).first, (try? await view.callAsyncJavaScript("return !!document.querySelector('.map-toolbar')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { loaded = view; break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let view = try XCTUnwrap(loaded)
+        for count in 1...2 {
+            _ = try await view.callAsyncJavaScript("document.querySelector('[aria-label=\"Add timeline\"]').click()", arguments: [:], in: nil, contentWorld: .defaultClient)
+            var projects = 0
+            for _ in 0..<100 {
+                let doc = try JSONSerialization.jsonObject(with: Data(first.store.source.utf8)) as? [String: Any]
+                projects = (doc?["projects"] as? [Any])?.count ?? 0
+                if projects == count { break }
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            XCTAssertEqual(projects, count)
+        }
+        let color = try await view.callAsyncJavaScript("return getComputedStyle(document.querySelector('.map-viewport')).backgroundColor", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+        XCTAssertEqual(color, "rgb(255, 255, 255)")
+        _ = try await view.callAsyncJavaScript("window.dockIdentity = 'first'; document.querySelector('.anchor').dispatchEvent(new MouseEvent('click',{bubbles:true}));", arguments: [:], in: nil, contentWorld: .defaultClient)
+        try await Task.sleep(for: .milliseconds(100))
+        model.createCrowmap()
+        let second = try XCTUnwrap(model.crowmapTabs.last)
+        XCTAssertNotEqual(first.id, second.id)
+        model.hideCrowmapPanel()
+        let other = root.appendingPathComponent("other-workspace")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        model.openFolder(other)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(webs(hosting).contains { $0 === view }, "Hiding and workspace switching retain the map WebView")
+        model.openCrowmap(first.url)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(webs(hosting).contains { $0 === view })
+        let retained = try await view.callAsyncJavaScript("return window.dockIdentity === 'first' && !!document.querySelector('.map-popup .note-markdown')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertEqual(retained, true, "The embedded note stays open across map switches")
+        XCTAssertEqual(model.current.snapshot.rootPath, other.path)
+        XCTAssertEqual(model.crowmapTabs.count, 2)
+        model.closeCrowmapTab(second.id)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.crowmapTabs.map(\.id), [first.id])
+    }
+
+    func testCrowmapFoldersIsolateNotesAndRecognizeMovedLegacyMapPaths() throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Maps"))
+        try store.create("First")
+        let first = try XCTUnwrap(store.selected)
+        XCTAssertEqual(first.deletingLastPathComponent().lastPathComponent, "First")
+        try Data("First note".utf8).write(to: store.noteURL("Same.md"))
+        try store.create("Second")
+        try Data("Second note".utf8).write(to: store.noteURL("Same.md"))
+        try store.load(first)
+        XCTAssertEqual(store.library["Same.md"], "First note")
+        XCTAssertEqual(store.maps.count, 2)
+        try store.load(store.root.appendingPathComponent("First.crowmap"))
+        XCTAssertEqual(store.selected, first)
+        XCTAssertEqual(store.library.count, 1)
+    }
+
+    func testCrowmapStorageIsFlatAndRejectsStaleOrEscapingWrites() throws {
+        let directory = root.appendingPathComponent("Crowmap")
+        let store = CrowmapStore(root: directory)
+        try store.create("Plans")
+        let original = store.source
+        let note = "work.md"
+        var doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any])
+        doc["notes"] = [["id": "note", "note": note]]
+        let source = String(decoding: try JSONSerialization.data(withJSONObject: doc), as: UTF8.self)
+        try store.save(source, expected: original, writes: [["name": note, "text": "---\ndate: 2026-09-17\n---\nWork"]])
+        XCTAssertEqual(store.texts[note], "---\ndate: 2026-09-17\n---\nWork")
+        XCTAssertThrowsError(try store.noteURL("../outside.md"))
+        XCTAssertThrowsError(try store.noteURL("folder/note.md"))
+        XCTAssertThrowsError(try store.save(original, expected: original, writes: []))
+        let before = store.source
+        try Data("External edit".utf8).write(to: directory.appendingPathComponent(note))
+        XCTAssertThrowsError(try store.save(source, expected: before, writes: [["name": note, "expected": "Old note", "text": "overwrite"]]))
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent(note), encoding: .utf8), "External edit")
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(store.selected), encoding: .utf8), before)
+    }
+
+    func testCrowmapTimelineDeletionRequiresCompleteScopeAndPreservesStaleFiles() throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Crowmap")); try store.create("Delete")
+        var doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.source.utf8)) as? [String: Any])
+        doc["projects"] = [["id": "project", "route": ["start", "end"]]]
+        doc["anchors"] = [["id": "start", "project": "project", "note": "Start.md"], ["id": "end", "project": "project", "note": "End.md"]]
+        doc["notes"] = [["id": "work", "note": "Work.md"]]
+        let source = String(decoding: try JSONSerialization.data(withJSONObject: doc), as: UTF8.self)
+        let names = ["Start.md", "End.md", "Work.md"]
+        try store.save(source, expected: store.source, writes: names.map { ["name": $0, "text": $0 + " body"] })
+        for key in ["projects", "anchors", "notes"] { doc[key] = [] as [String] }
+        let empty = String(decoding: try JSONSerialization.data(withJSONObject: doc), as: UTF8.self)
+        let deletes = names.map { ["name": $0, "expected": $0 + " body"] }
+        XCTAssertThrowsError(try store.save(empty, expected: source, writes: [], deletes: deletes))
+        XCTAssertThrowsError(try store.save(empty, expected: source, writes: [], deletes: [deletes[0]], deletingProject: "project"))
+        try Data("Changed externally".utf8).write(to: store.noteURL("End.md"))
+        XCTAssertThrowsError(try store.save(empty, expected: source, writes: [], deletes: deletes, deletingProject: "project"))
+        XCTAssertEqual(store.source, source)
+        XCTAssertTrue(names.allSatisfy { FileManager.default.fileExists(atPath: store.noteRoot.appendingPathComponent($0).path) })
+        try Data("End.md body".utf8).write(to: store.noteURL("End.md"))
+        try store.save(empty, expected: source, writes: [], deletes: deletes, deletingProject: "project")
+        XCTAssertTrue(store.library.isEmpty)
+        let trash = store.root.deletingLastPathComponent().appendingPathComponent("crowmap-deleted")
+        let retained = try FileManager.default.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil)
+        XCTAssertEqual(Set(try retained.map { try TextFiles.read($0) }), Set(names.map { $0 + " body" }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(store.selected).path))
+    }
+
+    func testCrowmapCopiesMarkdownFilesWithoutFollowingLinks() throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Crowmap")); try store.create("Copy")
+        let first = try store.noteURL("First.md"), second = try store.noteURL("Second.md")
+        try Data("[[Second]]".utf8).write(to: first); try Data("Body".utf8).write(to: second)
+        XCTAssertEqual(try store.copyFileURLs([["name": "First.md", "expected": "[[Second]]"]]), [first])
+        XCTAssertEqual(try store.copyFileURLs([["name": "First.md", "expected": "[[Second]]"], ["name": "Second.md", "expected": "Body"]]), [first, second])
+        XCTAssertThrowsError(try store.copyFileURLs([["name": "First.md", "expected": "Stale"]]))
+        XCTAssertThrowsError(try store.copyFileURLs([["name": "../outside.md", "expected": ""]]))
+        let remote = try XCTUnwrap(store.copyFileURLs([["name": "Remote.md", "text": "Remote body"]]).first)
+        defer { try? FileManager.default.removeItem(at: remote.deletingLastPathComponent()) }
+        XCTAssertEqual(try TextFiles.read(remote), "Remote body")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.noteRoot.appendingPathComponent("Remote.md").path))
+    }
+
+    func testCrowmapAgentSessionsLinkOnlySelectedOriginalNotes() throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Crowmap"))
+        try store.create("Agents")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.noteRoot.appendingPathComponent("AGENTS.md").path))
+        XCTAssertNil(store.library["AGENTS.md"])
+        var doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.source.utf8)) as? [String: Any])
+        doc["notes"] = [["id": "first", "note": "First.md"], ["id": "second", "note": "Second.md"]]
+        let replacement = String(decoding: try JSONSerialization.data(withJSONObject: doc), as: UTF8.self)
+        try store.save(replacement, expected: store.source, writes: [["name": "First.md", "text": "First"], ["name": "Second.md", "text": "Second"]])
+        let session = try store.prepareAgentSession(nodeIDs: ["first"])
+        XCTAssertEqual(session.deletingLastPathComponent(), store.noteRoot.appendingPathComponent(".sessions", isDirectory: true))
+        let link = session.appendingPathComponent("notes/First.md")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), try store.noteURL("First.md").path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.appendingPathComponent("notes/Second.md").path))
+        let target = link.resolvingSymlinksInPath()
+        try Data("Agent edit".utf8).write(to: target)
+        XCTAssertEqual(try TextFiles.read(store.noteURL("First.md")), "Agent edit")
+        XCTAssertTrue(try TextFiles.read(session.appendingPathComponent("AGENTS.md")).contains("notes/First.md"))
+        XCTAssertThrowsError(try store.prepareAgentSession(nodeIDs: ["missing"]))
+        XCTAssertThrowsError(try store.noteURL("AGENTS.md"))
+        let custom = store.noteRoot.appendingPathComponent("AGENTS.md")
+        try Data("Custom instructions".utf8).write(to: custom)
+        try store.load(try XCTUnwrap(store.selected))
+        XCTAssertEqual(try TextFiles.read(custom), "Custom instructions")
+        XCTAssertEqual(store.library.count, 2)
+        let legacy = """
+        - inactive_next lists outgoing next links retained as faded history. Each project
+          has one active route from its start. A new branch preserves old notes and marks
+          the former outgoing path inactive; a later shared milestone can rejoin both paths.
+          Legacy revision notes may also have replaces links describing the historical path.
+        """
+        try Data(("Custom preface\n" + legacy + "\nCustom ending").utf8).write(to: custom)
+        try store.load(try XCTUnwrap(store.selected))
+        let migrated = try TextFiles.read(custom)
+        XCTAssertTrue(migrated.hasPrefix("Custom preface\n")); XCTAssertTrue(migrated.hasSuffix("\nCustom ending"))
+        XCTAssertTrue(migrated.contains("Every milestone with an incoming or outgoing timeline edge is a main milestone"))
+        XCTAssertFalse(migrated.contains("one active route"))
+    }
+
+    func testCrowmapImportsMarkdownFromEmptyCacheAndPreparesAgentWithoutRewritingNotes() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps")); try model.crowmap.create("Imported")
+        let store = model.crowmap
+        let texts = [
+            "Project.md": "---\nkind: start\ntitle: Project\ndate: 2026-09-01\npriority: 1\nmilestones: ['[[Done]]']\nnext: ['[[Done]]']\nprevious: []\ncustom: Keep me # comment\n---\nStart body\n",
+            "Done.md": "---\nkind: milestone\ntitle: Done\ndate: 2026-09-20\npriority: 1\nproject: '[[Project]]'\nprevious: ['[[Project]]']\nnext: []\n---\nDone body\n",
+            "Work.md": "---\ntitle: Work\ndate: 2026-09-10\nbetween: ['[[Project]]', '[[Done]]']\n---\nWork body\n"
+        ]
+        for (name, text) in texts { try Data(text.utf8).write(to: store.noteRoot.appendingPathComponent(name)) }
+        try store.load(try XCTUnwrap(store.selected))
+        let hosting = NSHostingView(rootView: CrowmapSurface(store: store).environment(model))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 1100, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil); defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+        var loaded: WKWebView?
+        for _ in 0..<150 {
+            if let view = web(hosting), (try? await view.callAsyncJavaScript("return document.querySelectorAll('.anchor').length===2 && document.querySelectorAll('.work-note').length===1", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { loaded = view; break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let view = try XCTUnwrap(loaded)
+        for _ in 0..<100 where store.texts.count != 3 { try await Task.sleep(for: .milliseconds(20)) }
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.source.utf8)) as? [String: Any])
+        XCTAssertEqual((document["projects"] as? [Any])?.count, 1)
+        let notes = try XCTUnwrap(document["notes"] as? [[String: Any]])
+        let noteID = try XCTUnwrap(notes.first?["id"] as? String)
+        let session = try store.prepareAgentSession(nodeIDs: [noteID])
+        XCTAssertEqual(try TextFiles.read(session.appendingPathComponent("notes/Work.md")), texts["Work.md"])
+        for (name, text) in texts { XCTAssertEqual(try TextFiles.read(store.noteRoot.appendingPathComponent(name)), text) }
+        let saved = store.source
+        _ = try await view.callAsyncJavaScript("document.querySelector('[aria-label=\"Refresh map\"]').click()", arguments: [:], in: nil, contentWorld: .defaultClient)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(store.source, saved, "Refreshing a discovered map does not change identities or keep resaving")
+    }
+
+    func testCrowmapZoomKeepsViewportCenterAndPointerAnchored() async throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Zoom maps"))
+        try store.create("Zoom")
+        for index in 1...10 {
+            let texts = [
+                "Project \(index).md": "---\nkind: start\ndate: 2026-01-01\npriority: \(index)\nmilestones: ['[[Done \(index)]]']\nnext: ['[[Done \(index)]]']\n---\n",
+                "Done \(index).md": "---\nkind: milestone\ndate: 2026-12-01\npriority: \(index)\nproject: '[[Project \(index)]]'\nprevious: ['[[Project \(index)]]']\nnext: []\n---\n"
+            ]
+            for (name, text) in texts { try Data(text.utf8).write(to: store.noteRoot.appendingPathComponent(name)) }
+        }
+        try store.load(try XCTUnwrap(store.selected))
+        let hosting = NSHostingView(rootView: CrowmapSurface(store: store).environment(model))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 1000, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil); defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+        var loaded: WKWebView?
+        for _ in 0..<150 {
+            if let view = web(hosting), (try? await view.callAsyncJavaScript("return document.querySelectorAll('.anchor').length===20", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { loaded = view; break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let view = try XCTUnwrap(loaded)
+        let failures = try await view.callAsyncJavaScript(#"""
+        const viewport=document.querySelector('.map-viewport'),canvas=viewport.querySelector(':scope > svg'),failures=[];
+        const button=label=>document.querySelector(`[aria-label="${label}"]`).click();
+        const scale=()=>canvas.getBoundingClientRect().width/canvas.viewBox.baseVal.width;
+        while(scale()<2)button('Zoom in');
+        viewport.scrollLeft=(viewport.scrollWidth-viewport.clientWidth)*.5;
+        viewport.scrollTop=(viewport.scrollHeight-viewport.clientHeight)*.5;
+        const rect=viewport.getBoundingClientRect();
+        function check(label,x,y,action){
+            const screen=new DOMPoint(rect.left+x,rect.top+y),world=screen.matrixTransform(canvas.getScreenCTM().inverse()),before=scale();
+            action();
+            const after=world.matrixTransform(canvas.getScreenCTM()),drift=Math.hypot(after.x-screen.x,after.y-screen.y);
+            if(drift>1.5||scale()===before)failures.push(`${label}: drift=${drift}, scale=${before} -> ${scale()}`);
+        }
+        check('Button in',viewport.clientWidth/2,viewport.clientHeight/2,()=>button('Zoom in'));
+        check('Button out',viewport.clientWidth/2,viewport.clientHeight/2,()=>button('Zoom out'));
+        for(const selector of ['.anchor circle','.anchor-title','.date-label','.edge-hit']){
+            for(const deltaY of [-12,12]){
+                const x=viewport.clientWidth*.38,y=viewport.clientHeight*.42;
+                check(selector+' '+deltaY,x,y,()=>document.querySelector(selector).dispatchEvent(new WheelEvent('wheel',{
+                    bubbles:true,cancelable:true,clientX:rect.left+x,clientY:rect.top+y,deltaY,
+                    ctrlKey:deltaY<0,metaKey:deltaY>0
+                })));
+            }
+        }
+        // The old scroll offset exceeds the new maximum during a shrink, but the
+        // anchored final offset is valid. Capture it before the browser clamps it.
+        viewport.scrollLeft=canvas.getBoundingClientRect().width*.8-viewport.clientWidth+10;
+        viewport.scrollTop=canvas.getBoundingClientRect().height*.8-viewport.clientHeight+10;
+        check('Shrink near boundary',viewport.clientWidth/2,viewport.clientHeight/2,()=>button('Zoom out'));
+        button('Fit timeline');
+        if(viewport.scrollLeft!==0||viewport.scrollTop!==0||canvas.getBoundingClientRect().width>viewport.clientWidth)failures.push('Fit did not reset the view');
+        return failures;
+        """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? [String]
+        XCTAssertEqual(try XCTUnwrap(failures), [])
+    }
+
+    func testCrowmapCreatesProjectSegmentWorkAndRejoiningPlanOnDisk() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Crowmap"))
+        try model.crowmap.create("Project map")
+        let hosting = NSHostingView(rootView: CrowmapSurface(store: model.crowmap).environment(model))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 1200, height: 760), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil); defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+        var loaded: WKWebView?
+        for _ in 0..<100 {
+            if let view = web(hosting), (try? await view.callAsyncJavaScript("return !!document.querySelector('.map-toolbar')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { loaded = view; break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let view = try XCTUnwrap(loaded)
+        func js(_ code: String) async throws { _ = try await view.callAsyncJavaScript(code, arguments: [:], in: nil, contentWorld: .defaultClient) }
+        func waitFor(_ expression: String) async throws {
+            for _ in 0..<150 {
+                if (try? await view.callAsyncJavaScript("return " + expression, arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { return }
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            let body = try await view.callAsyncJavaScript("return document.body.textContent", arguments: [:], in: nil, contentWorld: .defaultClient)
+            throw CommandError("Crowmap did not settle: " + expression + ": " + String(describing: body))
+        }
+        try await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Create first project').click()")
+        try await waitFor("document.querySelectorAll('.anchor').length === 5")
+        XCTAssertEqual(model.crowmap.texts.count, 5)
+        XCTAssertTrue(try XCTUnwrap(model.crowmap.texts["Sample project.md"]).contains("[[Sample project-Research]]"))
+        XCTAssertTrue(try XCTUnwrap(model.crowmap.texts["Sample project-Prototype.md"]).contains("[[Sample project-Build]]"))
+        try await js("document.querySelectorAll('.edge-hit')[1].dispatchEvent(new MouseEvent('click',{clientX:250,clientY:220}))")
+        try await waitFor("!!document.querySelector('.map-popup') && !document.querySelector('.map-detail')")
+        try await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Add work note').click()")
+        try await waitFor("!!document.querySelector('.map-popup .tiptap') && !document.querySelector('dialog')")
+        XCTAssertEqual(model.crowmap.texts.count, 6)
+        let arrowGap = try await view.callAsyncJavaScript("await new Promise(r=>setTimeout(r,50));const a=document.querySelector('.frontmatter .property-link:not([hidden])'),f=a.previousElementSibling,s=getComputedStyle(f),c=document.createElement('canvas').getContext('2d');c.font=s.font;return a.getBoundingClientRect().left-f.getBoundingClientRect().left-parseFloat(s.paddingLeft)-c.measureText(f.value).width", arguments: [:], in: nil, contentWorld: .defaultClient) as? Double
+        XCTAssertLessThan(try XCTUnwrap(arrowGap), 20, "The link action belongs next to its text")
+        let lineStyle = try await view.callAsyncJavaScript("return getComputedStyle(document.querySelector('.weak-line')).strokeDasharray", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+        XCTAssertEqual(lineStyle, "none")
+        try await js(#"""
+        const title=document.querySelector('[data-property=title] .frontmatter-value');title.value='Implementation';title.dispatchEvent(new Event('change',{bubbles:true}));
+        const paragraph=document.querySelector('.tiptap > p:last-child');paragraph.textContent='Work notes https://example.com https://example.com';paragraph.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
+        """#)
+        try await waitFor("document.querySelector('.note-save-status')?.textContent === 'Saved'")
+        let work = try XCTUnwrap(model.crowmap.texts["New note.md"])
+        XCTAssertTrue(work.contains("Implementation")); XCTAssertTrue(work.contains("Work notes"))
+        XCTAssertTrue(work.contains("[[Sample project-Research]]")); XCTAssertTrue(work.contains("[[Sample project-Prototype]]"))
+        try await js("const title=document.querySelector('.note-file-title');title.value='Implementation';title.dispatchEvent(new Event('blur'))")
+        for _ in 0..<100 where model.crowmap.texts["Implementation.md"] == nil { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertNotNil(model.crowmap.texts["Implementation.md"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: model.crowmap.noteRoot.appendingPathComponent("New note.md").path))
+
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        try await js("document.querySelectorAll('.edge-hit')[1].dispatchEvent(new MouseEvent('click',{clientX:250,clientY:220}))")
+        try await waitFor("!!document.querySelector('.map-popup')")
+        try await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Add work note').click()")
+        try await waitFor("!!document.querySelector('.map-popup .tiptap')")
+        try await js(#"""
+        const title=document.querySelector('[data-property=title] .frontmatter-value');title.value='Linked note';title.dispatchEvent(new Event('change',{bubbles:true}));
+        const paragraph=document.querySelector('.tiptap > p:last-child');paragraph.textContent='[[Implementation]]';paragraph.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
+        """#)
+        try await waitFor("document.querySelector('.note-save-status')?.textContent === 'Saved'")
+        try await waitFor("document.querySelectorAll('.work-note').length === 2 && document.querySelectorAll('.note-connection').length === 1 && !document.querySelector('.segment-count') && !document.querySelector('.link-leaf')")
+        XCTAssertEqual(model.crowmap.texts.count, 7, "Linking A from B must not create another Markdown node")
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        try await js("document.querySelectorAll('.edge-hit')[1].dispatchEvent(new MouseEvent('click',{clientX:250,clientY:220}))")
+        try await waitFor("!!document.querySelector('.map-popup')")
+        let before = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        let oldNotes = try XCTUnwrap(before["notes"] as? [[String: Any]])
+        let oldProject = try XCTUnwrap((before["projects"] as? [[String: Any]])?.first)
+        let rejoin = try XCTUnwrap((oldProject["route"] as? [String])?[3])
+        try await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Add milestone').click()")
+        try await waitFor("document.querySelectorAll('.anchor').length === 6 && !!document.querySelector('.map-popup .tiptap') && !document.querySelector('dialog')")
+        XCTAssertEqual(model.crowmap.texts.count, 8)
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        try await js("""
+        const source=[...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')==='New milestone').querySelector('.connection-handle');
+        const target=document.querySelector('[data-node-id="\(rejoin)"] circle');const a=source.getBoundingClientRect(),b=target.getBoundingClientRect();
+        source.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:a.x+a.width/2,clientY:a.y+a.height/2}));
+        window.dispatchEvent(new PointerEvent('pointermove',{clientX:b.x+b.width/2,clientY:b.y+b.height/2}));
+        window.dispatchEvent(new PointerEvent('pointerup',{clientX:b.x+b.width/2,clientY:b.y+b.height/2}));
+        """)
+        try await waitFor("document.querySelectorAll('.timeline-edge.active').length === 6 && !document.querySelector('.anchor.ghost')")
+        let after = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertEqual((after["anchors"] as? [[String: Any]])?.filter { $0["id"] as? String == rejoin }.count, 1)
+        let newNotes = try XCTUnwrap(after["notes"] as? [[String: Any]])
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: newNotes.map { ($0["id"] as! String, $0 as NSDictionary) }), Dictionary(uniqueKeysWithValues: oldNotes.map { ($0["id"] as! String, $0 as NSDictionary) }))
+        XCTAssertEqual((after["edges"] as? [[String: Any]])?.filter { $0["state"] as? String == "superseded" }.count, 0)
+        let restored = CrowmapStore(root: model.crowmap.root); try restored.load(try XCTUnwrap(model.crowmap.selected))
+        XCTAssertEqual(restored.source, model.crowmap.source); XCTAssertEqual(restored.texts.count, 8)
+        try await js("[...document.querySelectorAll('.work-note')].find(n=>n.textContent==='Implementation').dispatchEvent(new MouseEvent('click',{clientX:420,clientY:320}))")
+        try await waitFor("!!document.querySelector('.map-popup .tiptap')")
+        let leaves = try await view.callAsyncJavaScript("return [...document.querySelectorAll('.link-leaf')].map(n=>n.dataset.linkId)", arguments: [:], in: nil, contentWorld: .defaultClient) as? [String]
+        XCTAssertEqual(Set(leaves ?? []).count, 2)
+        let image = try await view.takeSnapshot(configuration: nil)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/crowmap-review.png"))
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        try await js("document.querySelector('[aria-label=\"Add timeline\"]').click()")
+        try await waitFor("document.querySelectorAll('.anchor').length === 11 && !document.querySelector('dialog')")
+        let added = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertEqual((added["projects"] as? [[String: Any]])?.count, 2)
+        let starts = (added["anchors"] as? [[String: Any]] ?? []).filter { $0["kind"] as? String == "start" }
+        XCTAssertEqual(starts.last?["priority"] as? Int, 2)
+        let ui = try await view.callAsyncJavaScript(#"""
+        const viewport=document.querySelector('.map-viewport'),ruler=document.querySelector('.map-date-axis');
+        viewport.style.height='160px';const oldTop=ruler.getBoundingClientRect().top;viewport.scrollTop=100;
+        await new Promise(r=>setTimeout(r,50));const sticky=viewport.scrollTop>0&&Math.abs(ruler.getBoundingClientRect().top-oldTop)<1;viewport.scrollTop=0;viewport.style.height='';
+        const gaps=()=>{const xs=[...document.querySelectorAll('.date-boundary')].map(n=>Number(n.getAttribute('x1')));return xs.slice(1).map((x,i)=>x-xs[i]);};
+        const dayGaps=gaps(),equalDays=dayGaps.length>1&&dayGaps.every(g=>Math.abs(g-dayGaps[0])<0.01);
+        const unit=document.querySelector('[aria-label="Date scale"]');unit.value='month';unit.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(r=>setTimeout(r,50));
+        const monthGaps=gaps(),equalMonths=monthGaps.length>=1&&monthGaps.every(g=>Math.abs(g-monthGaps[0])<0.01);
+        unit.value='day';unit.dispatchEvent(new Event('change',{bubbles:true}));
+        document.querySelector('.map-viewport').scrollLeft=0;
+        return {sticky,equalDays,equalMonths,hasScale:unit?.options.length===4,noDates:!document.querySelector('.anchor-date'),curved:document.querySelector('.timeline-edge').tagName==='path'};
+        """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? [String: Bool]
+        XCTAssertEqual(ui, ["sticky": true, "equalDays": true, "equalMonths": true, "hasScale": true, "noDates": true, "curved": true])
+        try await js(#"""
+        const nodes=[...document.querySelectorAll('.work-note')];for(const n of nodes)n.dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}));
+        """#)
+        try await waitFor("document.querySelectorAll('.work-note.multi-selected').length===2")
+        try await js("document.querySelector('.work-note').dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}))")
+        try await waitFor("document.querySelectorAll('.work-note.multi-selected').length===1")
+        try await js(#"""
+        const canvas=document.querySelector('svg[aria-label="Project timeline"]'),rects=[...document.querySelectorAll('.work-note>circle')].map(n=>n.getBoundingClientRect());
+        const x=Math.min(...rects.map(r=>r.x))-10,y=Math.min(...rects.map(r=>r.y))-10,right=Math.max(...rects.map(r=>r.right))+10,bottom=Math.max(...rects.map(r=>r.bottom))+10;
+        canvas.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:x,clientY:y}));
+        window.dispatchEvent(new PointerEvent('pointermove',{clientX:right,clientY:bottom}));window.dispatchEvent(new PointerEvent('pointerup'));
+        """#)
+        try await waitFor("document.querySelectorAll('.work-note.multi-selected').length===2 && !document.querySelector('.anchor.multi-selected')")
+        try await js("document.querySelector('.work-note').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:300}))")
+        try await waitFor("[...document.querySelectorAll('.node-menu button')].some(b=>b.textContent==='Delete 2 notes') && [...document.querySelectorAll('.node-menu button')].some(b=>b.textContent==='Run Codex with 2 notes')")
+        try await js("document.querySelector('.node-menu').remove();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
+        let beforeMove = model.crowmap.source
+        let currentNotes = try XCTUnwrap((JSONSerialization.jsonObject(with: Data(beforeMove.utf8)) as? [String: Any])?["notes"] as? [[String: Any]])
+        let movingID = try XCTUnwrap(currentNotes.first?["id"] as? String), oldDate = try XCTUnwrap(currentNotes.first?["date"] as? String)
+        let dropHighlighted = try await view.callAsyncJavaScript("""
+        const circle=document.querySelector('[data-node-id="\(movingID)"]>circle'),r=circle.getBoundingClientRect();
+        circle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:r.x+r.width/2,clientY:r.y+r.height/2}));
+        window.dispatchEvent(new PointerEvent('pointermove',{clientX:r.x+r.width/2+60,clientY:r.y+r.height/2}));
+        const highlighted=Number(document.querySelector('.date-drop-column').getAttribute('width'))>0;
+        window.dispatchEvent(new PointerEvent('pointerup'));return highlighted;
+        """, arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertEqual(dropHighlighted, true)
+        for _ in 0..<100 where model.crowmap.source == beforeMove { try await Task.sleep(for: .milliseconds(30)) }
+        let movedDoc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertNotEqual((movedDoc["notes"] as? [[String: Any]])?.first(where: { $0["id"] as? String == movingID })?["date"] as? String, oldDate)
+        let projects = try XCTUnwrap(movedDoc["projects"] as? [[String: Any]])
+        let milestoneID = try XCTUnwrap((projects[1]["route"] as? [String])?[1])
+        let beforePriority = model.crowmap.source
+        try await js("""
+        const circle=document.querySelector('[data-node-id="\(milestoneID)"]>circle'),r=circle.getBoundingClientRect(),canvas=document.querySelector('svg[aria-label="Project timeline"]'),bounds=canvas.getBoundingClientRect(),scale=bounds.width/canvas.viewBox.baseVal.width;
+        circle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:r.x+r.width/2,clientY:r.y+r.height/2}));
+        window.dispatchEvent(new PointerEvent('pointermove',{clientX:r.x+r.width/2,clientY:bounds.top+100*scale}));window.dispatchEvent(new PointerEvent('pointerup'));
+        """)
+        for _ in 0..<100 where model.crowmap.source == beforePriority { try await Task.sleep(for: .milliseconds(30)) }
+        let priorityDoc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertEqual((priorityDoc["anchors"] as? [[String: Any]])?.first(where: { $0["id"] as? String == milestoneID })?["priority"] as? Int, 1)
+        try await js("document.querySelector('.anchor').dispatchEvent(new MouseEvent('click',{clientX:180,clientY:200}))")
+        try await waitFor("!!document.querySelector('[aria-label=\"Open note in editor\"]')")
+        try await js("document.querySelector('[aria-label=\"Open note in editor\"]').click()")
+        let path = model.crowmap.noteRoot.appendingPathComponent("Sample project.md").path
+        for _ in 0..<100 where !model.current.snapshot.buffers.contains(where: { $0.path == path }) { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertTrue(model.current.snapshot.buffers.contains { $0.path == path })
+        try await js("[...document.querySelectorAll('.work-note')].find(n=>n.textContent==='Implementation').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:300}))")
+        try await waitFor("!!document.querySelector('.node-menu')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Create linked note').click()")
+        try await waitFor("document.querySelectorAll('.work-note').length===3 && !!document.querySelector('.note-file-title')")
+        let linkedName = try await view.callAsyncJavaScript("return document.querySelector('.note-file-title').value+'.md'", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+        let linked = try XCTUnwrap(linkedName)
+        XCTAssertTrue(try XCTUnwrap(model.crowmap.library[linked]).contains("[[Implementation]]"))
+        try await js("[...document.querySelectorAll('.work-note')].find(n=>n.textContent==='New note').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:300}))")
+        try await waitFor("!!document.querySelector('.node-menu')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Delete note').click()")
+        try await waitFor("document.querySelectorAll('.work-note').length===2")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: model.crowmap.noteRoot.appendingPathComponent(linked).path))
+        XCTAssertEqual(model.crowmap.library.count, 13)
+        try await js("document.querySelectorAll('.work-note').forEach(n=>n.dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true})))")
+        try await waitFor("document.querySelectorAll('.work-note.multi-selected').length===2")
+        try await js("document.querySelector('.work-note').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:300}))")
+        try await waitFor("!!document.querySelector('.node-menu')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Delete 2 notes').click()")
+        try await waitFor("document.querySelectorAll('.work-note').length===0")
+        XCTAssertEqual(model.crowmap.library.count, 11)
+        let beforeStack = model.crowmap.source
+        try await js(#"""
+        const a=[...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')==='New milestone').querySelector('circle');
+        const b=[...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')==='Build').querySelector('circle');
+        const from=a.getBoundingClientRect(),to=b.getBoundingClientRect();
+        a.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:from.x+from.width/2,clientY:from.y+from.height/2}));
+        window.dispatchEvent(new PointerEvent('pointermove',{clientX:to.x+to.width/2,clientY:from.y+from.height/2}));window.dispatchEvent(new PointerEvent('pointerup'));
+        """#)
+        for _ in 0..<100 where model.crowmap.source == beforeStack { try await Task.sleep(for: .milliseconds(30)) }
+        let separated = try await view.callAsyncJavaScript(#"""
+        const circle=title=>[...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')===title).querySelector('circle');
+        const a=circle('New milestone'),b=circle('Build');return Math.abs(Number(a.getAttribute('cx'))-Number(b.getAttribute('cx')))<1 && Math.abs(Number(a.getAttribute('cy'))-Number(b.getAttribute('cy')))>=48;
+        """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertEqual(separated, true, "Same-date main-route milestones must be separate visible nodes")
+        let stackedImage = try await view.takeSnapshot(configuration: nil)
+        let stackedBitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(stackedImage.tiffRepresentation)))
+        try XCTUnwrap(stackedBitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/crowmap-stacked-milestones.png"))
+
+        let notesBeforeReorder = model.crowmap.library
+        let sourceBeforeReorder = model.crowmap.source
+        try await js(#"""
+        const get=title=>[...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')===title).querySelector('circle');
+        const a=get('New milestone'),b=get('Build'),from=a.getBoundingClientRect(),to=b.getBoundingClientRect();
+        window.beforeMilestoneSwap=[Number(a.getAttribute('cy')),Number(b.getAttribute('cy'))];
+        a.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:from.x+from.width/2,clientY:from.y+from.height/2}));
+        window.dispatchEvent(new PointerEvent('pointermove',{clientX:to.x+to.width/2,clientY:to.y+to.height/2}));window.dispatchEvent(new PointerEvent('pointerup'));
+        """#)
+        for _ in 0..<100 where model.crowmap.source == sourceBeforeReorder { try await Task.sleep(for: .milliseconds(30)) }
+        let swapped = try await view.callAsyncJavaScript(#"""
+        const y=title=>Number([...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')===title).querySelector('circle').getAttribute('cy'));
+        return y('New milestone')===window.beforeMilestoneSwap[1]&&y('Build')===window.beforeMilestoneSwap[0];
+        """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+        XCTAssertEqual(swapped, true); XCTAssertEqual(model.crowmap.library, notesBeforeReorder, "Visual ordering must not write Markdown")
+        let sourceBeforePriority = model.crowmap.source
+        try await js(#"""
+        const nodes=[...document.querySelectorAll('.anchor')],builds=nodes.filter(n=>n.getAttribute('aria-label')==='Build');
+        const candidates=[builds[0],nodes.find(n=>n.getAttribute('aria-label')==='New milestone')].sort((a,b)=>Number(a.querySelector('circle').getAttribute('cy'))-Number(b.querySelector('circle').getAttribute('cy')));
+        const a=candidates[0].querySelector('circle'),b=builds[1].querySelector('circle'),from=a.getBoundingClientRect(),to=b.getBoundingClientRect();
+        a.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,metaKey:true,clientX:from.x+from.width/2,clientY:from.y+from.height/2}));
+        window.dispatchEvent(new PointerEvent('pointermove',{metaKey:true,clientX:from.x+from.width/2,clientY:to.y+to.height/2}));window.dispatchEvent(new PointerEvent('pointerup',{metaKey:true}));
+        """#)
+        for _ in 0..<100 where model.crowmap.source == sourceBeforePriority { try await Task.sleep(for: .milliseconds(30)) }
+        let reordered = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        let reorderedAnchors = try XCTUnwrap(reordered["anchors"] as? [[String: Any]])
+        let firstProjectID = try XCTUnwrap((reordered["projects"] as? [[String: Any]])?.first?["id"] as? String)
+        let changedMilestones = reorderedAnchors.filter { $0["project"] as? String == firstProjectID && ["Build", "New milestone", "Release"].contains($0["title"] as? String ?? "") }
+        XCTAssertEqual(changedMilestones.count, 3); XCTAssertTrue(changedMilestones.allSatisfy { $0["priority"] as? Int == 2 }, "Cmd drag must change this date and following milestone priorities")
+
+        let connected = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        let branch = try XCTUnwrap((connected["anchors"] as? [[String: Any]])?.first { $0["title"] as? String == "New milestone" })
+        let branchID = try XCTUnwrap(branch["id"] as? String)
+        let incident = try XCTUnwrap(connected["edges"] as? [[String: Any]]).filter { $0["from"] as? String == branchID || $0["to"] as? String == branchID }
+        XCTAssertEqual(incident.count, 2)
+        for edge in incident {
+            let edgeID = try XCTUnwrap(edge["id"] as? String)
+            try await js("document.querySelector('[data-edge-id=\"\(edgeID)\"]').dispatchEvent(new MouseEvent('click',{clientX:300,clientY:260}))")
+            try await waitFor("!![...document.querySelectorAll('.map-popup button')].find(b=>b.textContent==='Disconnect milestones')")
+            try await js("[...document.querySelectorAll('.map-popup button')].find(b=>b.textContent==='Disconnect milestones').click()")
+            try await waitFor("!document.querySelector('[data-edge-id=\"\(edgeID)\"]') && !document.querySelector('.map-popup')")
+        }
+        try await waitFor("document.querySelector('[data-node-id=\"\(branchID)\"]').classList.contains('ghost')")
+        XCTAssertEqual(model.crowmap.library.count, 11, "Disconnecting keeps the original Markdown file")
+        let branchText = try TextFiles.read(model.crowmap.noteURL(try XCTUnwrap(branch["note"] as? String)))
+        XCTAssertTrue(branchText.contains("previous: []")); XCTAssertTrue(branchText.contains("next: []"))
+        try await js("document.querySelector('button[aria-label=\"Map controls\"]').click();document.querySelector('[aria-label=\"Refresh map\"]').click()")
+        try await waitFor("document.querySelector('[data-node-id=\"\(branchID)\"]').classList.contains('ghost') && document.querySelectorAll('.anchor').length===11")
+        let finalImage = try await view.takeSnapshot(configuration: nil)
+        let finalBitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(finalImage.tiffRepresentation)))
+        try XCTUnwrap(finalBitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/crowmap-disconnected-milestone.png"))
+        try await js("document.querySelector('button[aria-label=\"Map controls\"]').click()")
+        try await js("document.querySelector('.anchor').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:180}))")
+        try await waitFor("!![...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Copy')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Duplicate').click()")
+        try await waitFor("document.querySelectorAll('.anchor').length===17 && !!document.querySelector('.map-popup .tiptap')")
+        XCTAssertEqual(model.crowmap.library.count, 17)
+        let duplicated = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertEqual((duplicated["projects"] as? [[String: Any]])?.count, 3)
+        XCTAssertEqual((duplicated["notes"] as? [[String: Any]])?.count, 0)
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        try await js("[...document.querySelectorAll('.anchor')].find(n=>n.getAttribute('aria-label')==='Research').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:300,clientY:220}))")
+        try await waitFor("!!document.querySelector('.node-menu')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Duplicate').click()")
+        try await waitFor("document.querySelectorAll('.anchor').length===18 && !!document.querySelector('.map-popup .tiptap')")
+        XCTAssertEqual(model.crowmap.library.count, 18)
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        try await js("document.querySelector('.edge-hit').dispatchEvent(new MouseEvent('click',{clientX:250,clientY:220}))")
+        try await waitFor("!!document.querySelector('.map-popup')")
+        try await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Add work note').click()")
+        try await waitFor("document.querySelectorAll('.work-note').length===1 && !!document.querySelector('.map-popup .tiptap')")
+        try await js("document.querySelector('[aria-label=Close]').click()")
+        try await waitFor("!document.querySelector('.map-popup')")
+        let beforeDelete = model.crowmap.source
+        let filesBeforeDelete = model.crowmap.library
+        try await js("document.querySelector('.anchor').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:180}))")
+        try await waitFor("!!document.querySelector('.node-menu')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Delete timeline').click()")
+        try await waitFor("!!document.querySelector('dialog[open] [data-confirm]') && document.activeElement?.dataset.confirm==='true'")
+        XCTAssertEqual(model.crowmap.source, beforeDelete)
+        try await js("[...document.querySelectorAll('dialog button')].find(b=>b.textContent==='Cancel').click()")
+        try await waitFor("!document.querySelector('dialog')")
+        XCTAssertEqual(model.crowmap.source, beforeDelete); XCTAssertEqual(model.crowmap.library, filesBeforeDelete)
+        try await js("document.querySelector('.anchor').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:180}))")
+        try await waitFor("!!document.querySelector('.node-menu')")
+        try await js("[...document.querySelectorAll('.node-menu button')].find(b=>b.textContent==='Delete timeline').click()")
+        try await waitFor("!!document.querySelector('dialog[open] [data-confirm]')")
+        try await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',repeat:true,bubbles:true,cancelable:true}))")
+        try await waitFor("!document.querySelector('dialog') && document.querySelectorAll('.anchor').length===11 && !document.querySelector('.work-note')")
+        XCTAssertEqual(model.crowmap.library.count, 11)
+        let afterDelete = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertEqual((afterDelete["projects"] as? [[String: Any]])?.count, 2)
+        try await js("document.head.append(Object.assign(document.createElement('style'),{textContent:'.map-viewport{max-height:250px}'}));document.querySelector('.map-viewport').scrollTop=0;document.querySelector('[aria-label=\"Add timeline\"]').click()")
+        try await waitFor("document.querySelectorAll('.anchor').length===16 && document.activeElement?.classList.contains('anchor')")
+        try await waitFor("document.querySelector('.map-viewport').scrollTop>0 && (()=>{const n=document.activeElement.getBoundingClientRect(),v=document.querySelector('.map-viewport').getBoundingClientRect();return n.top>=v.top&&n.bottom<=v.bottom;})()")
+        let focusedID = try await view.callAsyncJavaScript("return document.activeElement.dataset.nodeId", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+        let focusedMap = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(model.crowmap.source.utf8)) as? [String: Any])
+        XCTAssertEqual(focusedID, ((focusedMap["projects"] as? [[String: Any]])?.last?["route"] as? [String])?.first)
+    }
+
+    func testCrowmapPanelPersistenceAndLegacyMigrationPreserveDirtySource() throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Crowmap"))
+        try model.crowmap.create("First"); let first = try XCTUnwrap(model.crowmap.selected)
+        let clean = OpenBuffer(title: first.lastPathComponent, path: first.path, text: model.crowmap.source, language: .markdown, isRemote: false)
+        try model.crowmap.create("Second"); let second = try XCTUnwrap(model.crowmap.selected)
+        var dirty = OpenBuffer(title: second.lastPathComponent, path: second.path, text: model.crowmap.source, language: .markdown, isRemote: false)
+        dirty.text += " "; dirty.isDirty = true
+        model.current.snapshot.buffers += [clean, dirty]
+        model.current.snapshot.layout?.open(.file(clean.id)); model.current.snapshot.layout?.open(.file(dirty.id))
+        model.restoreCrowmapPanel()
+        XCTAssertEqual(model.crowmapTabs.map(\.id), [first.path])
+        XCTAssertFalse(model.current.snapshot.buffers.contains { $0.id == clean.id })
+        XCTAssertTrue(model.current.snapshot.buffers.contains { $0.id == dirty.id && $0.isDirty })
+        XCTAssertTrue(model.current.snapshot.layout?.allTabs.contains(.file(dirty.id)) == true)
+        model.openCrowmap(second)
+        let tab = try XCTUnwrap(model.crowmapTabs.last)
+        tab.store.drafts["Note.md"] = "Unsaved draft"; tab.store.draftBases["Note.md"] = "Original"
+        model.crowmapPanel.height = 420; model.crowmapPanel.maximized = true
+        let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: JSONEncoder().encode(model.sessionSnapshot))
+        XCTAssertEqual(snapshot.crowmapPanel?.paths, [first.path, second.path])
+        XCTAssertEqual(snapshot.crowmapPanel?.drafts[second.path]?["Note.md"], "Unsaved draft")
+        model.crowmapTabs = []; model.crowmapPanel = try XCTUnwrap(snapshot.crowmapPanel)
+        model.restoreCrowmapPanel()
+        XCTAssertEqual(model.crowmapTabs.count, 2)
+        XCTAssertEqual(model.crowmapPanel.selectedPath, second.path)
+        XCTAssertEqual(model.crowmapPanel.height, 420)
+        XCTAssertEqual(model.crowmapTabs.last?.store.draftBases["Note.md"], "Original")
+        var old = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        old.removeValue(forKey: "crowmapPanel")
+        XCTAssertNil(try JSONDecoder().decode(SessionSnapshot.self, from: JSONSerialization.data(withJSONObject: old)).crowmapPanel)
+    }
+
+    func testCrowmapImportFolderCreatesCacheAndLinksOutsideNotes() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps"))
+        let outside = root.appendingPathComponent("Outside/ProjectNotes")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let note = "---\nkind: start\ntitle: Project\ndate: 2026-09-18\npriority: 1\nmilestones: []\n---\nBody\n"
+        try Data(note.utf8).write(to: outside.appendingPathComponent("Project.md"))
+        let imported = try model.crowmap.importFolder(outside)
+        XCTAssertEqual(imported.lastPathComponent, "ProjectNotes.crowmap")
+        XCTAssertTrue(model.crowmap.maps.contains { $0.resolvingSymlinksInPath() == imported.resolvingSymlinksInPath() })
+        XCTAssertEqual(try TextFiles.read(outside.appendingPathComponent("Project.md")), note)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("ProjectNotes.crowmap").path))
+        XCTAssertEqual(imported.deletingLastPathComponent().resolvingSymlinksInPath(), outside.resolvingSymlinksInPath())
+        XCTAssertEqual(try imported.deletingLastPathComponent().resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, true)
+        XCTAssertTrue(model.crowmapIsLinkedFolder(imported))
+        XCTAssertFalse(model.crowmapOwnsFolder(imported))
+        model.importCrowmap(from: outside)
+        XCTAssertEqual(model.crowmapTabs.map { $0.url.resolvingSymlinksInPath() }, [imported.resolvingSymlinksInPath()])
+        XCTAssertEqual(try model.crowmap.importFolder(outside).resolvingSymlinksInPath(), imported.resolvingSymlinksInPath(), "Re-importing the same folder reopens the existing map")
+        XCTAssertEqual(model.crowmap.maps.count, 1)
+        let original = try await model.deleteCrowmap(imported)
+        XCTAssertEqual(original.resolvingSymlinksInPath(), outside.resolvingSymlinksInPath())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: imported.deletingLastPathComponent().path))
+        XCTAssertEqual(try TextFiles.read(outside.appendingPathComponent("Project.md")), note)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("ProjectNotes.crowmap").path))
+        XCTAssertTrue(model.crowmap.maps.isEmpty)
+        let inside = model.crowmap.root.appendingPathComponent("LocalNotes")
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        try Data(note.utf8).write(to: inside.appendingPathComponent("Project.md"))
+        let local = try model.crowmap.importFolder(inside)
+        XCTAssertEqual(local.deletingLastPathComponent().resolvingSymlinksInPath(), inside.resolvingSymlinksInPath())
+        XCTAssertNotEqual(try local.deletingLastPathComponent().resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: local.path))
+        do { _ = try model.crowmap.importFolder(model.crowmap.root); XCTFail("The library itself is not a map") } catch {}
+    }
+
+    func testCrowmapRenameDuplicateAndDeleteKeepMapsIndependent() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps")); model.createCrowmap()
+        let original = try XCTUnwrap(model.crowmapTabs.first), folder = original.store.noteRoot
+        let note = folder.appendingPathComponent("Note.md"), noteText = "---\ndate: 2026-09-18\n---\nBody [[Another note]]\n"
+        try Data(noteText.utf8).write(to: note)
+        let sessions = folder.appendingPathComponent(".sessions/session/notes")
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: sessions.appendingPathComponent("Note.md"), withDestinationURL: note)
+        let instructions = sessions.deletingLastPathComponent().appendingPathComponent("AGENTS.md")
+        try Data(("# Session\nMap file: " + original.url.lastPathComponent + "\nKeep this guidance\n").utf8).write(to: instructions)
+        let agentID = try XCTUnwrap(model.newAgentTerminal(.codex, directory: folder.path, crowmapPath: original.id))
+        let renamed = try await model.renameCrowmap(original.url, to: "Renamed")
+        XCTAssertEqual(renamed.deletingLastPathComponent(), folder, "Agent cwd and conversation history remain stable")
+        XCTAssertEqual(model.current.snapshot.agentTerminals.first { $0.id == agentID }?.crowmapPath, renamed.path)
+        XCTAssertEqual(model.crowmapPanel.selectedPath, renamed.path)
+        XCTAssertEqual(try TextFiles.read(instructions), "# Session\nMap file: Renamed.crowmap\nKeep this guidance\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.id))
+        XCTAssertEqual(try TextFiles.read(sessions.appendingPathComponent("Note.md")), noteText)
+        let duplicate = try await model.duplicateCrowmap(renamed)
+        let secondDuplicate = try await model.duplicateCrowmap(renamed)
+        XCTAssertEqual(duplicate.lastPathComponent, "Renamed 2.crowmap")
+        XCTAssertEqual(secondDuplicate.lastPathComponent, "Renamed 3.crowmap")
+        let copy = CrowmapStore(root: model.crowmap.root); try copy.load(duplicate)
+        XCTAssertEqual(copy.library["Note.md"], noteText)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.noteRoot.appendingPathComponent(".sessions").path))
+        let sourceDoc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try TextFiles.read(renamed).utf8)) as? [String: Any])
+        let copyDoc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(copy.source.utf8)) as? [String: Any])
+        XCTAssertNotEqual(sourceDoc["id"] as? String, copyDoc["id"] as? String)
+        try Data("Independent edit".utf8).write(to: copy.noteRoot.appendingPathComponent("Note.md"))
+        XCTAssertEqual(try TextFiles.read(note), noteText)
+        model.openCrowmap(duplicate)
+        let archive = try await model.deleteCrowmap(duplicate)
+        XCTAssertEqual(try TextFiles.read(archive.appendingPathComponent("Note.md")), "Independent edit")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: duplicate.path))
+        XCTAssertFalse(model.crowmapTabs.contains { $0.url == duplicate })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: renamed.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondDuplicate.path))
+    }
+
+    func testCrowmapFileActionsProtectDraftsCollisionsAndRunningAgents() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps")); model.createCrowmap()
+        let tab = try XCTUnwrap(model.crowmapTabs.first), folder = tab.store.noteRoot
+        let collision = folder.appendingPathComponent("Taken.crowmap")
+        try Data(tab.store.source.utf8).write(to: collision)
+        do { _ = try await model.renameCrowmap(tab.url, to: "Taken"); XCTFail("Must preserve an existing map") } catch {}
+        XCTAssertEqual(try TextFiles.read(collision), tab.store.source)
+        tab.store.drafts["Note.md"] = "Unsaved"
+        do { _ = try await model.duplicateCrowmap(tab.url); XCTFail("Must not drop a draft") } catch {}
+        do { _ = try await model.deleteCrowmap(tab.url); XCTFail("Must not delete a draft") } catch {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tab.id))
+        tab.store.drafts.removeAll()
+        let id = try XCTUnwrap(model.newAgentTerminal(.codex, directory: folder.path, crowmapPath: tab.id))
+        let session = model.terminal(id, in: model.current); session.running = true
+        do { _ = try await model.deleteCrowmap(tab.url); XCTFail("Must keep a running agent's working directory") } catch {}
+        session.running = false
+        let note = folder.appendingPathComponent("Shared.md"); try Data("Keep me".utf8).write(to: note)
+        XCTAssertFalse(model.crowmapOwnsFolder(tab.url))
+        let archive = try await model.deleteCrowmap(tab.url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: archive.path))
+        XCTAssertEqual(try TextFiles.read(note), "Keep me", "A shared map folder must never be removed")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: collision.path))
+    }
+
+    func testPinnedCrowmapTabsRetainOrderAndPinAfterRenameAndRestore() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps")); model.createCrowmap(); model.createCrowmap()
+        let first = model.crowmapTabs[0], pinned = model.crowmapTabs[1]
+        model.toggleCrowmapPin(pinned.id)
+        XCTAssertEqual(model.crowmapTabs.map(\.id), [pinned.id, first.id])
+        XCTAssertTrue(model.crowmapTabs.first === pinned, "Pinning retains the existing WebView store identity")
+        let renamed = try await model.renameCrowmap(pinned.url, to: "Pinned")
+        XCTAssertTrue(model.isCrowmapPinned(renamed.path))
+        XCTAssertFalse(model.isCrowmapPinned(pinned.id))
+        let saved = try JSONDecoder().decode(CrowmapPanelSnapshot.self, from: JSONEncoder().encode(model.savedCrowmapPanel))
+        model.crowmapTabs = []; model.crowmapPanel = saved; model.restoreCrowmapPanel()
+        XCTAssertEqual(model.crowmapTabs.map(\.id), [renamed.path, first.id])
+        XCTAssertTrue(model.isCrowmapPinned(renamed.path))
+        _ = try await model.deleteCrowmap(renamed)
+        XCTAssertNil(model.crowmapPanel.pinnedPaths)
+        XCTAssertEqual(model.crowmapTabs.map(\.id), [first.id])
+    }
+
+    func testCloseOtherTabsPreservesPinnedTabs() throws {
+        let pinned = try XCTUnwrap(model.selectedBuffer), pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
+        model.toggleTabPin(.file(pinned.id)); model.newTerminal()
+        let kept = WorkspaceTab.terminal(try XCTUnwrap(model.current.snapshot.selectedTerminalID))
+        model.newTab()
+        model.closeOtherTabs(except: kept, in: pane)
+        XCTAssertEqual(model.current.snapshot.layout?.activePane?.tabs, [.file(pinned.id), kept])
+        XCTAssertTrue(model.current.snapshot.layout?.isPinned(.file(pinned.id)) == true)
+        XCTAssertEqual(model.current.snapshot.layout?.activePane?.selected, kept)
+    }
+
+    func testCrowmapTabCloseRetainsUnflushedDrafts() async throws {
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Crowmap")); model.createCrowmap()
+        let tab = try XCTUnwrap(model.crowmapTabs.first)
+        tab.store.drafts["Note.md"] = "Unsaved"
+        tab.store.flushDrafts = { true } // Another restored draft may not be open in the embedded editor.
+        model.closeCrowmapTab(tab.id)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(model.crowmapTabs.count, 1)
+        XCTAssertEqual(model.savedCrowmapPanel.drafts[tab.id]?["Note.md"], "Unsaved")
+        tab.store.flushDrafts = { tab.store.drafts.removeAll(); return true }
+        model.closeCrowmapTab(tab.id)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(model.crowmapTabs.isEmpty)
+        XCTAssertNil(model.crowmapPanel.selectedPath)
+    }
+
     func testCloseOtherTabsKeepsClickedTabAndOtherPane() throws {
         let kept = try XCTUnwrap(model.selectedBuffer)
         let pane = try XCTUnwrap(model.current.snapshot.layout?.activePaneID)
@@ -930,5 +1740,26 @@ import WebKit
         try handle.truncate(atOffset: UInt64(FileDownload.sizeLimit + 1))
         try handle.close()
         XCTAssertThrowsError(try FileDownload.read(file.path))
+    }
+}
+
+private struct CrowmapClickFixture: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        HStack(spacing: 0) {
+            ActivityBar()
+            SidebarView().frame(width: 300)
+            CrowmapDockArea { Color.white }.frame(width: 800).windowDragExcluded()
+        }
+    }
+}
+
+private struct MarkdownTitleFixture: View {
+    @Environment(AppModel.self) private var model
+    let id: BufferID
+    var body: some View {
+        if let (state, index) = model.locate(id) {
+            WorkspaceMarkdownView(buffer: state.snapshot.buffers[index], text: Binding(get: { state.snapshot.buffers[index].text }, set: { model.updateBufferText(id, $0) }))
+        }
     }
 }

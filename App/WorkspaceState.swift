@@ -18,6 +18,7 @@ final class WorkspaceState: Identifiable {
     @ObservationIgnored var remote: RemoteConnection?
     var terminalGeneration = 0
     var tmuxContextDirectory: String?
+    var panelCrowmapDirectory: String?
     var focusedTerminalID: UUID? {
         // A document takes ownership of the folder context. Start/browser pages
         // retain the previous terminal context for launching another agent.
@@ -44,6 +45,7 @@ final class WorkspaceState: Identifiable {
     var agentHistoryPath: String {
         // Terminal instances are stored outside Observation; track their replacement too.
         _ = terminalGeneration
+        if let directory = crowmapHistoryDirectory { return directory }
         if let directory = focusedDocumentDirectory { return directory }
         guard let id = focusedTerminalID else { return snapshot.rootPath }
         if let directory = reverseAgentDirectory { return directory }
@@ -51,6 +53,16 @@ final class WorkspaceState: Identifiable {
         guard let terminal = terminals[id] else { return initial }
         if terminal.tmuxLocation != nil, let path = terminal.tmuxCurrentDirectory { return path }
         return terminal.workingDirectory
+    }
+    var focusedCrowmapPath: String? {
+        if case .file(let id) = snapshot.layout?.activePane?.selected,
+           let buffer = snapshot.buffers.first(where: { $0.id == id }), !buffer.isRemote, buffer.path.hasSuffix(".crowmap") { return buffer.path }
+        return selectedAgent?.crowmapPath
+    }
+    var crowmapHistoryDirectory: String? {
+        if let panelCrowmapDirectory { return panelCrowmapDirectory }
+        if let path = focusedCrowmapPath { return (path as NSString).deletingLastPathComponent }
+        return selectedAgent?.crowmapDirectory
     }
     @ObservationIgnored var tmuxFocusGeneration = UUID()
     @ObservationIgnored var terminals: [UUID: TerminalSession] = [:]

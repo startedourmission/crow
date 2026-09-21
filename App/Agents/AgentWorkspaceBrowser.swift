@@ -259,7 +259,7 @@ struct AgentWorkspaceBrowser: View {
         model.orderedWorkspaces(on: hostID).filter { state in
             search.isEmpty ||
                 ([state.snapshot.workspace.name, state.snapshot.rootPath, model.workspaceHostName(state)]
-                 + state.snapshot.agentTerminals.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search)
+                 + state.snapshot.agentTerminals.filter { $0.crowmapDirectory == nil }.map(\.title)).joined(separator: " ").localizedCaseInsensitiveContains(search)
         }
     }
 
@@ -532,7 +532,7 @@ struct AgentWorkspaceBrowser: View {
     private func workspaceRow(_ state: WorkspaceState) -> some View {
         let _ = state.terminalGeneration
         let selected = model.selectedWorkspaceID == state.id
-        let agents = state.snapshot.agentTerminals.filter { state.snapshot.terminalIDs.contains($0.id) }
+        let agents = state.snapshot.agentTerminals.filter { state.snapshot.terminalIDs.contains($0.id) && $0.crowmapDirectory == nil }
         return VStack(spacing: 3) {
             HStack(spacing: 4) {
                 Button {

@@ -8,6 +8,109 @@ import Observation
 import AppKit
 
 final class AgentTerminalIntegrationTests: XCTestCase {
+    @MainActor func testCrowmapAgentsKeepMapOwnershipAndHistoryScopeAcrossTabFocus() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-map-agents-" + UUID().uuidString)
+        let folder = root.appendingPathComponent(".crow/crowmap/Plan"), map = folder.appendingPathComponent("Plan.crowmap")
+        let session = folder.appendingPathComponent(".sessions/selected-notes")
+        try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: map)
+        let model = AppModel(vaultURL: root)
+        model.crowmap = CrowmapStore(root: folder.deletingLastPathComponent())
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let owner = model.current, ownerID = owner.id
+        let id = try XCTUnwrap(model.newAgentTerminal(.codex, directory: session.path, reuseTmux: false, crowmapPath: map.path))
+        XCTAssertEqual(model.current.id, ownerID, "A map agent remains an ordinary tab")
+        XCTAssertEqual(owner.selectedAgent?.crowmapDirectory, folder.path)
+        XCTAssertEqual(owner.agentHistoryPath, folder.path)
+        XCTAssertEqual(model.crowmapAgents(in: folder).map(\.id), [id])
+        XCTAssertTrue(model.crowmapAgents(in: root.appendingPathComponent("Other")).isEmpty)
+        XCTAssertEqual(model.sidebarPane, .workspaces, "Map agents retain the upper sidebar while their library remains below")
+        let buffer = OpenBuffer(title: "Plan.crowmap", path: map.path, text: "{}", language: .markdown, isRemote: false)
+        owner.snapshot.buffers.append(buffer); owner.snapshot.layout?.open(.file(buffer.id))
+        XCTAssertEqual(owner.agentHistoryPath, folder.path)
+        XCTAssertEqual(owner.focusedCrowmapPath, map.path)
+        let index = try XCTUnwrap(owner.snapshot.agentTerminals.firstIndex { $0.id == id })
+        owner.snapshot.agentTerminals[index].crowmapPath = nil
+        model.openAgentTerminal(id, workspaceID: ownerID)
+        XCTAssertEqual(owner.agentHistoryPath, folder.path, "Pre-fix sessions are inferred from their map session directory")
+        XCTAssertEqual(model.crowmap.selected, map)
+        owner.snapshot.agentTerminals[index].firstPrompt = "Read selected notes"
+        let now = Date().timeIntervalSince1970
+        func entry(_ name: String, cwd: String) -> AgentHistoryEntry {
+            .init(id: name, provider: .codex, path: "/history/" + name, title: "Read selected notes", modified: now,
+                  size: 100, first: .init(role: "user", text: "Read selected notes"), recent: [], tokens: nil, started: now, cwd: cwd)
+        }
+        model.reconcileAgentHistory([entry("other", cwd: folder.appendingPathComponent(".sessions/other").path), entry("selected", cwd: session.path)], source: owner, path: folder.path, serverTime: now)
+        XCTAssertEqual(owner.snapshot.agentTerminals[index].currentSessionID, "selected")
+    }
+
+    @MainActor func testAgentLaunchFromFocusedCrowmapUsesItsFolderAndOwnership() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-map-launch-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let state = model.current
+        let first = root.appendingPathComponent(".crow/crowmap/First/First.crowmap")
+        let second = root.appendingPathComponent(".crow/crowmap/Second/Second.crowmap")
+        for map in [first, second] { try FileManager.default.createDirectory(at: map.deletingLastPathComponent(), withIntermediateDirectories: true); try Data("{}".utf8).write(to: map) }
+        model.newTab(); let pane = try XCTUnwrap(state.snapshot.layout?.activePaneID)
+        let mapBuffers = [first, second].map { OpenBuffer(title: $0.lastPathComponent, path: $0.path, text: "{}", language: .markdown, isRemote: false) }
+        state.snapshot.buffers.append(contentsOf: mapBuffers)
+        for provider in AgentProvider.allCases {
+            state.snapshot.layout?.open(.file(mapBuffers[0].id), in: pane)
+            let id = try XCTUnwrap(model.newAgentTerminal(provider, in: pane))
+            let agent = try XCTUnwrap(state.snapshot.agentTerminals.first { $0.id == id })
+            XCTAssertEqual(agent.directory, first.deletingLastPathComponent().path)
+            XCTAssertEqual(agent.crowmapPath, first.path)
+            XCTAssertEqual(model.terminal(id, in: state).launchCommand, provider.command(directory: first.deletingLastPathComponent().path))
+            XCTAssertEqual(state.agentHistoryPath, first.deletingLastPathComponent().path)
+            XCTAssertTrue(model.crowmapAgents(in: first.deletingLastPathComponent()).contains { $0.id == id })
+            XCTAssertEqual(state.contextRootPath, root.path, "Explorer context stays at the workspace root")
+        }
+        state.snapshot.layout?.open(.file(mapBuffers[1].id), in: pane)
+        let secondID = try XCTUnwrap(model.newAgentTerminal(.codex))
+        XCTAssertEqual(state.snapshot.agentTerminals.first { $0.id == secondID }?.crowmapPath, second.path)
+        XCTAssertEqual(model.crowmap.selected, second)
+        state.snapshot.layout?.open(.file(mapBuffers[0].id), in: pane)
+        let explicit = root.appendingPathComponent("Explicit").path
+        let explicitID = try XCTUnwrap(model.newAgentTerminal(.claude, directory: explicit))
+        XCTAssertEqual(state.snapshot.agentTerminals.first { $0.id == explicitID }?.directory, explicit)
+        XCTAssertNil(state.snapshot.agentTerminals.first { $0.id == explicitID }?.crowmapPath)
+        let ordinary = OpenBuffer(title: "Note.md", path: root.appendingPathComponent("docs/Note.md").path, text: "", language: .markdown, isRemote: false)
+        state.snapshot.buffers.append(ordinary); state.snapshot.layout?.open(.file(ordinary.id), in: pane)
+        let ordinaryID = try XCTUnwrap(model.newAgentTerminal(.codex))
+        XCTAssertEqual(state.snapshot.agentTerminals.first { $0.id == ordinaryID }?.directory, root.path)
+        XCTAssertNil(state.snapshot.agentTerminals.first { $0.id == ordinaryID }?.crowmapPath)
+    }
+
+    @MainActor func testDockCrowmapAgentLaunchAndHistoryIgnoreSelectedRemoteWorkspace() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-dock-agent-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps")); model.createCrowmap()
+        let map = try XCTUnwrap(model.crowmapTabs.first), local = model.current
+        let host = HostID(rawValue: UUID())
+        let remote = WorkspaceState(.init(workspace: .init(name: "Remote", kind: .remote(hostID: host, path: "/project"), connection: .disconnected), rootPath: "/project"))
+        model.states.append(remote); model.selectWorkspace(remote.id)
+        let layout = remote.snapshot.layout
+        model.openCrowmap(map.url)
+        XCTAssertTrue(model.current === remote, "Opening a local map never switches the upper workspace")
+        XCTAssertEqual(remote.snapshot.layout, layout)
+        let history = try model.agentHistorySource(for: remote)
+        XCTAssertFalse(history.0.snapshot.workspace.isRemote)
+        XCTAssertEqual(history.1, map.store.noteRoot.path)
+        XCTAssertEqual(history.0.crowmapHistoryDirectory, map.store.noteRoot.path)
+        XCTAssertFalse(model.states.contains { $0 === history.0 }, "History does not create a workspace")
+        let id = try XCTUnwrap(model.newAgentTerminal(.codex))
+        XCTAssertTrue(model.current === local)
+        let agent = try XCTUnwrap(local.snapshot.agentTerminals.first { $0.id == id })
+        XCTAssertEqual(agent.directory, map.store.noteRoot.path)
+        XCTAssertEqual(agent.crowmapPath, map.id)
+        XCTAssertEqual(model.crowmapPanel.selectedPath, map.id)
+        XCTAssertTrue(model.crowmapPanel.visible)
+        XCTAssertNil(model.focusedPanelCrowmap, "The new agent terminal owns keyboard focus")
+        XCTAssertTrue(remote.snapshot.agentTerminals.isEmpty)
+    }
+
     @MainActor func testHistoryDeletionWaitsForTerminalProcessToExit() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-history-exit-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

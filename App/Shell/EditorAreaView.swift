@@ -31,24 +31,29 @@ struct EditorAreaView: View {
     }
 
     private var tabStrip: some View {
+        HStack(spacing: 0) {
+        TabNavigationButtons()
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(model.buffers) { buffer in
+                ForEach(model.orderedEditorBuffers) { buffer in
                     tab(buffer)
                 }
             }
         }
         .frame(height: 36)
         .background(CrowTheme.bg1)
+        }
     }
 
     private func tab(_ buffer: OpenBuffer) -> some View {
         let selected = buffer.id == model.selectedBufferID
+        let pinned = model.current.snapshot.layout?.isPinned(.file(buffer.id)) == true
         return HStack(spacing: 8) {
             Button {
                 model.selectedBufferID = buffer.id
             } label: {
                 HStack(spacing: 6) {
+                    if pinned { Image(systemName: "pin.fill").font(.system(size: 10)).help("Pinned tab") }
                     Circle()
                         .fill(buffer.isDirty ? CrowTheme.accent : Color.clear)
                         .frame(width: 6, height: 6)
@@ -64,6 +69,8 @@ struct EditorAreaView: View {
             }
             .buttonStyle(CrowButtonStyle())
             .crowContextMenu {
+                Button(pinned ? "Unpin Tab" : "Pin Tab", systemImage: pinned ? "pin.slash" : "pin") { model.toggleTabPin(.file(buffer.id)) }
+                Divider()
                 if sizeClass != .compact {
                     Button("Open in Split") { model.current.snapshot.splitBufferID = buffer.id; model.schedulePersist() }
                 }
@@ -120,7 +127,7 @@ struct CrowEditorView: View {
     #endif
     @State private var sourceForFind = false
     private var previewMarkdown: Bool {
-        buffer.language == .markdown && model.markdownPreviewEnabled && !sourceForFind
+        buffer.language == .markdown && model.markdownPreviewEnabled && !sourceForFind && (buffer.path as NSString).pathExtension.lowercased() != "crowmap"
     }
     @State private var findRequest = 0
     @State private var pendingFind = false
@@ -130,6 +137,7 @@ struct CrowEditorView: View {
 
     var body: some View {
         if buffer.isImage { CrowImagePreviewView(buffer: buffer) }
+        else if (buffer.path as NSString).pathExtension.lowercased() == "crowmap" { textEditor }
         else if ["canvas", "base"].contains((buffer.path as NSString).pathExtension.lowercased()) {
             ObsidianDocumentView(buffer: buffer, isActive: isActive)
         } else { textEditor }
@@ -626,6 +634,7 @@ private struct WorkspacePaneView: View {
 
     private var header: some View {
         HStack(spacing: 2) {
+            TabNavigationButtons()
             ScrollViewReader { scroll in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
@@ -706,10 +715,12 @@ private struct WorkspacePaneView: View {
     }
     private func tabView(_ tab: WorkspaceTab) -> some View {
         let selected = pane.selected == tab
+        let pinned = model.current.snapshot.layout?.isPinned(tab) == true
         let dirty: Bool = { if case .file(let id) = tab { return model.buffers.first { $0.id == id }?.isDirty == true }; return false }()
         return HStack(spacing: 6) {
             Button { model.selectTab(tab, in: pane.id) } label: {
                 HStack(spacing: 5) {
+                    if pinned { Image(systemName: "pin.fill").font(.system(size: 10)).help("Pinned tab") }
                     if case .terminal(let id) = tab, let agent = model.current.snapshot.agentTerminals.first(where: { $0.id == id }) {
                         AgentProviderIcon(provider: agent.provider, size: 13)
                         if let hostID = agent.reverseHostID {
@@ -742,6 +753,8 @@ private struct WorkspacePaneView: View {
         .contentShape(Rectangle())
         .accessibilityIdentifier("crow.tab.\(tab.key)")
         .crowContextMenu {
+            Button(pinned ? "Unpin Tab" : "Pin Tab", systemImage: pinned ? "pin.slash" : "pin") { model.toggleTabPin(tab) }
+            Divider()
             #if os(macOS)
             if case .terminal(let id) = tab, model.current.snapshot.agentTerminals.first(where: { $0.id == id })?.reverseHostID != nil {
                 Button("Restart Reverse Agent…", systemImage: "arrow.clockwise") { model.requestReverseAgent(in: pane.id, replacing: id) }
@@ -1055,3 +1068,15 @@ final class WorkspacePaneDropView: NSView {
     override func draggingEnded(_ sender: NSDraggingInfo) { highlight(nil) }
 }
 #endif
+
+struct TabNavigationButtons: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { model.navigateTabHistory(-1) } label: { Image(systemName: "chevron.left").frame(width: 26, height: 32) }
+                .disabled(!model.canNavigateBack).help("Go Back").accessibilityLabel("Go Back").accessibilityIdentifier("crow.navigation.back")
+            Button { model.navigateTabHistory(1) } label: { Image(systemName: "chevron.right").frame(width: 26, height: 32) }
+                .disabled(!model.canNavigateForward).help("Go Forward").accessibilityLabel("Go Forward").accessibilityIdentifier("crow.navigation.forward")
+        }.font(.system(size: 11, weight: .medium)).buttonStyle(CrowButtonStyle()).padding(.horizontal, 4).windowDragExcluded()
+    }
+}

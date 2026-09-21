@@ -73,6 +73,7 @@ public struct WorkspaceLayout: Codable, Equatable, Sendable {
     public var panes: [WorkspacePane]
     public var root: PaneNode?
     public var activePaneID: UUID?
+    public var pinnedTabs: [WorkspaceTab]? = nil
 
     public init(files: [BufferID], selectedFile: BufferID?, terminals: [UUID], selectedTerminal: UUID?, terminalFraction: Double = 0.34) {
         panes = []
@@ -87,11 +88,27 @@ public struct WorkspaceLayout: Codable, Equatable, Sendable {
     public var allTabs: [WorkspaceTab] { panes.flatMap(\.tabs) }
     public var activePane: WorkspacePane? { panes.first { $0.id == activePaneID } ?? panes.first }
 
+    public func isPinned(_ tab: WorkspaceTab) -> Bool { pinnedTabs?.contains(tab) == true }
+    public mutating func setPinned(_ tab: WorkspaceTab, _ pinned: Bool) {
+        guard allTabs.contains(tab) else { return }
+        var pins = pinnedTabs ?? []; pins.removeAll { $0 == tab }
+        if pinned { pins.append(tab) }
+        pinnedTabs = pins.isEmpty ? nil : pins
+        orderPinnedTabs()
+    }
+    private mutating func orderPinnedTabs() {
+        let pins = Set(pinnedTabs ?? [])
+        for index in panes.indices {
+            panes[index].tabs = panes[index].tabs.filter { pins.contains($0) } + panes[index].tabs.filter { !pins.contains($0) }
+        }
+    }
+
     public mutating func select(_ tab: WorkspaceTab, in paneID: UUID? = nil) {
         guard let index = panes.firstIndex(where: { (paneID == nil || $0.id == paneID) && $0.tabs.contains(tab) }) else { return }
         panes[index].selected = tab; activePaneID = panes[index].id
     }
     public mutating func open(_ tab: WorkspaceTab, in paneID: UUID? = nil) {
+        defer { orderPinnedTabs() }
         if allTabs.contains(tab) {
             let target = panes.first { $0.id == (paneID ?? activePaneID) && $0.tabs.contains(tab) }
                 ?? panes.first { $0.tabs.contains(tab) }
@@ -103,6 +120,7 @@ public struct WorkspaceLayout: Codable, Equatable, Sendable {
             } else if let selected = panes[index].selected, case .start = selected,
                       let position = panes[index].tabs.firstIndex(of: selected) {
                 panes[index].tabs[position] = tab
+                if isPinned(selected) { pinnedTabs?.removeAll { $0 == selected }; pinnedTabs?.append(tab) }
             } else { panes[index].tabs.append(tab) }
             panes[index].selected = tab; activePaneID = panes[index].id
         } else {
@@ -119,6 +137,9 @@ public struct WorkspaceLayout: Codable, Equatable, Sendable {
         prune()
     }
     public mutating func prune() {
+        pinnedTabs = pinnedTabs?.filter { allTabs.contains($0) }
+        if pinnedTabs?.isEmpty == true { pinnedTabs = nil }
+        orderPinnedTabs()
         panes.removeAll { $0.tabs.isEmpty }
         root = root?.retaining(Set(panes.map(\.id)))
         if !panes.contains(where: { $0.id == activePaneID }) { activePaneID = panes.first?.id }

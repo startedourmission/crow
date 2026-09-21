@@ -11,14 +11,26 @@ export function frontmatter(source) {
   const rows = Object.entries(values).map(([name,value]) => {
     const node = doc.get(name, true);
     const plain = isScalar(node) && (!node.type || node.type === 'PLAIN');
-    const type = typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'number' :
-      Array.isArray(value) && value.every(v=>typeof v==='string') ? 'list' : value && typeof value === 'object' ? 'yaml' :
-      plain && /^\d{4}-\d{2}-\d{2}$/.test(value ?? '') ? 'date' : plain && /^\d{4}-\d{2}-\d{2}T/.test(value ?? '') ? 'datetime' : 'text';
-    return {name,value,type};
+    return {name,value,type:valueType(name,value,{plain})};
   });
   return {doc,rows,prefix:match[1],suffix:source.slice(match[1].length + match[2].length)};
 }
+export function valueType(name, value, {plain = true} = {}) {
+  if (typeof value === 'boolean') return 'boolean';
+  if (typeof value === 'number' || name === 'priority' && value != null && value !== '' && Number.isInteger(Number(value))) return 'number';
+  if (Array.isArray(value) && value.every(v => typeof v === 'string')) return 'list';
+  if (value instanceof Date && Number.isFinite(+value)) return 'date';
+  if (value && typeof value === 'object') return 'yaml';
+  const text = String(value ?? '');
+  const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(text), isoDateTime = /^\d{4}-\d{2}-\d{2}T/.test(text);
+  if ((plain || name === 'date') && isoDate) return 'date';
+  if ((plain || name === 'date') && isoDateTime) return 'datetime';
+  return 'text';
+}
 export function propertyValue(value, type) {
+  if (value instanceof Date && Number.isFinite(+value) && (type === 'date' || type === 'datetime' || type === 'text')) {
+    value = new Date(+value).toISOString().slice(0, type === 'date' ? 10 : 19);
+  }
   if (type === 'text') return Array.isArray(value) ? value.join('\n') : value != null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
   if (type === 'number') {
     if (typeof value === 'boolean' || value == null || String(value).trim() === '') throw Error('Enter a number before choosing Number.');

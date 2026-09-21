@@ -46,14 +46,20 @@ struct TerminalPanelView: View {
                 .crowForeground(CrowTheme.textDim)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(Array(model.current.snapshot.terminalIDs.enumerated()), id: \.element) { index, id in
+                    ForEach(model.orderedTerminalIDs, id: \.self) { id in
+                        let pinned = model.current.snapshot.layout?.isPinned(.terminal(id)) == true
                         Button { model.current.snapshot.selectedTerminalID = id; model.schedulePersist() } label: {
+                            HStack(spacing: 4) {
+                            if pinned { Image(systemName: "pin.fill").font(.system(size: 10)) }
                             if let agent = model.current.snapshot.agentTerminals.first(where: { $0.id == id }) {
                                 HStack(spacing: 4) { AgentProviderIcon(provider: agent.provider, size: 12); Text(agent.title) }
-                            } else { Text("\(index + 1)") }
+                            } else { Text("\((model.current.snapshot.terminalIDs.firstIndex(of: id) ?? 0) + 1)") }
+                            }
                         }
                             .crowForeground(id == model.current.snapshot.selectedTerminalID ? CrowTheme.accent : CrowTheme.textDim)
                             .crowContextMenu {
+                                Button(pinned ? "Unpin Tab" : "Pin Tab", systemImage: pinned ? "pin.slash" : "pin") { model.toggleTabPin(.terminal(id)) }
+                                Divider()
                                 Button("Close Terminal", role: .destructive) { model.requestTerminalClose(id) }
                                 if let pane = model.current.snapshot.layout?.panes.first(where: { $0.tabs.contains(.terminal(id)) }) {
                                     Button("Close Other Tabs", systemImage: "xmark.square") { model.closeOtherTabs(except: .terminal(id), in: pane.id) }
