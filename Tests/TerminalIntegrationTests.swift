@@ -310,6 +310,42 @@ final class TerminalIntegrationTests: XCTestCase {
         }
         XCTFail("Terminal output did not arrive within 7.5 seconds", file: file, line: line)
     }
+
+    @MainActor func testDeadProgramDoesNotKeepTypingMouseMotion() async throws {
+        XCTAssertEqual(TerminalInputCapture.action(mouse: .anyEvent, foreground: .shell, prompted: false), .application)
+        XCTAssertEqual(TerminalInputCapture.action(mouse: .buttonEventTracking, foreground: .shell, prompted: false), .application)
+        XCTAssertEqual(TerminalInputCapture.action(mouse: .anyEvent, foreground: .unknown, prompted: true), .hover)
+        XCTAssertEqual(TerminalInputCapture.action(mouse: .buttonEventTracking, foreground: .unknown, prompted: true), .none,
+            "Button tracking belongs to tmux and must survive a shell prompt inside it")
+        XCTAssertEqual(TerminalInputCapture.action(mouse: .anyEvent, foreground: .child, prompted: true), .none)
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Mouse", kind: .local, connection: .local),
+            directory: "/tmp", remote: nil, fontSize: 16)
+        let view = session.view
+        view.feedProcessOutput(Array("\u{1b}[?2004h\u{1b}[?1002h\u{1b}[?1006h\u{1b}]7;file://localhost/tmp\u{7}".utf8)[...])
+        session.releaseAbandonedInputCapture()
+        XCTAssertEqual(view.getTerminal().mouseMode, .buttonEventTracking)
+        XCTAssertTrue(view.getTerminal().bracketedPasteMode)
+        view.feedProcessOutput(Array("\u{1b}[?1003h\u{1b}[?1h\u{1b}[=1;1u\u{1b}]7;file://localhost/tmp\u{7}".utf8)[...])
+        session.releaseAbandonedInputCapture()
+        XCTAssertEqual(view.getTerminal().mouseMode, .off)
+        XCTAssertTrue(view.getTerminal().bracketedPasteMode, "Shell paste mode is not part of the dead program's tracking")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("crow-mouse-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let live = TerminalSession(id: UUID(), workspace: Workspace(name: "Mouse", kind: .local, connection: .local),
+            directory: directory.path, remote: nil, fontSize: 16)
+        live.shellEnvironment = ["PATH=/usr/bin:/bin", "LANG=en_US.UTF-8", "ZDOTDIR=" + directory.path, "TERM=xterm-256color"]
+        live.start()
+        defer { live.stop(); try? FileManager.default.removeItem(at: directory) }
+        func type(_ text: String) { live.view.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0)) }
+        type("printf '\\033[?1003h\\033[?1006h__SHELL_%s__\\n' DONE\n")
+        try await waitUntil { self.screen(live.view).contains("__SHELL_DONE__") }
+        XCTAssertEqual(live.view.getTerminal().mouseMode, .off, "The shell must not keep motion reports after it prints them")
+        type("/bin/sh -c 'printf \"\\033[?1003h\\033[?1006h\"; sleep 1'\n")
+        try await waitUntil { live.view.getTerminal().mouseMode == .anyEvent }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(live.view.getTerminal().mouseMode, .anyEvent, "A running program keeps motion tracking")
+        try await waitUntil { live.view.getTerminal().mouseMode == .off }
+    }
 }
 #endif
 

@@ -787,8 +787,9 @@ final class ExplorerFileDropView: NSView {
 #endif
 
 
-/// The map library is always available below the current workspace sidebar.
+/// The map library sits below the workspace sidebar while Crowmap is enabled in Settings.
 struct SplitSidebarView: View {
+    @Environment(AppModel.self) private var model
     @SceneStorage("crow.sidebar.crowmapFraction") private var fraction = 1.0 / 3.0
     @State private var dragStart: CGFloat?
     @State private var liveHeight: CGFloat?
@@ -798,15 +799,17 @@ struct SplitSidebarView: View {
             let height = min(available * 0.65, max(min(100, available / 3), liveHeight ?? available * CGFloat(fraction)))
             VStack(spacing: 0) {
                 SidebarView().frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-                ResizeHandle(axis: .vertical, label: "Resize Crowmap file list", onDrag: { delta in
-                    if dragStart == nil { dragStart = height }
-                    liveHeight = min(available * 0.65, max(min(100, available / 3), (dragStart ?? height) - delta))
-                }, onEnd: {
-                    if let liveHeight, available > 0 { fraction = Double(liveHeight / available) }
-                    dragStart = nil; liveHeight = nil
-                }).frame(height: ResizeHandle.thickness)
-                CrowmapSidebar().frame(height: height).clipped()
-                    .accessibilityIdentifier("crow.sidebar.crowmap")
+                if model.crowmapEnabled {
+                    ResizeHandle(axis: .vertical, label: "Resize Crowmap file list", onDrag: { delta in
+                        if dragStart == nil { dragStart = height }
+                        liveHeight = min(available * 0.65, max(min(100, available / 3), (dragStart ?? height) - delta))
+                    }, onEnd: {
+                        if let liveHeight, available > 0 { fraction = Double(liveHeight / available) }
+                        dragStart = nil; liveHeight = nil
+                    }).frame(height: ResizeHandle.thickness)
+                    CrowmapSidebar().frame(height: height).clipped()
+                        .accessibilityIdentifier("crow.sidebar.crowmap")
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }

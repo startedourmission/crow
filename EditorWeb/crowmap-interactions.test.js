@@ -1,11 +1,22 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {emptyMap,createProject,addNote,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,noteText,layoutMap,readNote,UNIT_WIDTH} from './crowmap-model.js';
+import {emptyMap,createProject,addNote,addMilestone,connectMilestones,disconnectMilestones,mainMilestoneIDs,noteText,layoutMap,readNote,UNIT_WIDTH,reorderMilestones,noteOrbitRadius} from './crowmap-model.js';
 import {linkedTransaction,resolveMap,deleteWorkNotes,moveNodes,movedDate,applyNoteDate,shiftFollowingDates,graphLinks} from './crowmap-links.js';
-import {floatOffset,nodeDegrees,nodeRadius} from './crowmap-motion.js';
-import {edgeScrollDelta} from './crowmap-gestures.js';
+import {floatOffset,nodeDegrees,nodeRadius,stepNotes} from './crowmap-motion.js';
+import {edgeScrollDelta,graphGestures} from './crowmap-gestures.js';
 const files=r=>Object.fromEntries(r.writes.map(w=>[w.name,w.text]));
 function fixture(){const result=linkedTransaction(createProject(emptyMap(),{title:'Project',date:'2026-10-01',priority:1,milestones:[{title:'A',date:'2026-10-10'},{title:'B',date:'2026-10-20'},{title:'C',date:'2026-10-30'}]}));return {...result,texts:files(result)};}
+test('graphGestures teardown unbinds canvas pointer handlers',()=>{
+ const listeners=[];
+ const canvas={viewBox:{baseVal:{x:0,y:0,width:1,height:1}},getBoundingClientRect:()=>({left:0,top:0,width:1,height:1}),
+  addEventListener(type,fn,opts){listeners.push(fn);opts?.signal?.addEventListener('abort',()=>{const i=listeners.indexOf(fn);if(i>=0)listeners.splice(i,1);});},
+  removeEventListener(type,fn){const i=listeners.indexOf(fn);if(i>=0)listeners.splice(i,1);}};
+ const stub=()=>{};
+ const stop=graphGestures({canvas,viewport:{getBoundingClientRect:()=>({left:0,top:0,right:1,bottom:1}),scrollLeft:0,scrollTop:0},notes:[],selection:new Set(),doc:{anchors:[],notes:[],edges:[]},layout:{points:new Map(),notePoints:new Map(),width:1,height:1,priorityY:()=>0,priorityAt:()=>1,x:()=>0,dateAt:()=>'2026-01-01',dateBounds:()=>({left:0,right:1})},preview:stub,pause:stub,resume:stub,onSelect:stub,onConnect:stub,onMove:stub,onReorder:stub});
+ assert.equal(listeners.length,2);
+ stop();assert.equal(listeners.length,0);
+ stop();assert.equal(listeners.length,0);
+});
 test('Dragging near a viewport edge produces a scroll delta toward that edge',()=>{
  const box={left:0,top:0,right:400,bottom:300};
  assert.deepEqual(edgeScrollDelta(200,150,box),{x:0,y:0});
@@ -114,9 +125,13 @@ test('Dragging a milestone earlier pulls crossed previous milestones onto that d
 });
 test('Date moves reattach work without copying it and milestone dates respect attached work',()=>{
  let {doc,texts}=fixture();let r=linkedTransaction(addNote(doc,{title:'Work',date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;const note=doc.notes[0],milestone=doc.anchors[1];
- assert.equal(movedDate(doc,milestone.id,'2026-10-19'),'2026-10-15');
+ assert.equal(movedDate(doc,milestone.id,'2026-10-19'),'2026-10-19');
  assert.equal(movedDate(doc,milestone.id,'2026-10-25'),'2026-10-25');
- r=moveNodes(doc,[note.id],{days:10},texts);Object.assign(texts,files(r));assert.equal(r.doc.notes.length,1);assert.equal(r.doc.notes[0].id,note.id);assert.equal(r.doc.notes[0].date,'2026-10-25');assert.equal(r.doc.notes[0].attach.id,doc.edges[2].id);assert.equal(readNote(texts[note.note]).meta.date,'2026-10-25');assert.deepEqual(resolveMap(r.doc,texts),r.doc);
+ r=moveNodes(doc,[milestone.id],{days:9},texts);Object.assign(texts,files(r));
+ assert.equal(r.doc.anchors.find(a=>a.id===milestone.id).date,'2026-10-19');
+ assert.equal(r.doc.notes[0].date,'2026-10-19');
+ doc=r.doc;Object.assign(texts,files(r));
+ r=moveNodes(doc,[r.doc.notes[0].id],{days:6},texts);Object.assign(texts,files(r));assert.equal(r.doc.notes.length,1);assert.equal(r.doc.notes[0].id,note.id);assert.equal(r.doc.notes[0].date,'2026-10-25');assert.equal(r.doc.notes[0].attach.id,doc.edges[2].id);assert.equal(readNote(files(r)[note.note]??texts[note.note]).meta.date,'2026-10-25');assert.deepEqual(resolveMap(r.doc,{...texts,...files(r)}),r.doc);
 });
 test('Priority moves cross projects and date spacing keeps attachments aligned',()=>{
  let {doc,texts}=fixture();let r=linkedTransaction(createProject(doc,{title:'Other',date:'2026-10-01',priority:2,milestones:[{title:'End',date:'2026-11-01'}]},Object.keys(texts)),texts);Object.assign(texts,files(r));doc=r.doc;
@@ -129,16 +144,40 @@ test('Bulk deletion handles mutually linked notes atomically and keeps surviving
 });
 test('Repeated links do not inflate node size and floating stays close to the dated position',()=>{
  let {doc,texts}=fixture();for(const [title,body]of [['Work',''],['Link','[[Work]] [[Work]]']]){const r=linkedTransaction(addNote(doc,{title,body,date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;}
- const degree=nodeDegrees(doc,graphLinks(doc,texts));assert.equal(degree.get(doc.notes[0].id),2);assert(nodeRadius('note',5)>nodeRadius('note',1));for(let t=0;t<100;t++){const offset=floatOffset('work',t);assert(Math.abs(offset.x)<44);assert(Math.abs(offset.y)<=5);}assert.notDeepEqual(floatOffset('work',0),floatOffset('work',2));
+ const degree=nodeDegrees(doc,graphLinks(doc,texts));assert.equal(degree.get(doc.notes[0].id),2);assert(nodeRadius('note',5)>nodeRadius('note',1));for(let t=0;t<100;t++){const offset=floatOffset('work',t,10);assert(Math.abs(offset.x)<=2.5);assert(Math.abs(offset.y)<=2.5);}
+ assert.deepEqual(floatOffset('work',1,0),{x:0,y:0});
+});
+test('Same-date work notes sit on a ring around the edge, and tension 0 pins them',()=>{
+ let {doc,texts}=fixture();
+ for(const title of ['One','Two','Three','Four']){const r=linkedTransaction(addNote(doc,{title,date:'2026-10-15',attach:{kind:'edge',id:doc.edges[1].id}}),texts);Object.assign(texts,files(r));doc=r.doc;}
+ const laid=layoutMap(doc,{noteTension:10}),notes=[...laid.notePoints.values()];
+ const radii=notes.map(n=>Math.hypot(n.x-n.origin.x,n.y-n.origin.y));
+ assert(radii.every(r=>Math.abs(r-radii[0])<1e-6));assert.equal(radii[0],10);
+ assert.equal(new Set(notes.map(n=>Math.atan2(n.y-n.origin.y,n.x-n.origin.x).toFixed(3))).size,4);
+ assert(notes.some(n=>n.y<n.origin.y));assert(notes.some(n=>n.y>n.origin.y));
+ const tight=layoutMap(doc,{noteTension:4}),loose=layoutMap(doc,{noteTension:24});
+ const rt=Math.hypot([...tight.notePoints.values()][0].x-[...tight.notePoints.values()][0].origin.x,[...tight.notePoints.values()][0].y-[...tight.notePoints.values()][0].origin.y);
+ const rl=Math.hypot([...loose.notePoints.values()][0].x-[...loose.notePoints.values()][0].origin.x,[...loose.notePoints.values()][0].y-[...loose.notePoints.values()][0].origin.y);
+ assert.equal(rt,4);assert.equal(rl,24);assert(rt<rl);assert.equal(noteOrbitRadius(4,4),4);assert.equal(noteOrbitRadius(4,0),0);
+ const pinned=layoutMap(doc,{noteTension:0});
+ assert([...pinned.notePoints.values()].every(n=>n.x===n.origin.x&&n.y===n.origin.y));
+});
+test('Nearby work notes push each other apart',()=>{
+ const a={id:'a',x:0,y:0,origin:{x:0,y:0},orbit:14,point:{x:0,y:0},vx:0,vy:0};
+ const b={id:'b',x:10,y:0,origin:{x:56,y:0},orbit:14,point:{x:10,y:0},vx:0,vy:0};
+ for(let i=0;i<50;i++)stepNotes([a,b]);
+ assert(Math.hypot(a.point.x-b.point.x,a.point.y-b.point.y)>12);
 });
 
 test('A long date range keeps one tick per day at a fixed column width',()=>{
  const r=createProject(emptyMap(),{title:'Span',date:'2000-01-01',priority:1,milestones:[{title:'End',date:'2020-01-01'}]});
  const layout=layoutMap(r.doc,{unit:'day'});
- assert(layout.ticks.length>7000);
- assert(layout.ticks.every((t,i)=>!i||Math.abs(t.x-layout.ticks[i-1].x-UNIT_WIDTH)<1e-6));
+ assert(layout.tickCount>7000);
+ assert.equal(layout.tickAt(1).x-layout.tickAt(0).x,UNIT_WIDTH);
+ assert.equal(layout.tickAt(layout.tickCount-1).x-layout.tickAt(layout.tickCount-2).x,UNIT_WIDTH);
  assert.equal(layout.x('2000-01-02')-layout.x('2000-01-01'),UNIT_WIDTH);
- assert(layout.ticks.some(t=>t.date==='2010-06-15'));
+ const i=Math.round((layout.x('2010-06-15')-layout.tickAt(0).x)/UNIT_WIDTH);
+ assert.equal(layout.tickAt(i).date,'2010-06-15');
  assert.equal(layout.dateAt(layout.x('2010-06-15')),'2010-06-15');
 });
 test('Date columns keep a fixed unit width and round-trip every date',()=>{
@@ -201,12 +240,13 @@ test('Consecutive same-date main milestones have separate vertical positions and
  assert.equal(new Set(nodes.map(n=>layoutMap(r.doc,{unit:'year'}).points.get(n.id).y)).size,3);
 });
 
-test('Same-date ordering only changes view state and survives reload without modifying Markdown',async()=>{
- const {reorderMilestones}=await import('./crowmap-model.js');let {doc,texts}=fixture();let r=linkedTransaction(addMilestone(doc,doc.anchors[1].id),texts);Object.assign(texts,files(r));doc=r.doc;const a=doc.anchors.at(-1);
- r=linkedTransaction(addMilestone(doc,doc.anchors[1].id,Object.keys(texts)),texts);Object.assign(texts,files(r));doc=r.doc;const b=doc.anchors.at(-1),before=structuredClone(doc),old=layoutMap(doc);
- r=reorderMilestones(doc,a.id,b.id);assert.deepEqual(r.writes,[]);const restored=resolveMap(r.doc,texts),layout=layoutMap(restored);
- assert.equal(layout.points.get(a.id).y,old.points.get(b.id).y);assert.equal(layout.points.get(b.id).y,old.points.get(a.id).y);
- assert.deepEqual(restored.anchors,before.anchors);assert.deepEqual(restored.edges,before.edges);assert.deepEqual(doc,before);
+test('Same-date swap rewrites previous/next so the timeline order changes',()=>{
+ let {doc,texts}=fixture();const a=doc.anchors[1],b=doc.anchors[2];
+ let r=moveNodes(doc,[b.id],{days:-10},texts);Object.assign(texts,files(r));doc=r.doc;
+ assert(doc.edges.some(e=>e.from===a.id&&e.to===b.id));
+ r=reorderMilestones(doc,a.id,b.id);assert(r.doc.edges.some(e=>e.from===b.id&&e.to===a.id));assert(!r.doc.edges.some(e=>e.from===a.id&&e.to===b.id));
+ const linked=linkedTransaction(r,texts);Object.assign(texts,files(linked));
+ assert(readNote(texts[a.note]).meta.previous.some(value=>value.includes(doc.anchors.find(n=>n.id===b.id).title)||value.includes(b.note.replace(/\.md$/,''))));
  assert.throws(()=>reorderMilestones(doc,a.id,doc.anchors[0].id),/same date/);
 });
 

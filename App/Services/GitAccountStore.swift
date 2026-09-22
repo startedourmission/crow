@@ -59,17 +59,36 @@ final class GitAccountStore {
     private(set) var account: GitHubAccount?
     private(set) var storageError: String?
     private let key: String
+    /// The login is not secret. Settings can show it without unlocking the Keychain.
+    private var loginKey: String { "crow.git-login." + key }
 
     init(key: String = "git-github-account-v1") { self.key = key }
 
     func credential() throws -> GitAccountCredential? {
-        guard let data = try SecureStore.data(for: key) else { return nil }
-        return try JSONDecoder().decode(GitAccountCredential.self, from: data)
+        guard let data = try SecureStore.data(for: key) else { remember(nil); return nil }
+        let credential = try JSONDecoder().decode(GitAccountCredential.self, from: data)
+        remember(credential.account.login)
+        return credential
     }
 
+    /// Display state only. Does not read the Keychain, so opening Settings cannot prompt.
     func reload() {
-        do { account = try credential()?.account; storageError = nil }
-        catch { account = nil; storageError = error.localizedDescription }
+        storageError = nil
+        if let login = UserDefaults.standard.string(forKey: loginKey), !login.isEmpty {
+            account = GitHubAccount(login: login, name: nil)
+        } else {
+            account = nil
+        }
+    }
+
+    private func remember(_ login: String?) {
+        if let login, !login.isEmpty {
+            UserDefaults.standard.set(login, forKey: loginKey)
+            account = GitHubAccount(login: login, name: nil)
+        } else {
+            UserDefaults.standard.removeObject(forKey: loginKey)
+            account = nil
+        }
     }
 
     func save(accountID: String, token: String) throws {
@@ -85,11 +104,13 @@ final class GitAccountStore {
         }
         let credential = GitAccountCredential(account: GitHubAccount(login: login, name: nil), token: token)
         try SecureStore.set(JSONEncoder().encode(credential), for: key)
-        account = credential.account; storageError = nil
+        remember(login)
+        storageError = nil
     }
 
     func remove() throws {
         try SecureStore.remove(key)
-        account = nil; storageError = nil
+        remember(nil)
+        storageError = nil
     }
 }

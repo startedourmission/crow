@@ -126,7 +126,10 @@ final class GitAccountTests: XCTestCase {
         try SecureStore.set(Data(#"{"account":{"login":"legacy","name":"Existing Account"},"token":"existing-token"}"#.utf8), for: key)
         let store = GitAccountStore(key: key)
         store.reload()
-        XCTAssertEqual(store.account?.login, "legacy")
+        XCTAssertNil(store.account, "Opening the saved-account display must not read the Keychain")
+        XCTAssertEqual(try store.credential()?.account.login, "legacy")
         XCTAssertEqual(try store.credential()?.token, "existing-token")
+        store.reload()
+        XCTAssertEqual(store.account?.login, "legacy")
     }
 }

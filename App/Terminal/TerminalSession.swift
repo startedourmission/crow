@@ -17,6 +17,25 @@ import AppKit
 import UIKit
 #endif
 
+enum TerminalInputCapture {
+    /// The program that turned tracking on has exited back to a local shell.
+    static let applicationRelease = "\u{1b}[?9l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[?1l\u{1b}[>0s\u{1b}[=0;1u\u{1b}[<100u"
+    /// Any-motion tracking only. Button tracking (tmux) stays in place.
+    static let hoverRelease = "\u{1b}[?1003l\u{1b}[?1004l"
+
+    enum Action: Equatable { case none, hover, application }
+
+    enum Foreground: Equatable { case shell, child, unknown }
+
+    static func action(mouse: SwiftTerm.Terminal.MouseMode, foreground: Foreground, prompted: Bool) -> Action {
+        if mouse != .off, foreground == .shell { return .application }
+        // A remote prompt cannot see the process group. A local child still
+        // owns the terminal, so its own directory report must not cancel tracking.
+        if mouse == .anyEvent, prompted, foreground != .child { return .hover }
+        return .none
+    }
+}
+
 @MainActor @Observable
 final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalViewDelegate {
     let id: UUID
@@ -77,7 +96,11 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var systemSSH: SystemSSHSpec?
     var shellEnvironment: [String]?
     @ObservationIgnored private var imageKeyMonitor: Any?
+    @ObservationIgnored private var inputCaptureMonitor: Any?
+    private var shellPrompted = false
     @ObservationIgnored private var awaitingTmuxCommand = false
+    @ObservationIgnored private var pendingPTYSize: (Int, Int)?
+    @ObservationIgnored private var liveResizeObserver: NSObjectProtocol?
     private var stoppingProcessID: pid_t?
     #endif
     private var shellTask: Task<Void, Never>?
@@ -113,7 +136,10 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         if let local = view as? CrowLocalTerminalView {
             local.processDelegate = self
             local.onInput = { [weak self] in self?.receivedInput($0) }
-            local.onOutput = { [weak self] in self?.agentDidReceiveOutput() }
+            local.onOutput = { [weak self] in
+                self?.releaseAbandonedInputCapture()
+                self?.agentDidReceiveOutput()
+            }
             return
         }
         #else
@@ -177,6 +203,17 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         imageKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.view.window?.firstResponder === self.view else { return event }
             return self.handleTerminalKey(event) ? nil : event
+        }
+        // Pointer motion is delivered before the view, so a dead session cannot
+        // turn the first move into text.
+        inputCaptureMonitor = NSEvent.addLocalMonitorForEvents(matching: [
+            .mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+            .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+            .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel
+        ]) { [weak self] event in
+            guard let self, self.view.getTerminal().mouseMode != .off else { return event }
+            self.releaseAbandonedInputCapture()
+            return event
         }
         if let systemSSH, let local = view as? CrowLocalTerminalView {
             let args: [String]
@@ -265,6 +302,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                     status = "Shell exited"
                 } catch { if !Task.isCancelled { status = "SSH: \(error.localizedDescription)"; view.feed(text: "\r\n\(status)\r\n") } }
                 writer = nil; running = false
+                releaseAbandonedInputCapture(force: true)
             }
         }
     }
@@ -275,6 +313,9 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         imagePasteTask?.cancel(); imagePasteTask = nil; imagePasteInProgress = false
         #if os(macOS)
         if let imageKeyMonitor { NSEvent.removeMonitor(imageKeyMonitor); self.imageKeyMonitor = nil }
+        if let inputCaptureMonitor { NSEvent.removeMonitor(inputCaptureMonitor); self.inputCaptureMonitor = nil }
+        if let liveResizeObserver { NotificationCenter.default.removeObserver(liveResizeObserver); self.liveResizeObserver = nil }
+        pendingPTYSize = nil
         #endif
         shellTask?.cancel(); shellTask = nil; inputTask?.cancel(); inputTask = nil; writer = nil
         #if os(macOS)
@@ -307,7 +348,11 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
         }
         throw CommandError("The agent is still stopping. Retry deleting its saved session in a moment.")
     }
-    private func receive(_ bytes: [UInt8]) { view.feedProcessOutput(bytes[...]); agentDidReceiveOutput() }
+    private func receive(_ bytes: [UInt8]) {
+        view.feedProcessOutput(bytes[...])
+        releaseAbandonedInputCapture()
+        agentDidReceiveOutput()
+    }
 
     private func agentDidReceiveOutput() {
         guard agentProvider != nil else { return }
@@ -482,8 +527,32 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     }
     func sizeChanged(source: SwiftTerm.TerminalView, newCols: Int, newRows: Int) {
         guard let writer else { return }
+        #if os(macOS)
+        if source.window?.inLiveResize == true {
+            pendingPTYSize = (newCols, newRows)
+            if liveResizeObserver == nil {
+                liveResizeObserver = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didEndLiveResizeNotification, object: source.window, queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in self?.flushPendingPTYSize() }
+                }
+            }
+            return
+        }
+        #endif
         Task { try? await writer.value.changeSize(cols: newCols, rows: newRows, pixelWidth: 0, pixelHeight: 0) }
     }
+    #if os(macOS)
+    private func flushPendingPTYSize() {
+        if let observer = liveResizeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            liveResizeObserver = nil
+        }
+        guard let writer, let size = pendingPTYSize else { return }
+        pendingPTYSize = nil
+        Task { try? await writer.value.changeSize(cols: size.0, rows: size.1, pixelWidth: 0, pixelHeight: 0) }
+    }
+    #endif
     private func recordAgentTitle(_ value: String) {
         let value = String(value.split(whereSeparator: { $0.isNewline }).joined(separator: " ").prefix(150))
         guard !value.isEmpty, agentConversationTitle != value else { return }
@@ -508,8 +577,46 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     }
     func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) { receiveTerminalTitle(title) }
     func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
+        // OSC 7 is the shell prompt hook. A full-screen program does not emit it.
+        shellPrompted = true
         currentDirectory = SSHCommand.terminalDirectory(directory)
         if currentDirectory != nil { shellWorking = false }
+    }
+
+    /// Drop mouse and focus tracking left behind when a program dies with the SSH
+    /// session. Otherwise pointer motion is typed into the shell as `35;x;yM`.
+    func releaseAbandonedInputCapture(force: Bool = false) {
+        let terminal = view.getTerminal()
+        let prompted = shellPrompted
+        shellPrompted = false
+        if !force, terminal.mouseMode == .off { return }
+        let action: TerminalInputCapture.Action
+        if force {
+            let owned = terminal.mouseMode != .off || terminal.applicationCursor || terminal.mouseShiftCapture
+                || !terminal.keyboardEnhancementFlags.isEmpty
+            action = owned ? .application : .none
+        } else {
+            action = TerminalInputCapture.action(mouse: terminal.mouseMode, foreground: foregroundOwner, prompted: prompted)
+        }
+        switch action {
+        case .none: return
+        case .hover: view.feedProcessOutput(Array(TerminalInputCapture.hoverRelease.utf8)[...])
+        case .application: view.feedProcessOutput(Array(TerminalInputCapture.applicationRelease.utf8)[...])
+        }
+    }
+
+    private var foregroundOwner: TerminalInputCapture.Foreground {
+        #if os(macOS)
+        // An SSH process is the session itself: its process group stays put while
+        // the remote program exits, so only the remote shell's prompt can tell.
+        guard systemSSH == nil, let process = (view as? CrowLocalTerminalView)?.process, process.running,
+              process.shellPid > 0, process.childfd >= 0 else { return .unknown }
+        let foreground = tcgetpgrp(process.childfd), shell = getpgid(process.shellPid)
+        guard foreground > 0, shell > 0 else { return .unknown }
+        return foreground == shell ? .shell : .child
+        #else
+        return .unknown
+        #endif
     }
     func scrolled(source: SwiftTerm.TerminalView, position: Double) {}
     func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {}
@@ -603,7 +710,22 @@ class CrowIOSTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, SnippetIn
 #endif
 
 #if os(macOS)
+private enum TerminalWindowChrome {
+    static let resizeInset: CGFloat = 5
+    static func claimsPoint(_ point: NSPoint, in view: NSView) -> Bool {
+        guard let window = view.window, window.styleMask.contains(.resizable), !window.styleMask.contains(.fullScreen),
+              let content = window.contentView else { return true }
+        if window.inLiveResize { return false }
+        let p = view.convert(point, to: content), b = content.bounds, inset = resizeInset
+        return p.x > inset && p.y > inset && p.x < b.maxX - inset && p.y < b.maxY - inset
+    }
+}
+
 private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, FileDropTerminal, MarkedTextTerminal {
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+    override func hitTest(_ point: NSPoint) -> NSView? { TerminalWindowChrome.claimsPoint(point, in: self) ? super.hitTest(point) : nil }
+    override func viewWillStartLiveResize() { window?.disableCursorRects(); super.viewWillStartLiveResize() }
+    override func viewDidEndLiveResize() { super.viewDidEndLiveResize(); window?.enableCursorRects(); window?.resetCursorRects() }
     var onFileDrop: ((NSPasteboard) -> Bool)?
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         TerminalFileDrop.accepts(sender.draggingPasteboard) ? .copy : []
@@ -640,6 +762,10 @@ private final class CrowMacTerminalView: SwiftTerm.TerminalView, ImagePasteTermi
 }
 
 private final class CrowLocalTerminalView: LocalProcessTerminalView, ImagePasteTerminal, FileDropTerminal, MarkedTextTerminal {
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+    override func hitTest(_ point: NSPoint) -> NSView? { TerminalWindowChrome.claimsPoint(point, in: self) ? super.hitTest(point) : nil }
+    override func viewWillStartLiveResize() { window?.disableCursorRects(); super.viewWillStartLiveResize() }
+    override func viewDidEndLiveResize() { super.viewDidEndLiveResize(); window?.enableCursorRects(); window?.resetCursorRects() }
     var onFileDrop: ((NSPasteboard) -> Bool)?
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         TerminalFileDrop.accepts(sender.draggingPasteboard) ? .copy : []
@@ -692,6 +818,7 @@ extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) { receiveTerminalTitle(title) }
     func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) {
         running = false; status = "Exited (\(exitCode.map(String.init) ?? "unknown"))"
+        releaseAbandonedInputCapture(force: true)
     }
 }
 #endif

@@ -11,6 +11,52 @@ import WebKit
         root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-file-actions-" + UUID().uuidString)
         model = AppModel(vaultURL: root)
     }
+    func testCrowmapSidebarMilestonesAreUpcomingByDateWithTimelineColor() {
+        let source = """
+        {"projects":[{"id":"p1","title":"Alpha","color":"#476fa8"},{"id":"p2","title":"Beta","color":"#9d6b48"}],"anchors":[
+          {"id":"s","title":"Alpha","date":"2026-01-01","kind":"start","project":"p1","priority":1},
+          {"id":"past","title":"Gone","date":"2026-09-01","kind":"milestone","project":"p1","priority":1},
+          {"id":"far","title":"Later","date":"2026-12-01","kind":"milestone","project":"p1","priority":1},
+          {"id":"near","title":"Soon","date":"2026-09-22","kind":"milestone","project":"p1","priority":1},
+          {"id":"today","title":"Now","date":"2026-09-21","kind":"milestone","project":"p2","priority":1},
+          {"id":"beta","title":"Beta soon","date":"2026-09-23","kind":"milestone","project":"p2","priority":2}
+        ]}
+        """
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 9, day: 21))!
+        let items = CrowmapStore.upcomingMilestones(in: source, today: today)
+        XCTAssertEqual(items.map(\.title), ["Now", "Soon", "Beta soon", "Later"])
+        XCTAssertEqual(items.map(\.daysFromToday), [0, 1, 2, 71])
+        XCTAssertEqual(items.map(\.projectTitle), ["Beta", "Alpha", "Beta", "Alpha"])
+        XCTAssertEqual(items.map(\.priority), [1, 1, 2, 1])
+        XCTAssertEqual(items[0].relative, "Today")
+        XCTAssertEqual(items[1].relative, "Tomorrow")
+        XCTAssertEqual(items.map(\.color), ["#9d6b48", "#476fa8", "#9d6b48", "#476fa8"])
+        XCTAssertFalse(items.contains { $0.title == "Gone" || $0.title == "Alpha" })
+    }
+    func testCrowmapViewPrefsAreRememberedPerMap() throws {
+        model.crowmapEnabled = true
+        model.crowmap = CrowmapStore(root: root.appendingPathComponent("Maps"))
+        model.createCrowmap()
+        let url = try XCTUnwrap(model.crowmap.selected)
+        var prefs = model.crowmap.viewPrefs(for: url)
+        XCTAssertEqual(prefs.dateUnit, "day")
+        XCTAssertEqual(prefs.edgeScale, 1)
+        XCTAssertEqual(prefs.priorityGap, 80)
+        XCTAssertEqual(prefs.noteTension, 10)
+        XCTAssertTrue(prefs.showHistory)
+        XCTAssertTrue(prefs.showNoteTitles)
+        prefs.dateUnit = "week"; prefs.edgeScale = 2.5; prefs.priorityGap = 120; prefs.noteTension = 0; prefs.showHistory = false; prefs.showNoteTitles = false
+        model.crowmap.setViewPrefs(prefs, for: url)
+        let loaded = model.crowmap.viewPrefs(for: url)
+        XCTAssertEqual(loaded.dateUnit, "week")
+        XCTAssertEqual(loaded.edgeScale, 2.5)
+        XCTAssertEqual(loaded.priorityGap, 120)
+        XCTAssertEqual(loaded.noteTension, 0)
+        XCTAssertFalse(loaded.showHistory)
+        XCTAssertFalse(loaded.showNoteTitles)
+        UserDefaults.standard.removeObject(forKey: "crow.crowmap.view:" + url.standardizedFileURL.path)
+    }
     func testCrowmapPanelStaysHiddenUntilEnabled() {
         XCTAssertFalse(model.crowmapEnabled)
         model.showCrowmap()
@@ -203,6 +249,32 @@ import WebKit
         let retained = try FileManager.default.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil)
         XCTAssertEqual(Set(try retained.map { try TextFiles.read($0) }), Set(names.map { $0 + " body" }))
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(store.selected).path))
+    }
+
+    func testCrowmapAllowsDeletingASingleMilestoneFile() throws {
+        let store = CrowmapStore(root: root.appendingPathComponent("Crowmap")); try store.create("DeleteOne")
+        var doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.source.utf8)) as? [String: Any])
+        doc["version"] = 1
+        doc["projects"] = [["id": "project", "route": ["start", "mid", "end"]]]
+        doc["anchors"] = [
+            ["id": "start", "project": "project", "kind": "start", "note": "Start.md"],
+            ["id": "mid", "project": "project", "kind": "milestone", "note": "Mid.md"],
+            ["id": "end", "project": "project", "kind": "milestone", "note": "End.md"]
+        ]
+        let source = String(decoding: try JSONSerialization.data(withJSONObject: doc), as: UTF8.self)
+        try store.save(source, expected: store.source, writes: ["Start.md", "Mid.md", "End.md"].map { ["name": $0, "text": $0 + " body"] })
+        var kept = doc
+        kept["anchors"] = [
+            ["id": "start", "project": "project", "kind": "start", "note": "Start.md"],
+            ["id": "end", "project": "project", "kind": "milestone", "note": "End.md"]
+        ]
+        kept["projects"] = [["id": "project", "route": ["start", "end"]]]
+        let next = String(decoding: try JSONSerialization.data(withJSONObject: kept), as: UTF8.self)
+        XCTAssertThrowsError(try store.save(next, expected: source, writes: [], deletes: [["name": "Start.md", "expected": "Start.md body"]]))
+        try store.save(next, expected: source, writes: [], deletes: [["name": "Mid.md", "expected": "Mid.md body"]])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.noteRoot.appendingPathComponent("Mid.md").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.noteRoot.appendingPathComponent("Start.md").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.noteRoot.appendingPathComponent("End.md").path))
     }
 
     func testCrowmapCopiesMarkdownFilesWithoutFollowingLinks() throws {

@@ -797,10 +797,31 @@ private struct WorkspacePaneView: View {
         #endif
     }
     private func terminal(_ id: UUID) -> some View {
+        let _ = model.current.terminalGeneration
         let session = model.terminal(id, in: model.current)
+        let reverseDisconnected = session.startupUnavailableMessage != nil
+            && model.current.snapshot.agentTerminals.first { $0.id == id }?.reverseHostID != nil
         return VStack(spacing: 0) {
             TerminalViewHost(session: session, fontSize: model.settings.terminalFontSize)
                 .id(session.instanceID).task(id: session.instanceID) { session.start() }
+                .overlay {
+                    if reverseDisconnected {
+                        VStack(spacing: 12) {
+                            Text("Reverse agent disconnected")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("The client workspace tunnel is closed.")
+                                .font(.system(size: 12)).foregroundStyle(CrowTheme.textDim)
+                            Button("Reconnect", systemImage: "arrow.clockwise") {
+                                model.requestReverseAgent(in: pane.id, replacing: id)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("crow.reverse-agent.reconnect")
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(CrowTheme.bg0.opacity(0.94))
+                    }
+                }
                 .task(id: model.current.snapshot.layout?.activePaneID == pane.id) {
                     guard model.current.snapshot.layout?.activePaneID == pane.id else { return }
                     await Task.yield()

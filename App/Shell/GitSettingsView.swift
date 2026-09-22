@@ -21,7 +21,7 @@ struct GitAccountSettings: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Token").font(.caption).foregroundStyle(CrowTheme.textDim)
-                        SecureField("Personal access token", text: $token)
+                        SecureField(model.gitAccounts.account == nil ? "Personal access token" : "New token", text: $token)
                             .labelsHidden().crowSettingsInput()
                             .accessibilityIdentifier("crow.git-token")
                     }
@@ -33,6 +33,17 @@ struct GitAccountSettings: View {
                                     accountID = ""; token = ""; error = nil; message = "Saved credentials deleted."
                                 } catch { self.error = error.localizedDescription }
                             }
+                        } else {
+                            Button("Load Saved Account") {
+                                do {
+                                    let saved = try model.gitAccounts.credential()
+                                    accountID = saved?.account.login ?? ""
+                                    token = ""
+                                    error = nil
+                                    message = saved == nil ? "No saved GitHub account." : "Saved account loaded. The token stays in the Keychain."
+                                } catch { self.error = error.localizedDescription }
+                            }
+                            .accessibilityIdentifier("crow.git-account-load")
                         }
                         Spacer()
                         Button("Save") {
@@ -52,18 +63,15 @@ struct GitAccountSettings: View {
                     .textInputAutocapitalization(.never)
                     #endif
             }
-            Text("Stored in this device’s Keychain. Saving does not sign in, check the token, or change terminal Git authentication.")
+            Text("Stored in this device’s Keychain. Opening Settings does not read it. The token is read only when you load, replace, or delete the account, or when a feature uses it.")
                 .font(.caption).foregroundStyle(CrowTheme.textDim)
             if let message { Text(message).font(.caption).foregroundStyle(CrowTheme.accent) }
             if let error { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled) }
         }
         .onAppear {
             model.gitAccounts.reload()
-            do {
-                let saved = try model.gitAccounts.credential()
-                accountID = saved?.account.login ?? ""; token = saved?.token ?? ""
-                error = nil
-            } catch { self.error = error.localizedDescription }
+            accountID = model.gitAccounts.account?.login ?? ""
+            token = ""
         }
         .onDisappear { token = "" }
     }

@@ -242,6 +242,66 @@ struct ReverseAgentRequest: Identifiable {
     var tmuxTerminalID: UUID?
 }
 
+enum ReverseSessionResume {
+    /// The CLI conversation to reopen for one disconnected reverse-agent tab.
+    /// Prompt and title matches have to be unique so another open tab does not
+    /// receive this conversation. Otherwise the newest session in this tab's
+    /// server folder is the one it was using.
+    static func sessionID(provider: AgentProvider, directory: String, createdAt: Date?, firstPrompt: String?,
+                          conversationTitle: String?, entries: [AgentHistoryEntry], serverTime: Double,
+                          claimed: Set<String>, unboundSibling: Bool, excluding excluded: String? = nil) -> String? {
+        let root = normalizedPath(directory)
+        let available = entries.filter { entry in
+            guard entry.provider == provider, entry.id != excluded, !claimed.contains(entry.id), let cwd = entry.cwd else { return false }
+            return normalizedPath(cwd) == root
+        }
+        let prompt = firstPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !prompt.isEmpty, let createdAt {
+            let floor = createdAt.timeIntervalSince1970 + (serverTime - Date().timeIntervalSince1970) - 2
+            let matches = available.filter { entry in
+                guard let started = entry.started, started >= floor else { return false }
+                return entry.first.text.trimmingCharacters(in: .whitespacesAndNewlines) == prompt
+            }
+            if matches.count == 1 { return matches[0].id }
+        }
+        let title = conversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !title.isEmpty {
+            let matches = available.filter { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == title }
+            if matches.count == 1 { return matches[0].id }
+        }
+        guard !unboundSibling else { return nil }
+        let floor = createdAt.map { $0.timeIntervalSince1970 + (serverTime - Date().timeIntervalSince1970) - 2 }
+        let born = floor.map { value in available.filter { ($0.started ?? $0.modified) >= value } } ?? []
+        return (born.isEmpty ? available : born).max { $0.modified < $1.modified }?.id
+    }
+
+    /// Keep the tab's name and pin. A resumed conversation also keeps its title and prompt.
+    static func reconnectedAgent(_ previous: AgentTerminal, provider: AgentProvider, directory: String, hostID: HostID,
+                                 serverDirectory: String, sessionID: String?, fork: Bool) -> AgentTerminal {
+        var agent = previous
+        agent.provider = provider
+        agent.directory = directory
+        agent.reverseHostID = hostID
+        agent.reverseServerDirectory = serverDirectory
+        let resumed = sessionID != nil && !fork
+        agent.sessionID = sessionID
+        agent.forkSession = sessionID == nil ? nil : fork
+        agent.historySessionID = resumed ? sessionID : nil
+        if !resumed {
+            agent.conversationTitle = nil
+            agent.firstPrompt = nil
+            agent.createdAt = Date()
+        }
+        return agent
+    }
+
+    static func normalizedPath(_ path: String) -> String {
+        var value = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).resolvingSymlinksInPath().path
+        while value.count > 1, value.hasSuffix("/") { value.removeLast() }
+        return value
+    }
+}
+
 extension AppModel {
     func requestReverseAgent(in paneID: UUID, replacing terminalID: UUID? = nil) {
         guard !current.snapshot.workspace.isRemote else { return }
@@ -260,6 +320,44 @@ extension AppModel {
         guard let remote = states.first(where: { $0.snapshot.workspace.hostID == hostID && $0.remote?.isConnected == true }),
               let directory = agent.reverseServerDirectory else { throw CommandError("Connect the agent's server to read its saved conversations.") }
         return (remote, directory)
+    }
+
+    /// Other open tabs on this server already own these CLI ids. A sibling that
+    /// still has no id shares the reverse folder, so a bare "newest session" guess
+    /// could attach this tab to that sibling's conversation.
+    func reverseSessionClaim(around agent: AgentTerminal) -> (claimed: Set<String>, unboundSibling: Bool) {
+        guard let hostID = agent.reverseHostID else { return ([], false) }
+        let directory = agent.reverseServerDirectory.map(ReverseSessionResume.normalizedPath)
+        var claimed: Set<String> = []
+        var unboundSibling = false
+        for state in states {
+            let open = state.snapshot.agentTerminals.filter { state.snapshot.terminalIDs.contains($0.id) }
+            let tmux = state.terminals.values.flatMap { $0.tmuxReverseAgents.values }
+            for other in open + tmux {
+                guard other.id != agent.id, other.provider == agent.provider,
+                      (other.reverseHostID ?? state.snapshot.workspace.hostID) == hostID else { continue }
+                if let id = other.currentSessionID { claimed.insert(id) }
+                let otherDirectory = other.reverseServerDirectory.map(ReverseSessionResume.normalizedPath)
+                if other.currentSessionID == nil, otherDirectory == directory { unboundSibling = true }
+            }
+        }
+        return (claimed, unboundSibling)
+    }
+
+    func resolvedReverseResume(previous: AgentTerminal, provider: AgentProvider, fallbackSessionID: String?,
+                               entries: [AgentHistoryEntry], serverTime: Double) -> (sessionID: String?, fork: Bool) {
+        if let history = previous.historySessionID { return (history, false) }
+        let sessionID = previous.sessionID ?? fallbackSessionID
+        let fork = previous.forkSession == true
+        guard let directory = previous.reverseServerDirectory, sessionID == nil || fork else { return (sessionID, false) }
+        let claim = reverseSessionClaim(around: previous)
+        if let matched = ReverseSessionResume.sessionID(provider: provider, directory: directory, createdAt: previous.createdAt,
+                                                        firstPrompt: previous.firstPrompt, conversationTitle: previous.conversationTitle,
+                                                        entries: entries, serverTime: serverTime, claimed: claim.claimed,
+                                                        unboundSibling: claim.unboundSibling, excluding: fork ? sessionID : nil) {
+            return (matched, false)
+        }
+        return (sessionID, sessionID != nil && fork)
     }
 }
 
@@ -336,10 +434,31 @@ extension AppModel {
         let defaults = UserDefaults.standard
         let clientID = defaults.string(forKey: "crow.reverse-agent-client-id") ?? UUID().uuidString
         defaults.set(clientID, forKey: "crow.reverse-agent-client-id")
+        let previous = request.replacingTerminalID.flatMap { id in owner.snapshot.agentTerminals.first { $0.id == id } }
+        var resumeID = request.sessionID
+        var resumeFork = request.fork
+        if let previous, previous.historySessionID == nil, previous.reverseServerDirectory != nil,
+           (previous.sessionID ?? request.sessionID) == nil || previous.forkSession == true {
+            progress("Restoring this tab’s conversation…")
+            do {
+                let listed = try await AgentHistoryService.list(in: source, workspacePath: previous.reverseServerDirectory)
+                try Task.checkCancellation()
+                let resolved = resolvedReverseResume(previous: previous, provider: request.provider,
+                    fallbackSessionID: request.sessionID, entries: listed.sessions,
+                    serverTime: listed.server_time ?? Date().timeIntervalSince1970)
+                resumeID = resolved.sessionID
+                resumeFork = resolved.fork
+            } catch is CancellationError { throw CancellationError() } catch {}
+        } else if let previous {
+            let resolved = resolvedReverseResume(previous: previous, provider: request.provider,
+                fallbackSessionID: request.sessionID, entries: [], serverTime: Date().timeIntervalSince1970)
+            resumeID = resolved.sessionID
+            resumeFork = resolved.fork
+        }
         var parameters: [String: Any] = ["action": "reverse-prepare", "workspace": source.snapshot.rootPath,
             "provider": request.provider.rawValue, "client_id": clientID, "client_root": root.path,
             "client_python": python, "client_runtime": runtime.path, "runtime_source": script, "connector": connector]
-        if let sessionID = request.sessionID { parameters["session_id"] = sessionID; parameters["fork"] = request.fork }
+        if let sessionID = resumeID { parameters["session_id"] = sessionID; parameters["fork"] = resumeFork }
         struct Prepared: Decodable { let directory: String; let launch: String; let command: String }
         let prepared = try JSONDecoder().decode(Prepared.self, from: await AgentHistoryService.run(parameters, in: source, operation: "Reverse agent", timeout: 60))
         preparedLaunch = prepared.launch
@@ -350,9 +469,19 @@ extension AppModel {
         if let old = request.replacingTerminalID, owner.terminals[old]?.isWorking == true {
             throw CommandError("Stop the current agent task before restarting this tab.")
         }
-        var agent = AgentTerminal(provider: request.provider, directory: root.path)
-        agent.reverseHostID = host.id; agent.reverseServerDirectory = prepared.directory
-        agent.sessionID = request.sessionID; agent.forkSession = request.fork
+        let stillOpen = previous.map { owner.snapshot.terminalIDs.contains($0.id) } == true
+        let agent: AgentTerminal
+        if let previous, stillOpen {
+            agent = ReverseSessionResume.reconnectedAgent(previous, provider: request.provider, directory: root.path,
+                hostID: host.id, serverDirectory: prepared.directory, sessionID: resumeID, fork: resumeFork)
+        } else {
+            var created = AgentTerminal(provider: request.provider, directory: root.path)
+            created.reverseHostID = host.id
+            created.reverseServerDirectory = prepared.directory
+            created.sessionID = resumeID
+            created.forkSession = resumeFork
+            agent = created
+        }
         if let tmuxTerminal, let tmuxFocus {
             var relay: TmuxSSHRelay?
             let command: String
@@ -413,13 +542,26 @@ extension AppModel {
             try? FileManager.default.removeItem(at: localRuntime)
             Task { try? await Self.cleanReverseAgentLaunch(prepared.launch, on: source) }
         }
-        owner.snapshot.agentTerminals.append(agent)
         configureTerminalImagePaste(session, id: agent.id, in: owner)
-        owner.terminals[agent.id] = session; owner.terminalGeneration += 1
-        owner.snapshot.terminalIDs.append(agent.id); owner.snapshot.selectedTerminalID = agent.id
-        owner.snapshot.layout?.open(.terminal(agent.id), in: request.paneID)
-        // Keep the pane alive when replacing its only tab.
-        if let old = request.replacingTerminalID { closeTerminal(old) }
+        if stillOpen {
+            let replaced = owner.terminals[agent.id]
+            owner.terminals[agent.id] = session
+            if let index = owner.snapshot.agentTerminals.firstIndex(where: { $0.id == agent.id }) {
+                owner.snapshot.agentTerminals[index] = agent
+            }
+            owner.terminalGeneration += 1
+            owner.snapshot.selectedTerminalID = agent.id
+            owner.snapshot.layout?.select(.terminal(agent.id), in: request.paneID)
+            replaced?.stop()
+        } else {
+            owner.snapshot.agentTerminals.append(agent)
+            owner.terminals[agent.id] = session
+            owner.terminalGeneration += 1
+            owner.snapshot.terminalIDs.append(agent.id)
+            owner.snapshot.selectedTerminalID = agent.id
+            owner.snapshot.layout?.open(.terminal(agent.id), in: request.paneID)
+            if let old = request.replacingTerminalID { closeTerminal(old) }
+        }
         retained = true
         activateWorkspace(owner.id, reconnect: false)
         terminalVisible = true; compactSurface = .terminal; owner.maximizedPaneID = nil

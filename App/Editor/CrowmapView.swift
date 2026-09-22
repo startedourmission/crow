@@ -2,6 +2,15 @@ import CrowCore
 import SwiftUI
 import WebKit
 
+private extension Color {
+    init?(crowHex: String) {
+        var hex = crowHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
+        self.init(.sRGB, red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255, opacity: 1)
+    }
+}
+
 /// Each map owns a flat note directory beneath the account-wide map library. Merely constructing the store does not touch disk.
 @MainActor @Observable final class CrowmapStore {
     let root: URL
@@ -15,6 +24,102 @@ import WebKit
     var drafts: [String: String] = [:]
     var draftBases: [String: String] = [:]
     @ObservationIgnored var flushDrafts: (() async -> Bool)?
+    static let dateUnits = ["day", "week", "month", "year"]
+    struct ViewPrefs: Codable, Equatable {
+        var dateUnit = "day"
+        var edgeScale = 1.0
+        var priorityGap = 80
+        var noteTension = 10
+        var showHistory = true
+        var showNoteTitles = true
+        init(dateUnit: String = "day", edgeScale: Double = 1, priorityGap: Int = 80, noteTension: Int = 10, showHistory: Bool = true, showNoteTitles: Bool = true) {
+            self.dateUnit = dateUnit; self.edgeScale = edgeScale; self.priorityGap = priorityGap
+            self.noteTension = noteTension; self.showHistory = showHistory; self.showNoteTitles = showNoteTitles
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            dateUnit = try c.decodeIfPresent(String.self, forKey: .dateUnit) ?? "day"
+            edgeScale = try c.decodeIfPresent(Double.self, forKey: .edgeScale) ?? 1
+            priorityGap = try c.decodeIfPresent(Int.self, forKey: .priorityGap) ?? 80
+            noteTension = try c.decodeIfPresent(Int.self, forKey: .noteTension) ?? 10
+            showHistory = try c.decodeIfPresent(Bool.self, forKey: .showHistory) ?? true
+            showNoteTitles = try c.decodeIfPresent(Bool.self, forKey: .showNoteTitles) ?? true
+        }
+    }
+    func viewPrefs(for url: URL?) -> ViewPrefs {
+        guard let url else { return ViewPrefs() }
+        var prefs = UserDefaults.standard.data(forKey: Self.viewPrefsKey(url)).flatMap { try? JSONDecoder().decode(ViewPrefs.self, from: $0) } ?? ViewPrefs()
+        if let unit = UserDefaults.standard.string(forKey: "crow.crowmap.date-unit:" + url.standardizedFileURL.path), Self.dateUnits.contains(unit), prefs == ViewPrefs() { prefs.dateUnit = unit }
+        if !Self.dateUnits.contains(prefs.dateUnit) { prefs.dateUnit = "day" }
+        prefs.edgeScale = min(3, max(0.5, prefs.edgeScale.isFinite ? prefs.edgeScale : 1))
+        prefs.priorityGap = min(400, max(28, prefs.priorityGap))
+        prefs.noteTension = min(60, max(0, prefs.noteTension))
+        return prefs
+    }
+    func setViewPrefs(_ prefs: ViewPrefs, for url: URL?) {
+        guard let url, let data = try? JSONEncoder().encode(prefs) else { return }
+        UserDefaults.standard.set(data, forKey: Self.viewPrefsKey(url))
+    }
+    private static func viewPrefsKey(_ url: URL) -> String { "crow.crowmap.view:" + url.standardizedFileURL.path }
+    static let timelineColors = ["#476fa8", "#9d6b48", "#6b8d63", "#9575aa", "#b77582", "#3f8a86", "#c08a3e", "#5d7394"]
+    struct UpcomingMilestone: Identifiable {
+        var id: String
+        var title: String
+        var projectTitle: String
+        var date: String
+        var daysFromToday: Int
+        var priority: Int
+        var color: String
+        var relative: String {
+            if daysFromToday == 0 { return "Today" }
+            if daysFromToday == 1 { return "Tomorrow" }
+            return "in \(daysFromToday)d"
+        }
+        var fill: Color { Color(crowHex: color) ?? Color(crowHex: "#476fa8")! }
+    }
+    func upcomingMilestones(for url: URL, today: Date = Date()) -> [UpcomingMilestone] {
+        let text = selected?.path == url.path && !source.isEmpty ? source : (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        return Self.upcomingMilestones(in: text, today: today)
+    }
+    static func upcomingMilestones(in source: String, today: Date = Date()) -> [UpcomingMilestone] {
+        guard let doc = try? JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any] else { return [] }
+        let projects = doc["projects"] as? [[String: Any]] ?? []
+        var titles: [String: String] = [:]
+        var colors: [String: String] = [:]
+        for (index, project) in projects.enumerated() {
+            guard let id = project["id"] as? String else { continue }
+            titles[id] = (project["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Project"
+            let hex = project["color"] as? String
+            colors[id] = hex.flatMap { Color(crowHex: $0) == nil ? nil : $0 } ?? timelineColors[index % timelineColors.count]
+        }
+        let anchors = doc["anchors"] as? [[String: Any]] ?? []
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = calendar.startOfDay(for: today)
+        func days(_ iso: String) -> Int? {
+            guard iso.count >= 10, let date = calendar.date(from: DateComponents(year: Int(iso.prefix(4)), month: Int(iso.dropFirst(5).prefix(2)), day: Int(iso.dropFirst(8).prefix(2)))) else { return nil }
+            return calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: date)).day
+        }
+        return anchors.compactMap { anchor -> UpcomingMilestone? in
+            guard let aid = anchor["id"] as? String, let date = anchor["date"] as? String, let offset = days(date), offset >= 0,
+                  (anchor["kind"] as? String) != "start" else { return nil }
+            let project = anchor["project"] as? String ?? ""
+            let priority = (anchor["priority"] as? Int) ?? (anchor["priority"] as? NSNumber)?.intValue ?? 1
+            return UpcomingMilestone(
+                id: aid,
+                title: (anchor["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Milestone",
+                projectTitle: titles[project] ?? "Project",
+                date: date,
+                daysFromToday: offset,
+                priority: max(1, priority),
+                color: colors[project] ?? timelineColors[0]
+            )
+        }.sorted {
+            if $0.daysFromToday != $1.daysFromToday { return $0.daysFromToday < $1.daysFromToday }
+            if $0.date != $1.date { return $0.date < $1.date }
+            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
     static let agentInstructions = """
     # Crowmap
 
@@ -310,15 +415,18 @@ import WebKit
             prepared.append((url, text, before))
         }
         let originalDoc = try JSONSerialization.jsonObject(with: Data(expected.utf8)) as? [String: Any]
+        let originalAnchors = originalDoc?["anchors"] as? [[String: Any]] ?? []
         var removable = Set((originalDoc?["notes"] as? [[String: Any]] ?? []).filter { $0["device"] == nil }.compactMap { $0["note"] as? String })
         if let deletingProject {
             guard (originalDoc?["projects"] as? [[String: Any]] ?? []).contains(where: { $0["id"] as? String == deletingProject }),
                   !(doc["projects"] as? [[String: Any]] ?? []).contains(where: { $0["id"] as? String == deletingProject }),
                   !(doc["anchors"] as? [[String: Any]] ?? []).contains(where: { $0["project"] as? String == deletingProject }),
                   !(doc["edges"] as? [[String: Any]] ?? []).contains(where: { $0["project"] as? String == deletingProject }) else { throw CommandError("Invalid timeline deletion.") }
-            let anchors = (originalDoc?["anchors"] as? [[String: Any]] ?? []).filter { $0["project"] as? String == deletingProject }.compactMap { $0["note"] as? String }
+            let anchors = originalAnchors.filter { $0["project"] as? String == deletingProject }.compactMap { $0["note"] as? String }
             removable.formUnion(anchors)
             guard Set(deletes.compactMap { $0["name"] }).isSuperset(of: Set(anchors)) else { throw CommandError("A timeline deletion must include all its milestone files.") }
+        } else {
+            removable.formUnion(originalAnchors.filter { ["milestone", "revision"].contains($0["kind"] as? String) }.compactMap { $0["note"] as? String })
         }
         var removals: [(URL, URL)] = [], deletedNames = Set<String>()
         let trash = root.deletingLastPathComponent().appendingPathComponent("crowmap-deleted", isDirectory: true)
@@ -431,18 +539,23 @@ struct CrowmapSidebar: View {
                                 Divider()
                                 Button("Delete…", systemImage: "trash", role: .destructive) { deleteURL = url }
                             }
-                        ForEach(model.crowmapAgents(in: url.deletingLastPathComponent())) { item in
-                            HStack(spacing: 4) {
-                                Button { model.openAgentTerminal(item.agent.id, workspaceID: item.state.id) } label: {
-                                    HStack(spacing: 7) {
-                                        AgentProviderIcon(provider: item.agent.provider, size: 12)
-                                        Text(item.agent.title).font(.system(size: 12)).lineLimit(1)
-                                        Spacer(minLength: 0)
-                                    }.padding(.leading, 34).frame(height: 28).contentShape(Rectangle())
-                                }.buttonStyle(CrowButtonStyle()).accessibilityIdentifier("crow.crowmap.agent." + item.agent.id.uuidString)
-                                Button { model.requestTerminalClose(item.agent.id) } label: { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 24, height: 28) }
-                                    .buttonStyle(CrowButtonStyle()).help("Close agent")
-                            }.windowDragExcluded()
+                        ForEach(model.crowmap.upcomingMilestones(for: url)) { item in
+                            Button { model.focusCrowmapMilestone(url, nodeID: item.id) } label: {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("P\(item.priority)")
+                                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(CrowTheme.textDim)
+                                        .frame(width: 22, alignment: .trailing)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.title).font(.system(size: 12)).lineLimit(1)
+                                        Text(item.projectTitle).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 0)
+                                    Text(item.relative).font(.system(size: 10)).foregroundStyle(CrowTheme.textDim).lineLimit(1)
+                                }.padding(.leading, 12).padding(.trailing, 12).padding(.vertical, 5)
+                                    .background(item.fill.opacity(model.crowmapSidebarNodeID == item.id ? 0.34 : 0.16), in: RoundedRectangle(cornerRadius: 5))
+                                    .contentShape(Rectangle())
+                            }.buttonStyle(CrowButtonStyle()).windowDragExcluded()
+                                .accessibilityIdentifier("crow.crowmap.milestone." + item.id)
                         }
                     }
                 }
@@ -476,7 +589,7 @@ struct CrowmapSurface: View {
     var body: some View {
         VStack(spacing: 0) {
             if let error = store.error { Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(10) }
-            if store.selected != nil { CrowmapWebView(model: model, store: store, isActive: isActive) }
+            if store.selected != nil { CrowmapWebView(model: model, store: store, isActive: isActive, focusNodeID: model.crowmapFocusNodeID) }
             else if store.error == nil { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
             else { Spacer() }
         }.background(CrowTheme.bg0)
@@ -509,6 +622,7 @@ struct CrowmapFileView: View {
     let model: AppModel
     let store: CrowmapStore
     var isActive = true
+    var focusNodeID: String?
     func makeCoordinator() -> Coordinator { Coordinator(model: model, store: store) }
     func makeView(_ coordinator: Coordinator) -> WKWebView {
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
@@ -525,12 +639,18 @@ struct CrowmapFileView: View {
     func update(_ view: WKWebView, coordinator: Coordinator) {
         if coordinator.lastSource != store.source || coordinator.lastTexts != store.library { coordinator.publish() }
         coordinator.setActive(isActive)
+        coordinator.focusIfNeeded()
     }
     @MainActor final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let model: AppModel, store: CrowmapStore
         weak var view: WKWebView?
         var ready = false, lastSource = ""
         var active = true, requestedActive = true
+        func focusIfNeeded() {
+            guard ready, let id = model.crowmapFocusNodeID, store.selected?.path == model.crowmap.selected?.path else { return }
+            model.crowmapFocusNodeID = nil
+            Task { [weak view] in _ = try? await view?.callAsyncJavaScript("return window.crowMap.focusNode(id)", arguments: ["id": id], in: nil, contentWorld: .defaultClient) }
+        }
         func setActive(_ value: Bool) {
             requestedActive = value
             guard ready, active != value else { return }; active = value
@@ -556,12 +676,16 @@ struct CrowmapFileView: View {
             #else
             let providers: [[String: String]] = []
             #endif
-            return ["source": store.source, "texts": store.library, "drafts": drafts, "agentProviders": providers, "hosts": hosts.map { ["id": $0.id.rawValue.uuidString, "label": $0.userAtHost] }]
+            let prefs = store.viewPrefs(for: store.selected)
+            return ["source": store.source, "texts": store.library, "drafts": drafts, "dateUnit": prefs.dateUnit, "edgeScale": prefs.edgeScale, "priorityGap": prefs.priorityGap, "noteTension": prefs.noteTension, "showHistory": prefs.showHistory, "showNoteTitles": prefs.showNoteTitles, "agentProviders": providers, "hosts": hosts.map { ["id": $0.id.rawValue.uuidString, "label": $0.userAtHost] }]
         }
         func publish(_ method: String = "receive", error: String? = nil) {
             guard ready else { return }; lastSource = store.source; lastTexts = store.library
             let value: [String: Any] = error.map { ["error": $0] } ?? payload()
-            Task { [weak view] in _ = try? await view?.callAsyncJavaScript("window.crowMap[method](value)", arguments: ["method": method, "value": value], in: nil, contentWorld: .defaultClient) }
+            Task { [weak view, weak self] in
+                _ = try? await view?.callAsyncJavaScript("window.crowMap[method](value)", arguments: ["method": method, "value": value], in: nil, contentWorld: .defaultClient)
+                self?.focusIfNeeded()
+            }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             ready = true; setActive(requestedActive); publish()
@@ -623,6 +747,18 @@ struct CrowmapFileView: View {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
             if action == "focus" {
                 if active, let url = store.selected { model.focusCrowmapPanel(url) }
+            } else if action == "selectNode" {
+                let id = body["id"] as? String ?? ""
+                model.crowmapSidebarNodeID = id.isEmpty ? nil : id
+            } else if action == "setView" {
+                var prefs = store.viewPrefs(for: store.selected)
+                if let unit = body["dateUnit"] as? String { prefs.dateUnit = unit }
+                if let scale = body["edgeScale"] as? NSNumber { prefs.edgeScale = scale.doubleValue }
+                if let gap = body["priorityGap"] as? NSNumber { prefs.priorityGap = gap.intValue }
+                if let tension = body["noteTension"] as? NSNumber { prefs.noteTension = tension.intValue }
+                if let history = body["showHistory"] as? Bool { prefs.showHistory = history }
+                if let titles = body["showNoteTitles"] as? Bool { prefs.showNoteTitles = titles }
+                store.setViewPrefs(prefs, for: store.selected)
             } else if action == "draft", let name = body["name"] as? String, let text = body["source"] as? String, let expected = body["expected"] as? String {
                 do {
                     guard text.utf8.count <= 512 * 1024, let saved = store.library[name] else { throw CommandError("Invalid note draft.") }

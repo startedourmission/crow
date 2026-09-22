@@ -469,6 +469,7 @@ final class CrowHoverTrackingView: NSView {
         }
     }
     private func route(_ event: NSEvent) {
+        if event.window?.inLiveResize == true { return }
         for anchor in anchors.allObjects {
             anchor.setHovered(event.window != nil && anchor.window === event.window &&
                 !anchor.isHiddenOrHasHiddenAncestor &&
