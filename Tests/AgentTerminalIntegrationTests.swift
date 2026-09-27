@@ -510,7 +510,7 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertFalse(model.states.contains { $0.snapshot.workspace.hostID == host.id })
     }
 
-    func testSSHPasswordSelectionOverridesConfigWithoutChangingDestination() throws {
+    @MainActor func testSSHPasswordSelectionOverridesConfigWithoutChangingDestination() throws {
         let line = try SSHCommandView.connectionCommand("ssh -p 2222 user@host", authentication: "password", identityPath: "")
         let args = try SSHCommand(line).arguments
         XCTAssertEqual(Array(args.suffix(3)), ["-p", "2222", "user@host"])
