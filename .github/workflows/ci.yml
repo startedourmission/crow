@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'ci/**']
+  workflow_dispatch:
+
+# Read-only token; no repository secrets are used anywhere in this workflow
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Tests intentionally NOT run in CI (all need a real macOS login session,
+# hardware, or local services that hosted runners do not provide):
+# - Most app XCTests (`xcodebuild test`, targets CrowMacTests / CrowTests from
+#   Tests/): TEST_HOST is the full Crow.app and the suites drive real
+#   NSWindow/WKWebView UI, PTYs and tmux (Terminal/EchoTerminal/AgentTerminal
+#   /InputTools/Editor*/Screen tests), the login Keychain (SSHKeyStoreTests,
+#   CrowAppTests), and disposable local sshd + ssh-keygen + VNC/browser
+#   fixtures (SSHIntegration-, BrowserTests). The app-macos job runs only a
+#   selected subset that needs none of that (see its "Selected app XCTests"
+#   step).
+# - CrowTests on the iOS Simulator and `scripts/test-ios-ssh.py SIMULATOR_UDID`:
+#   need a booted simulator plus an isolated local sshd. The app-ios job only
+#   builds Crow-iOS and compiles CrowTests (build-for-testing).
+# - `scripts/test-macos-terminal.sh`: runs the terminal subset of the app
+#   XCTests above (GUI session + PTY).
+# - `Tools/run-native-smoke.sh`, `Tools/run-full-window-smoke.sh`,
+#   `Tools/run-reverse-ssh-smoke.sh`: build arm64 fixture apps that dispatch
+#   window events and start loopback SSH servers / reverse SSH relays; they need
+#   an interactive macOS desktop session and sshd.
+# - `Tools/test-release-packaging.sh`: release-packaging check that takes a
+#   built Crow.app and exercises release tooling; out of scope for PR CI.
+# - agent-history.py `usage` / `codex-usage`: read CLI login tokens and call
+#   external APIs; the unit tests below mock these paths.
+
+jobs:
+  crowcore:
+    name: CrowCore (swift test)
+    # macOS only: CrowCore uses Apple-only Foundation Markdown APIs
+    # (MarkdownPreview.swift) and does not compile on Linux.
+    # macos-15 pinned: matches the macOS 15.0 deployment target in project.yml.
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      # Xcode 16.4 pinned: newest Xcode 16.x on macos-15. Its Swift 6.1 compiler
+      # is the minimum the pinned SPM deps accept (swift-nio 2.102.0,
+      # swift-system 1.8.1 and swift-asn1 1.7.2 declare swift-tools-version 6.1,
+      # so Xcode 16.0-16.2 / Swift 6.0 cannot resolve them). Builds in the
+      # project's Swift 6.0 language mode (SWIFT_VERSION in project.yml).
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - run: swift --version
+      - run: swift test --package-path Packages/CrowCore
+
+  editorweb:
+    name: EditorWeb (build, node --test, bundle check)
+    # ubuntu: public repo, cheaper/faster runner; pure Node build + tests with no macOS dependency.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          # EditorWeb/README.md requires Node 22+.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: EditorWeb/package-lock.json
+      - name: Install, build, test
+        working-directory: EditorWeb
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          node --test
+      # EditorWeb/build.mjs writes the bundles the app ships into App/Editor/
+      # (markdown-editor.js, obsidian-preview.js/.css, crowmap.js/.css,
+      # MarkdownEditor-LICENSES.txt). Fail if the committed copies are stale.
+      - name: Committed App/Editor bundle matches build
+        run: git diff --exit-code -- App/Editor
+
+  screenclient:
+    name: ScreenClient (build, bundle check)
+    # ubuntu: public repo, cheaper/faster runner; pure Node build with no macOS dependency.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Tools/ScreenClient/package-lock.json
+      # No JS tests exist for ScreenClient; the build itself verifies that the
+      # noVNC rfb.js patch anchor still applies (build.mjs throws otherwise).
+      - name: Install and build
+        working-directory: Tools/ScreenClient
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      # Tools/ScreenClient/build.mjs writes App/Screen/screen-client.js.
+      - name: Committed App/Screen bundle matches build
+        run: git diff --exit-code -- App/Screen
+
+  python:
+    name: Agent history helper (python unittest)
+    # ubuntu: public repo, cheaper/faster runner; stdlib-only Python with no macOS dependency.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      # agent-history.py's reverse "shell" tool hardcodes /bin/zsh
+      # (App/Agents/agent-history.py:556). Ubuntu runner images do not ship zsh,
+      # so install it (/bin -> /usr/bin on Ubuntu) and require it so that
+      # test_tools_edit_client_files_and_shell_uses_fixed_root actually runs
+      # here instead of being skipped.
+      - name: Install zsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          test -x /bin/zsh
+      - run: python3 --version
+      - run: python3 -m unittest -v Tools/Agents/test_history.py
+
+  app-macos:
+    name: Crow-macOS app build + selected XCTests (unsigned)
+    # macos-15 pinned: matches the macOS 15.0 deployment target in project.yml.
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      # Xcode 16.4 pinned: see the crowcore job (Swift 6.1 is required by the
+      # pinned SPM deps; project.yml uses Swift 6.0 language mode).
+      # Metal: SwiftTerm 1.20.0 compiles Apple/Metal/Shaders.metal as a package
+      # resource. Xcode 16.x bundles the Metal compiler, so no extra step is
+      # needed. docs/DEVELOPMENT.md asks for the separate Metal Toolchain
+      # component, which only exists from Xcode 26; if this pin moves to Xcode
+      # 26+, add `xcodebuild -downloadComponent MetalToolchain` after selecting
+      # Xcode.
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      # -skipPackagePluginValidation: SwiftTerm runs its SwiftTermBuildInfoPlugin
+      # build-tool plugin; non-interactive xcodebuild would otherwise refuse
+      # the untrusted plugin.
+      # Signing disabled: CI has no certificates and no repository secrets are used
+      - name: Build Crow-macOS
+        run: |
+          xcodebuild build \
+            -project Crow.xcodeproj \
+            -scheme Crow-macOS \
+            -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+      # GitAccountTests write and read throwaway test-only items (random
+      # account names, fixture tokens) through SecureStore. Give them a fresh,
+      # unlocked, empty keychain with a random password as the default so they
+      # never touch the runner's login keychain or wait on an unlock prompt.
+      - name: Use a throwaway default keychain for tests
+        run: |
+          password="$(uuidgen)"
+          keychain="$RUNNER_TEMP/crow-ci-tests.keychain-db"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
+      # Selected CrowMacTests that need no PTY, tmux, sshd or window
+      # interaction: the saved Git account suite and the reverse-agent
+      # reconnect/resume model tests. Other suites stay out (see the header).
+      - name: Selected app XCTests (CrowMacTests)
+        timeout-minutes: 20
+        run: |
+          xcodebuild test \
+            -project Crow.xcodeproj \
+            -scheme Crow-macOS \
+            -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            -only-testing:CrowMacTests/GitAccountTests \
+            -only-testing:CrowMacTests/AgentTerminalIntegrationTests/testDisconnectedReverseAgentKeepsTheConversationAnchor \
+            -only-testing:CrowMacTests/AgentTerminalIntegrationTests/testReverseReconnectResumesTheTabsOwnConversation \
+            -only-testing:CrowMacTests/AgentTerminalIntegrationTests/testReverseReconnectReportsUnconfirmedResumeAndKeepsTheConversationAnchor \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+  app-ios:
+    name: Crow-iOS app build (Simulator, unsigned)
+    # macos-15 + Xcode 16.4 pinned for the same reasons as app-macos (the
+    # iOS 18.0 deployment target in project.yml is covered by the iOS 18.x SDK
+    # that ships with Xcode 16.4).
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      # generic Simulator destination: a compile/link check only, so no
+      # simulator has to be booted. -skipPackagePluginValidation and disabled
+      # signing: see app-macos.
+      - name: Build Crow-iOS
+        run: |
+          xcodebuild build \
+            -project Crow.xcodeproj \
+            -scheme Crow-iOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+      # Compiles the CrowTests bundle for iOS too, so shared test code that only
+      # builds on macOS is caught here. The tests are NOT run: most suites need
+      # a booted simulator plus an isolated local sshd
+      # (scripts/test-ios-ssh.py), and the Keychain suites need a signed test
+      # host carrying the keychain-access-groups entitlement from
+      # App/Crow-iOS.entitlements, which unsigned CI builds do not have.
+      - name: Build CrowTests for iOS (not run)
+        run: |
+          xcodebuild build-for-testing \
+            -project Crow.xcodeproj \
+            -scheme Crow-iOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
