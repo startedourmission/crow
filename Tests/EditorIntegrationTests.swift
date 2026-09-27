@@ -817,7 +817,8 @@ final class EditorIntegrationTests: XCTestCase {
     let draggingLocation: NSPoint
     let draggingSourceOperationMask: NSDragOperation = .move
     let draggedImageLocation = NSPoint.zero
-    let draggedImage: NSImage? = nil
+    // Deprecated requirement that the macOS 15 SDK leaves nonisolated; NSImage is not Sendable.
+    nonisolated var draggedImage: NSImage? { nil }
     let draggingSource: Any? = nil
     let draggingSequenceNumber = 1
     var draggingFormation: NSDraggingFormation = .none
