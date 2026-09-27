@@ -107,6 +107,8 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     @ObservationIgnored private var shellPrompted = false
     private var shellTask: Task<Void, Never>?
     private var remoteShellFinished = true
+    /// nil while waiting for the remote shell, false after the readiness timeout.
+    private var remoteShellReady: Bool?
     private var inputTask: Task<Void, Never>?
     private var writer: RemoteWriter?
 
@@ -268,8 +270,7 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
             status = "Starting SSH shell…"
             let initialCommand = TerminalCommand.utf8Environment + "\n" + (launchCommand.map { "exec sh -lc " + TerminalCommand.quote($0) + "\n" }
                 ?? (SSHCommand.remoteDirectoryCommand(directory) + "\n" + SSHCommand.directoryTrackingCommand + "\n"))
-            let startup = SSHStartupOutput()
-            remoteShellFinished = false
+            remoteShellFinished = false; remoteShellReady = nil
             shellTask = Task { [weak self] in
                 guard let self else { return }
                 defer { remoteShellFinished = true }
@@ -286,14 +287,27 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
                     try await client.withPTY(.init(wantReply: true, term: "xterm-256color",
                         terminalCharacterWidth: dims.cols, terminalRowHeight: dims.rows,
                         terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { @Sendable [weak self] inbound, outbound in
-                        var startup = startup
-                        try await outbound.write(ByteBuffer(string: startup.command(initialCommand)))
+                        // Type only the readiness probe; the startup script follows once
+                        // the remote shell reports that it is reading it.
+                        var startup = SSHShellStartup(setup: initialCommand)
+                        try await outbound.write(ByteBuffer(string: startup.probe))
+                        let deadline = startup.deadline
+                        let readiness = Task { @MainActor [weak self] in
+                            do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+                            self?.remoteShellNotReady()
+                        }
+                        defer { readiness.cancel() }
                         for try await output in inbound {
                             try Task.checkCancellation()
                             switch output {
                             case .stdout(let bytes), .stderr(let bytes):
                                 let wasReady = startup.isReady
-                                let visible = startup.receive(Array(bytes.readableBytesView))
+                                let (visible, script) = startup.receive(Array(bytes.readableBytesView))
+                                if let script {
+                                    guard await self?.remoteShellBecameReady() == true else { throw CancellationError() }
+                                    readiness.cancel()
+                                    try await outbound.write(ByteBuffer(string: script))
+                                }
                                 if !wasReady && startup.isReady { await self?.connected(RemoteWriter(value: outbound)) }
                                 if !visible.isEmpty { await self?.receive(visible) }
                             }
@@ -331,6 +345,19 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
 
     private func connected(_ writer: RemoteWriter) {
         self.writer = writer; running = true; status = "Connected"
+    }
+    /// False once the readiness timeout has already ended this shell.
+    private func remoteShellBecameReady() -> Bool {
+        guard remoteShellReady == nil else { return remoteShellReady == true }
+        remoteShellReady = true; return true
+    }
+    /// No readiness report: never type the startup commands into whatever answered.
+    private func remoteShellNotReady() {
+        guard remoteShellReady == nil, !remoteShellFinished else { return }
+        remoteShellReady = false
+        status = SSHShellStartup.readinessTimeoutMessage
+        view.feed(text: status + "\r\n")
+        shellTask?.cancel()
     }
     func waitUntilStopped() async throws {
         for _ in 0..<100 {
