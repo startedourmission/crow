@@ -470,6 +470,8 @@ private struct TmuxRelayWriter: @unchecked Sendable { let value: TTYStdinWriter 
     private var timeout: Task<Void, Never>?
     private var pending = Data()
     private var ready: CheckedContinuation<Int, Error>?
+    /// nil while waiting for the remote shell, false after the readiness timeout.
+    private var shellReady: Bool?
 
     init(client: SSHClient, command: String) { self.client = client; self.command = command }
 
@@ -517,8 +519,16 @@ private struct TmuxRelayWriter: @unchecked Sendable { let value: TTYStdinWriter 
                 terminalCharacterWidth: max(1, hello["cols"] as? Int ?? 80), terminalRowHeight: max(1, hello["rows"] as? Int ?? 24),
                 terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { @Sendable [weak self] inbound, outbound in
                 let writer = TmuxRelayWriter(value: outbound)
-                var startup = SSHStartupOutput()
-                try await outbound.write(ByteBuffer(string: startup.command("exec sh -lc " + TerminalCommand.quote(command) + "\n")))
+                // Type only the readiness probe; the startup script follows once
+                // the remote shell reports that it is reading it.
+                var startup = SSHShellStartup(setup: "exec sh -lc " + TerminalCommand.quote(command) + "\n")
+                try await outbound.write(ByteBuffer(string: startup.probe))
+                let deadline = startup.deadline
+                let readiness = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+                    await self?.shellNotReady()
+                }
+                defer { readiness.cancel() }
                 let input = Task { @MainActor [weak self, writer] in
                     guard let self else { return }
                     try await self.pumpInput(writer)
@@ -528,7 +538,12 @@ private struct TmuxRelayWriter: @unchecked Sendable { let value: TTYStdinWriter 
                     try Task.checkCancellation()
                     switch output {
                     case .stdout(let bytes), .stderr(let bytes):
-                        let visible = startup.receive(Array(bytes.readableBytesView))
+                        let (visible, script) = startup.receive(Array(bytes.readableBytesView))
+                        if let script {
+                            guard await self?.shellBecameReady() == true else { throw CancellationError() }
+                            readiness.cancel()
+                            try await outbound.write(ByteBuffer(string: script))
+                        }
                         if startup.isReady { await self?.didStart() }
                         if !visible.isEmpty { try await self?.send(Data(visible)) }
                     }
@@ -542,6 +557,20 @@ private struct TmuxRelayWriter: @unchecked Sendable { let value: TTYStdinWriter 
     }
 
     private func didStart() { timeout?.cancel(); timeout = nil }
+
+    /// False once the readiness timeout has already ended this relay.
+    private func shellBecameReady() -> Bool {
+        guard shellReady == nil else { return shellReady == true }
+        shellReady = true; return true
+    }
+
+    /// No readiness report: never type the startup commands into whatever answered.
+    private func shellNotReady() async {
+        guard shellReady == nil, task != nil else { return }
+        shellReady = false
+        try? await send(Data(("\r\n" + SSHShellStartup.readinessTimeoutMessage + "\r\n").utf8))
+        stop()
+    }
 
     private func pumpInput(_ writer: TmuxRelayWriter) async throws {
         do {
