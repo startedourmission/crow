@@ -255,24 +255,24 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         let older = entry("older", prompt: "Older work", started: serverNow - 600, modified: serverNow + 50)
         let samePrompt = entry("same", prompt: "Fix the cover", started: serverNow + 5)
         let cover = entry("cover", prompt: "Layout", title: "Cover", started: serverNow - 30, modified: serverNow)
-        XCTAssertEqual(ReverseSessionResume.sessionID(provider: .codex, directory: directory + "/", createdAt: created,
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory + "/", createdAt: created,
             firstPrompt: "Fix the cover", conversationTitle: nil, entries: [older, fresh, samePrompt], serverTime: serverNow,
-            claimed: [], unboundSibling: false), "fresh", "Two matching prompts stay unresolved, so the newest session born with this tab wins")
+            claimed: []), "Two matching prompts stay unresolved; the newest session is not guessed")
         XCTAssertEqual(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
             firstPrompt: "Fix the cover", conversationTitle: "Cover", entries: [older, fresh, cover], serverTime: serverNow,
-            claimed: ["fresh"], unboundSibling: true), "cover", "A stored title still identifies the tab when its prompt session is already claimed")
+            claimed: ["fresh"]), "cover", "A stored title still identifies the tab when its prompt session is already claimed")
         XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
             firstPrompt: nil, conversationTitle: nil, entries: [older, fresh], serverTime: serverNow,
-            claimed: [], unboundSibling: true))
-        XCTAssertEqual(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: Date(timeIntervalSince1970: serverNow + 5_000),
+            claimed: []))
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: Date(timeIntervalSince1970: serverNow + 5_000),
             firstPrompt: nil, conversationTitle: nil, entries: [older, fresh], serverTime: serverNow,
-            claimed: [], unboundSibling: false), "older", "A relaunch that lost the prompt still reopens the newest session in this folder")
-        XCTAssertEqual(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
+            claimed: []), "A blank tab must not reopen the folder's newest session, which may be a closed tab's conversation")
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
             firstPrompt: nil, conversationTitle: nil, entries: [entry("parent", prompt: "Parent", started: serverNow - 50), fresh],
-            serverTime: serverNow, claimed: [], unboundSibling: false, excluding: "parent"), "fresh")
+            serverTime: serverNow, claimed: [], excluding: "parent"), "A fork without a prompt or title match is not guessed either")
         XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
             firstPrompt: nil, conversationTitle: nil, entries: [entry("parent", prompt: "Parent", started: serverNow)],
-            serverTime: serverNow, claimed: [], unboundSibling: false, excluding: "parent"))
+            serverTime: serverNow, claimed: [], excluding: "parent"))
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-resume-" + UUID().uuidString)
         let model = AppModel(vaultURL: root)

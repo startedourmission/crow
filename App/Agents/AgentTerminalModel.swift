@@ -245,11 +245,11 @@ struct ReverseAgentRequest: Identifiable {
 enum ReverseSessionResume {
     /// The CLI conversation to reopen for one disconnected reverse-agent tab.
     /// Prompt and title matches have to be unique so another open tab does not
-    /// receive this conversation. Otherwise the newest session in this tab's
-    /// server folder is the one it was using.
+    /// receive this conversation. Without such a match nothing is guessed: the
+    /// newest session in the folder may belong to another (closed) tab.
     static func sessionID(provider: AgentProvider, directory: String, createdAt: Date?, firstPrompt: String?,
                           conversationTitle: String?, entries: [AgentHistoryEntry], serverTime: Double,
-                          claimed: Set<String>, unboundSibling: Bool, excluding excluded: String? = nil) -> String? {
+                          claimed: Set<String>, excluding excluded: String? = nil) -> String? {
         let root = normalizedPath(directory)
         let available = entries.filter { entry in
             guard entry.provider == provider, entry.id != excluded, !claimed.contains(entry.id), let cwd = entry.cwd else { return false }
@@ -269,10 +269,7 @@ enum ReverseSessionResume {
             let matches = available.filter { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == title }
             if matches.count == 1 { return matches[0].id }
         }
-        guard !unboundSibling else { return nil }
-        let floor = createdAt.map { $0.timeIntervalSince1970 + (serverTime - Date().timeIntervalSince1970) - 2 }
-        let born = floor.map { value in available.filter { ($0.started ?? $0.modified) >= value } } ?? []
-        return (born.isEmpty ? available : born).max { $0.modified < $1.modified }?.id
+        return nil
     }
 
     /// Keep the tab's name and pin. A resumed conversation also keeps its title and prompt.
@@ -354,7 +351,7 @@ extension AppModel {
         if let matched = ReverseSessionResume.sessionID(provider: provider, directory: directory, createdAt: previous.createdAt,
                                                         firstPrompt: previous.firstPrompt, conversationTitle: previous.conversationTitle,
                                                         entries: entries, serverTime: serverTime, claimed: claim.claimed,
-                                                        unboundSibling: claim.unboundSibling, excluding: fork ? sessionID : nil) {
+                                                        excluding: fork ? sessionID : nil) {
             return (matched, false)
         }
         return (sessionID, sessionID != nil && fork)
