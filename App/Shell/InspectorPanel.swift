@@ -412,6 +412,8 @@ private struct GitRepositoryAccountFooter: View {
                         Image(systemName: "person.crop.circle")
                         if let account = model.gitAccounts.account {
                             Text("Saved GitHub · @" + account.login)
+                        } else if model.gitAccounts.hasSavedCredential {
+                            Text("Saved GitHub Account")
                         } else {
                             Text(model.gitAccounts.storageError == nil ? "Set Up GitHub Account" : "Git Account Unavailable")
                         }

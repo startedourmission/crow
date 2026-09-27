@@ -51,6 +51,19 @@ enum SecureStore {
         return result as? Data
     }
 
+    /// Whether an item exists, from its attributes only. The secret is not returned,
+    /// so this never asks the user to unlock the item.
+    static func exists(for account: String) throws -> Bool {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "dev.chajinwoo.crow", kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw keychainError(status) }
+        return true
+    }
+
     static func set(_ data: Data, for account: String) throws {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "dev.chajinwoo.crow", kSecAttrAccount as String: account]

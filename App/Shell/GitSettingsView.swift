@@ -21,7 +21,7 @@ struct GitAccountSettings: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Token").font(.caption).foregroundStyle(CrowTheme.textDim)
-                        SecureField(model.gitAccounts.account == nil ? "Personal access token" : "New token", text: $token)
+                        SecureField(model.gitAccounts.hasSavedCredential ? "New token" : "Personal access token", text: $token)
                             .labelsHidden().crowSettingsInput()
                             .accessibilityIdentifier("crow.git-token")
                     }

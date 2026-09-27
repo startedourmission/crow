@@ -58,6 +58,11 @@ struct GitAccountCredential: Codable, Sendable {
 final class GitAccountStore {
     private(set) var account: GitHubAccount?
     private(set) var storageError: String?
+    /// A Keychain item saved before the login was kept in UserDefaults. Its login is
+    /// unknown until a feature or Load Saved Account reads the item.
+    private(set) var savedWithoutLogin = false
+    /// Saved credentials exist, whether or not the login is known yet.
+    var hasSavedCredential: Bool { account != nil || savedWithoutLogin }
     private let key: String
     /// The login is not secret. Settings can show it without unlocking the Keychain.
     private var loginKey: String { "crow.git-login." + key }
@@ -71,17 +76,23 @@ final class GitAccountStore {
         return credential
     }
 
-    /// Display state only. Does not read the Keychain, so opening Settings cannot prompt.
+    /// Display state only. Never reads the Keychain secret, so opening Settings cannot
+    /// prompt. Accounts saved by earlier versions have no stored login; for those only
+    /// the item's attributes are queried (`kSecReturnAttributes`), never its data.
     func reload() {
         storageError = nil
+        savedWithoutLogin = false
         if let login = UserDefaults.standard.string(forKey: loginKey), !login.isEmpty {
             account = GitHubAccount(login: login, name: nil)
-        } else {
-            account = nil
+            return
         }
+        account = nil
+        do { savedWithoutLogin = try SecureStore.exists(for: key) }
+        catch { storageError = error.localizedDescription }
     }
 
     private func remember(_ login: String?) {
+        savedWithoutLogin = false
         if let login, !login.isEmpty {
             UserDefaults.standard.set(login, forKey: loginKey)
             account = GitHubAccount(login: login, name: nil)

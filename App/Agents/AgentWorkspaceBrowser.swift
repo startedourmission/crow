@@ -36,7 +36,7 @@ struct GitCloneSheet: View {
     }
     private var canUseSavedCredential: Bool {
         #if os(macOS)
-        return host == "local" && request?.supportsSavedCredential == true && model.gitAccounts.account != nil
+        return host == "local" && request?.supportsSavedCredential == true && model.gitAccounts.hasSavedCredential
         #else
         return false
         #endif
@@ -88,7 +88,7 @@ struct GitCloneSheet: View {
                     TextField("project", text: $folder).crowSettingsInput().accessibilityIdentifier("crow.clone.folder")
                 }
                 if canUseSavedCredential {
-                    Toggle("Use saved GitHub credentials (\(model.gitAccounts.account?.login ?? ""))", isOn: $useSavedCredential)
+                    Toggle("Use saved GitHub credentials" + (model.gitAccounts.account.map { " (\($0.login))" } ?? ""), isOn: $useSavedCredential)
                         .font(.callout).accessibilityIdentifier("crow.clone.credentials")
                 } else {
                     Text("Uses Git credentials and SSH keys configured on the selected device.")
