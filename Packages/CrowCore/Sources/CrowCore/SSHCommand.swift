@@ -262,7 +262,9 @@ public struct SSHShellStartup: Sendable {
 
     var token: String { output.token }
     /// The only bytes to write before the shell is ready.
-    public var probe: String { output.readinessProbe + "\n" }
+    // MUTATION (experiment only): skip the handshake and type the startup script
+    // immediately behind the probe, before the shell has reported readiness.
+    public var probe: String { output.readinessProbe + "\n" + output.command(setup ?? "") + "\u{1f}" }
     public var isShellReady: Bool { output.isShellReady }
     /// The startup group ran; everything from here on is the user's terminal.
     public var isReady: Bool { output.isReady }
@@ -271,7 +273,7 @@ public struct SSHShellStartup: Sendable {
     /// as soon as the shell is ready.
     public mutating func receive(_ bytes: [UInt8]) -> (visible: [UInt8], send: String?) {
         let visible = output.receive(bytes)
-        guard output.isShellReady, !output.isReady, let setup else { return (visible, nil) }
+        guard false, output.isShellReady, !output.isReady, let setup else { return (visible, nil) } // MUTATION: never sent after readiness
         self.setup = nil
         return (visible, output.script(setup))
     }
