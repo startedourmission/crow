@@ -26,7 +26,7 @@ concurrency:
 #   step).
 # - CrowTests on the iOS Simulator and `scripts/test-ios-ssh.py SIMULATOR_UDID`:
 #   need a booted simulator plus an isolated local sshd. The app-ios job only
-#   builds Crow-iOS and compiles CrowTests (build-for-testing).
+#   builds Crow-iOS (see the note there on why CrowTests is not compiled).
 # - `scripts/test-macos-terminal.sh`: runs the terminal subset of the app
 #   XCTests above (GUI session + PTY).
 # - `Tools/run-native-smoke.sh`, `Tools/run-full-window-smoke.sh`,
@@ -213,25 +213,17 @@ jobs:
       # generic Simulator destination: a compile/link check only, so no
       # simulator has to be booted. -skipPackagePluginValidation and disabled
       # signing: see app-macos.
+      # Build only; CrowTests is neither run nor compiled here. Running it needs
+      # a booted simulator plus an isolated local sshd (scripts/test-ios-ssh.py),
+      # and the Keychain suites need a signed test host with the
+      # keychain-access-groups entitlement (App/Crow-iOS.entitlements). The
+      # bundle does not even compile for iOS on main yet: e.g.
+      # Tests/EditorFileActionTests.swift uses NSHostingView/NSWindow outside
+      # `#if os(macOS)` (seen with build-for-testing in the ci/verify-pr1 run
+      # 36325310962).
       - name: Build Crow-iOS
         run: |
           xcodebuild build \
-            -project Crow.xcodeproj \
-            -scheme Crow-iOS \
-            -destination 'generic/platform=iOS Simulator' \
-            -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
-      # Compiles the CrowTests bundle for iOS too, so shared test code that only
-      # builds on macOS is caught here. The tests are NOT run: most suites need
-      # a booted simulator plus an isolated local sshd
-      # (scripts/test-ios-ssh.py), and the Keychain suites need a signed test
-      # host carrying the keychain-access-groups entitlement from
-      # App/Crow-iOS.entitlements, which unsigned CI builds do not have.
-      - name: Build CrowTests for iOS (not run)
-        run: |
-          xcodebuild build-for-testing \
             -project Crow.xcodeproj \
             -scheme Crow-iOS \
             -destination 'generic/platform=iOS Simulator' \
