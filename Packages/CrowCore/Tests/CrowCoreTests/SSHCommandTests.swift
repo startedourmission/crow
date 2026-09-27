@@ -30,7 +30,6 @@ final class SSHCommandTests: XCTestCase {
     #if os(macOS)
     func testStartupHidesEchoInRealPTYAndPreservesDirectoryAndErrors() throws {
         for shell in ["/bin/bash", "/bin/zsh"] {
-            var startup = SSHStartupOutput()
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-startup-한글 ' " + UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: root) }
@@ -40,28 +39,53 @@ final class SSHCommandTests: XCTestCase {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
             process.arguments = ["-q", "/dev/null", shell] + (shell == "/bin/bash" ? ["--noprofile", "--norc"] : ["-f"])
             process.standardInput = input; process.standardOutput = output; process.standardError = output
+            // The production handshake (TerminalSession, TmuxSSHRelay): type only the
+            // readiness probe, then send the startup script when SSHShellStartup releases it.
+            var startup = SSHShellStartup(setup: setup)
             try process.run()
             let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: timeout)
             defer { timeout.cancel() }
-            try input.fileHandleForWriting.write(contentsOf: Data((startup.command(setup) + "exit\n").utf8))
-            try input.fileHandleForWriting.close()
-            let raw = output.fileHandleForReading.readDataToEndOfFile()
+            try input.fileHandleForWriting.write(contentsOf: Data(startup.probe.utf8))
+            var raw = Data(), visible: [UInt8] = [], scriptsSent = 0, sentExit = false
+            while true {
+                let chunk = output.fileHandleForReading.availableData
+                if chunk.isEmpty { break } // EOF: the PTY closed
+                raw.append(chunk)
+                // Deliberately split every marker byte, as SSH packets may do.
+                for byte in chunk {
+                    let step = startup.receive([byte])
+                    visible += step.visible
+                    if let script = step.send {
+                        XCTAssertTrue(startup.isShellReady, shell)
+                        scriptsSent += 1
+                        try input.fileHandleForWriting.write(contentsOf: Data(script.utf8))
+                    }
+                }
+                if startup.isReady && !sentExit {
+                    sentExit = true
+                    try input.fileHandleForWriting.write(contentsOf: Data("exit\n".utf8))
+                    try input.fileHandleForWriting.close()
+                }
+            }
             process.waitUntilExit()
             XCTAssertEqual(process.terminationStatus, 0, shell)
-            // Deliberately split every marker byte, as SSH packets may do.
-            let visible = raw.flatMap { startup.receive([$0]) }
+            XCTAssertEqual(scriptsSent, 1, shell + ": the startup script must be sent exactly once")
             let text = String(decoding: visible, as: UTF8.self)
             XCTAssertTrue(startup.isReady, shell + ": " + String(decoding: raw, as: UTF8.self))
             XCTAssertFalse(text.contains("crow_utf8_locale"), text)
             XCTAssertFalse(text.contains("_crow_cwd(){"), text)
             XCTAssertFalse(text.contains("CrowStartup="), text)
+            XCTAssertFalse(text.contains("CrowReady"), text)
+            XCTAssertFalse(text.contains("crow_startup"), text)
             XCTAssertTrue(text.contains("visible-error"), text)
             let start = try XCTUnwrap(text.range(of: "\u{1b}]7;"))
             let end = try XCTUnwrap(text[start.upperBound...].firstIndex(of: "\u{7}"))
             let path = try XCTUnwrap(SSHCommand.terminalDirectory(String(text[start.upperBound..<end])))
             XCTAssertEqual(URL(fileURLWithPath: path).resolvingSymlinksInPath(), root.resolvingSymlinksInPath())
-            XCTAssertEqual(startup.receive(Array("normal output".utf8)), Array("normal output".utf8))
+            let after = startup.receive(Array("normal output".utf8))
+            XCTAssertEqual(after.visible, Array("normal output".utf8))
+            XCTAssertNil(after.send)
         }
     }
 
