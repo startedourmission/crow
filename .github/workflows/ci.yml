@@ -23,7 +23,8 @@ concurrency:
 #   disposable local sshd + ssh-keygen + VNC/browser fixtures (SSHIntegration-,
 #   BrowserTests). Only the app build is checked here.
 # - CrowTests on the iOS Simulator and `scripts/test-ios-ssh.py SIMULATOR_UDID`:
-#   need a booted simulator plus an isolated local sshd.
+#   need a booted simulator plus an isolated local sshd. The app-ios job only
+#   builds Crow-iOS and compiles CrowTests (build-for-testing).
 # - `scripts/test-macos-terminal.sh`: runs the terminal subset of the app
 #   XCTests above (GUI session + PTY).
 # - `Tools/run-native-smoke.sh`, `Tools/run-full-window-smoke.sh`,
@@ -155,6 +156,52 @@ jobs:
             -project Crow.xcodeproj \
             -scheme Crow-macOS \
             -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+  app-ios:
+    name: Crow-iOS app build (Simulator, unsigned)
+    # macos-15 + Xcode 16.4 pinned for the same reasons as app-macos (the
+    # iOS 18.0 deployment target in project.yml is covered by the iOS 18.x SDK
+    # that ships with Xcode 16.4).
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      # generic Simulator destination: a compile/link check only, so no
+      # simulator has to be booted. -skipPackagePluginValidation and disabled
+      # signing: see app-macos.
+      - name: Build Crow-iOS
+        run: |
+          xcodebuild build \
+            -project Crow.xcodeproj \
+            -scheme Crow-iOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+      # Compiles the CrowTests bundle for iOS too, so shared test code that only
+      # builds on macOS is caught here. The tests are NOT run: most suites need
+      # a booted simulator plus an isolated local sshd
+      # (scripts/test-ios-ssh.py), and the Keychain suites need a signed test
+      # host carrying the keychain-access-groups entitlement from
+      # App/Crow-iOS.entitlements, which unsigned CI builds do not have.
+      - name: Build CrowTests for iOS (not run)
+        run: |
+          xcodebuild build-for-testing \
+            -project Crow.xcodeproj \
+            -scheme Crow-iOS \
+            -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
