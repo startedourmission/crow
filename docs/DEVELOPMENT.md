@@ -48,6 +48,23 @@ xcodebuild test \
 설치된 시뮬레이터 이름에 맞게 destination을 변경하세요. 실제 iPhone·iPad 빌드는
 Apple 개발자 서명 팀이 필요합니다.
 
+JavaScript·Python 테스트 (Linux에서도 실행 가능, Node 22+):
+
+```sh
+(cd EditorWeb && npm ci --ignore-scripts && npm run build && npm test)
+(cd Tools/ScreenClient && npm ci --ignore-scripts && npm run build)
+git diff --exit-code -- App/Editor App/Screen   # 커밋된 번들이 빌드 결과와 같은지 확인
+python3 -m unittest Tools/Agents/test_history.py
+```
+
+`Tools/Agents/test_history.py`의 reverse shell 테스트는 `/bin/zsh`가 없으면 건너뜁니다.
+
+CI(`.github/workflows/ci.yml`)는 pull request, `main`·`ci/**` 푸시, 수동 실행 시 위
+JS·Python 테스트와 번들 비교, `swift test --package-path Packages/CrowCore`,
+서명 없는 `Crow-macOS` 빌드를 실행합니다. GUI·Keychain·sshd가 필요한 앱 XCTest와
+스모크 테스트는 CI에서 실행하지 않으며, 제외 목록과 이유는 워크플로 파일 상단에
+있습니다.
+
 추가 터미널·레이아웃·Reverse SSH 검증은 [네이티브 스모크 테스트](../Tools/NativeSmoke/README.md)를 참고하세요.
 
 | 문서 | 내용 |
