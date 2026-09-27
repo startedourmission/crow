@@ -172,15 +172,28 @@ public struct SSHCommand: Equatable, Sendable {
 /// Hide the PTY's echo and continuation prompts while it reads Crow's startup
 /// group. The marker executes only after the complete group has been parsed;
 /// everything after it (including setup errors and OSC directory reports) stays visible.
+///
+/// `command(_:)` types the whole group ahead in one write. On macOS, bash 3.2's
+/// readline toggles canonical mode after every line, and XNU corrupts more than
+/// about 1 KB of pending type-ahead when that happens, so interactive sessions type
+/// `readinessProbe` first and send `script(_:)` only after `isShellReady`.
 public struct SSHStartupOutput: Sendable {
-    private let token: String
+    let token: String
     private let marker: Data
+    private let readyMarker: Data
+    private let lineReadyMarker: Data
     private var pending = Data()
     public private(set) var isReady = false
+    /// The shell executed `readinessProbe` and is waiting for `script(_:)`.
+    public private(set) var isShellReady = false
+    /// bash/zsh read the whole script with one `read`; other shells read it line by line.
+    public private(set) var shellReadsScript = false
 
     public init() {
         token = UUID().uuidString
         marker = Data("\u{1b}]1337;CrowStartup=\(token)\u{7}".utf8)
+        readyMarker = Data("\u{1b}]1337;CrowReady=\(token)\u{7}".utf8)
+        lineReadyMarker = Data("\u{1b}]1337;CrowReadyLine=\(token)\u{7}".utf8)
     }
 
     public func command(_ setup: String) -> String {
@@ -188,17 +201,83 @@ public struct SSHStartupOutput: Sendable {
             + "\n" + setup + "\n}\n"
     }
 
+    /// One short line, run by the shell only once it reads commands. bash/zsh report
+    /// readiness and then read the startup group in a single unechoed, non-canonical
+    /// `read`, so no line editor toggles the terminal mode while it is pending. The
+    /// echoed text of this line cannot match a marker: the escape bytes exist only in
+    /// printf's output.
+    public var readinessProbe: String {
+        let token = TerminalCommand.quote(token)
+        return "case \"${BASH_VERSION-}${ZSH_VERSION-}\" in '') printf '\\033]1337;CrowReadyLine=%s\\007' " + token
+            + ";; *) printf '\\033]1337;CrowReady=%s\\007' " + token
+            + "; IFS= read -r -s -d \"$(printf '\\037')\" crow_startup; eval \"$crow_startup\"; unset crow_startup;; esac"
+    }
+
+    /// The startup group to send once `isShellReady`; for bash/zsh it ends with the
+    /// probe's `read` delimiter (US).
+    public func script(_ setup: String) -> String {
+        command(setup) + (shellReadsScript ? "\u{1f}" : "")
+    }
+
     public mutating func receive(_ bytes: [UInt8]) -> [UInt8] {
         guard !isReady else { return bytes }
         pending.append(contentsOf: bytes)
+        if !isShellReady {
+            let reads = pending.range(of: readyMarker), lines = pending.range(of: lineReadyMarker)
+            if let range = reads ?? lines {
+                isShellReady = true; shellReadsScript = reads != nil
+                pending = Data(pending[range.upperBound...])
+            }
+        }
         if let range = pending.range(of: marker) {
             let output = Array(pending[range.upperBound...])
-            pending.removeAll(); isReady = true
+            pending.removeAll(); isReady = true; isShellReady = true
             return output
         }
         // Only a split marker can matter; never retain banners or command echo.
-        pending = Data(pending.suffix(marker.count - 1))
+        pending = Data(pending.suffix([marker.count, readyMarker.count, lineReadyMarker.count].max()! - 1))
         return []
+    }
+}
+
+/// Crow's interactive SSH startup: type only `probe`, then send the startup script
+/// once the remote shell reports that it is reading commands. If that report does
+/// not arrive before `deadline` (a password/OTP prompt, a forced command, a menu, a
+/// shell that cannot run the probe), `timedOut(at:)` becomes true and the startup
+/// commands are never typed into that program.
+public struct SSHShellStartup: Sendable {
+    public static let readinessTimeout: Duration = .seconds(20)
+    public static let readinessTimeoutMessage =
+        "SSH shell did not become ready within 20 seconds, so Crow did not send its startup commands. Reconnect to try again."
+
+    private var output = SSHStartupOutput()
+    private var setup: String?
+    public let deadline: ContinuousClock.Instant
+
+    public init(setup: String, timeout: Duration = SSHShellStartup.readinessTimeout,
+                now: ContinuousClock.Instant = .now) {
+        self.setup = setup
+        deadline = now + timeout
+    }
+
+    var token: String { output.token }
+    /// The only bytes to write before the shell is ready.
+    public var probe: String { output.readinessProbe + "\n" }
+    public var isShellReady: Bool { output.isShellReady }
+    /// The startup group ran; everything from here on is the user's terminal.
+    public var isReady: Bool { output.isReady }
+
+    /// Returns the output to show and, exactly once, the startup script to write
+    /// as soon as the shell is ready.
+    public mutating func receive(_ bytes: [UInt8]) -> (visible: [UInt8], send: String?) {
+        let visible = output.receive(bytes)
+        guard output.isShellReady, !output.isReady, let setup else { return (visible, nil) }
+        self.setup = nil
+        return (visible, output.script(setup))
+    }
+
+    public func timedOut(at now: ContinuousClock.Instant = .now) -> Bool {
+        !output.isShellReady && now >= deadline
     }
 }
 
