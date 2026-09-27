@@ -525,7 +525,8 @@ final class InputToolsTests: XCTestCase {
     let draggingLocation = NSPoint.zero
     let draggingSourceOperationMask: NSDragOperation = .copy
     let draggedImageLocation = NSPoint.zero
-    let draggedImage: NSImage? = nil
+    // Deprecated requirement that the macOS 15 SDK leaves nonisolated; NSImage is not Sendable.
+    nonisolated var draggedImage: NSImage? { nil }
     let draggingSource: Any? = nil
     let draggingSequenceNumber = 1
     var draggingFormation: NSDraggingFormation = .none
