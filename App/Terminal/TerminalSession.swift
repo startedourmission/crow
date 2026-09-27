@@ -97,12 +97,14 @@ final class TerminalSession: NSObject, Identifiable, @preconcurrency TerminalVie
     var shellEnvironment: [String]?
     @ObservationIgnored private var imageKeyMonitor: Any?
     @ObservationIgnored private var inputCaptureMonitor: Any?
-    private var shellPrompted = false
     @ObservationIgnored private var awaitingTmuxCommand = false
     @ObservationIgnored private var pendingPTYSize: (Int, Int)?
     @ObservationIgnored private var liveResizeObserver: NSObjectProtocol?
     private var stoppingProcessID: pid_t?
     #endif
+    /// Set by the OSC 7 prompt hook; read by `releaseAbandonedInputCapture` on every
+    /// platform (the iOS Citadel terminal uses it too), so it is declared outside `#if`.
+    @ObservationIgnored private var shellPrompted = false
     private var shellTask: Task<Void, Never>?
     private var remoteShellFinished = true
     private var inputTask: Task<Void, Never>?
