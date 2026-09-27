@@ -488,7 +488,10 @@ final class IOSWorkspaceTabDragView: UIView, UIDragInteractionDelegate {
               let data = try? JSONEncoder().encode(payload) else { return [] }
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: workspaceTabType.identifier, visibility: .ownProcess) { completion in
-            completion(data, nil); return nil
+            // Xcode 16.x can import this completion as main-actor isolated in modules that
+            // also use WebKit (swiftlang/swift#76171), so deliver it from the main actor.
+            Task { @MainActor in completion(data, nil) }
+            return nil
         }
         let item = UIDragItem(itemProvider: provider); item.localObject = payload
         return [item]
