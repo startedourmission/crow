@@ -10,6 +10,8 @@ spec = importlib.util.spec_from_file_location("history", pathlib.Path(__file__).
 history = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(history)
 
+ZSH_PATH = "/bin/zsh"
+
 
 class HistoryTests(unittest.TestCase):
     def setUp(self):
@@ -290,6 +292,11 @@ class ReverseToolsTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    # The "shell" tool runs commands through a hardcoded /bin/zsh
+    # (App/Agents/agent-history.py:556), so the check is for that exact path
+    # rather than any zsh on PATH. Hosts without it (e.g. stock Linux CI
+    # runners) skip this test instead of failing with FileNotFoundError.
+    @unittest.skipUnless(os.path.exists(ZSH_PATH), f"{ZSH_PATH} is required by agent-history.py reverse shell tool")
     def test_tools_edit_client_files_and_shell_uses_fixed_root(self):
         root = str(self.root)
         history.reverse_tool(root, "write_file", {"path": "note.txt", "text": "before"})
