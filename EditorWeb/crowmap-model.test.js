@@ -118,13 +118,20 @@ test('Same-priority timelines keep a vertical gap',()=>{
  const layout=layoutMap(doc),a=layout.points.get(doc.projects[0].route[0]).y,b=layout.points.get(doc.projects[1].route[0]).y;
  assert(Math.abs(a-b)>=95);
 });
-test('A split branch stays level then bends next to the destination',()=>{
+test('A split branch enters its own lane at the split and stays level to the destination',()=>{
  const r=createProject(emptyMap(),{title:'Project',date:'2026-10-01',priority:1,milestones:[{title:'A',date:'2026-10-10'},{title:'B',date:'2026-10-20'}]});
  const from=r.doc.projects[0].route[1],to=r.doc.projects[0].route[2];
- const branched=addMilestone(r.doc,from,[],{edgeID:r.doc.edges.find(e=>e.from===from&&e.to===to).id,date:'2026-10-15'});
+ // No edgeID: A keeps its edge to B and gains a second, same-priority outgoing edge (a real split).
+ const branched=addMilestone(r.doc,from,[],{date:'2026-10-15'});
  const layout=layoutMap(branched.doc),added=branched.doc.anchors.find(n=>n.title==='New milestone');
  const start=layout.points.get(from),end=layout.points.get(added.id),edge=branched.doc.edges.find(e=>e.from===from&&e.to===added.id),pts=layout.edgePoints.get(edge.id);
- if(Math.abs(start.y-end.y)>=.5){const hold=pts.at(-2);assert(Math.abs(hold.y-start.y)<1);assert(end.x-hold.x<=UNIT_WIDTH);}
+ assert.equal(branched.doc.edges.filter(e=>e.from===from).length,2);
+ assert.notEqual(start.y,end.y,'The branch must get its own lane');
+ assert.equal(layout.points.get(to).y,start.y,'The parent timeline keeps its lane');
+ assert.equal(pts[0],start);assert.equal(pts.at(-1),end);
+ const enter=pts[1];
+ assert(enter.x>start.x&&enter.x-start.x<=UNIT_WIDTH,'The branch changes lane inside the split\'s date column');
+ assert(pts.slice(1).every(p=>Math.abs(p.y-end.y)<1),'After the split the branch runs level in its own lane');
 });
 test('A timeline does not follow another project\'s priority events',()=>{
  let doc=createProject(emptyMap(),{title:'Book',date:'2026-01-01',priority:2,milestones:[{title:'Contract',date:'2026-02-01',priority:2},{title:'Cover',date:'2026-08-01',priority:1}]}).doc;
