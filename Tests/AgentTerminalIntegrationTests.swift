@@ -339,6 +339,54 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertNil(restarted.historySessionID)
     }
 
+    @MainActor func testReverseReconnectReportsUnconfirmedResumeAndKeepsTheConversationAnchor() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-unconfirmed-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let created = Date(timeIntervalSince1970: 1_000)
+        var agent = AgentTerminal(provider: .codex, directory: "/client/workspace")
+        agent.reverseHostID = HostID(rawValue: UUID())
+        agent.reverseServerDirectory = "/server/crow/session"
+        agent.firstPrompt = "Fix the cover"
+        agent.conversationTitle = "Cover"
+        agent.createdAt = created
+        let state = model.current
+        state.snapshot.agentTerminals.append(agent)
+        state.snapshot.terminalIDs.append(agent.id)
+        let request = ReverseAgentRequest(workspaceID: state.id, paneID: UUID(), directory: "/client/workspace",
+            provider: .codex, hostID: agent.reverseHostID, replacingTerminalID: agent.id)
+        struct Offline: LocalizedError { var errorDescription: String? { "server offline" } }
+
+        do {
+            _ = try await model.reverseResume(previous: agent, request: request) { _ in throw Offline() }
+            XCTFail("A failed server listing must not silently start a new conversation")
+        } catch let error as ReverseResumeUnconfirmed {
+            XCTAssertTrue(error.message.contains("server offline"), error.message)
+        }
+        do {
+            _ = try await model.reverseResume(previous: agent, request: request) { _ in ([], nil) }
+            XCTFail("A tab whose conversation is not found must ask before starting a new one")
+        } catch is ReverseResumeUnconfirmed {}
+        let kept = try XCTUnwrap(state.snapshot.agentTerminals.first { $0.id == agent.id })
+        XCTAssertEqual(kept.firstPrompt, "Fix the cover")
+        XCTAssertEqual(kept.conversationTitle, "Cover")
+        XCTAssertEqual(kept.createdAt, created)
+
+        var startNew = request
+        startNew.startNewConversation = true
+        let fresh = try await model.reverseResume(previous: agent, request: startNew) { _ in
+            XCTFail("An explicit new conversation does not read the server list")
+            return ([], nil)
+        }
+        XCTAssertNil(fresh.sessionID)
+        XCTAssertFalse(fresh.fork)
+        var blank = agent
+        blank.firstPrompt = nil
+        blank.conversationTitle = nil
+        let blankResume = try await model.reverseResume(previous: blank, request: request) { _ in ([], nil) }
+        XCTAssertNil(blankResume.sessionID, "A tab that never had a conversation has nothing to resume")
+    }
+
     @MainActor func testReverseClientToolsOverRealSSH() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-tools-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -240,6 +240,16 @@ struct ReverseAgentRequest: Identifiable {
     var fork = false
     var replacingTerminalID: UUID?
     var tmuxTerminalID: UUID?
+    /// The user chose to start a new conversation after this tab's own could not be confirmed.
+    var startNewConversation = false
+}
+
+/// Reconnecting could not confirm which server conversation belongs to the tab.
+/// Nothing was launched and the tab keeps its prompt, title and creation time, so
+/// the user can retry or explicitly start a new conversation.
+struct ReverseResumeUnconfirmed: LocalizedError, Equatable {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 enum ReverseSessionResume {
@@ -356,6 +366,37 @@ extension AppModel {
         }
         return (sessionID, sessionID != nil && fork)
     }
+
+    /// The session to reopen when reconnecting `previous`. When the server has to be
+    /// asked, a listing failure or a tab whose conversation cannot be identified
+    /// throws `ReverseResumeUnconfirmed` instead of silently starting a new
+    /// conversation (which would also erase the tab's resume clues). A tab with no
+    /// prompt or title has nothing to resume and starts fresh without asking.
+    func reverseResume(previous: AgentTerminal?, request: ReverseAgentRequest,
+                       list: @MainActor (String) async throws -> (sessions: [AgentHistoryEntry], serverTime: Double?)) async throws -> (sessionID: String?, fork: Bool) {
+        guard let previous else { return (request.sessionID, request.fork) }
+        let now = Date().timeIntervalSince1970
+        guard previous.historySessionID == nil, let directory = previous.reverseServerDirectory,
+              (previous.sessionID ?? request.sessionID) == nil || previous.forkSession == true, !request.startNewConversation else {
+            return resolvedReverseResume(previous: previous, provider: request.provider,
+                fallbackSessionID: request.sessionID, entries: [], serverTime: now)
+        }
+        let listed: (sessions: [AgentHistoryEntry], serverTime: Double?)
+        do { listed = try await list(directory) }
+        catch is CancellationError { throw CancellationError() }
+        catch {
+            throw ReverseResumeUnconfirmed(message: "Could not read this tab’s conversations on the server: "
+                + error.localizedDescription)
+        }
+        let resolved = resolvedReverseResume(previous: previous, provider: request.provider,
+            fallbackSessionID: request.sessionID, entries: listed.sessions, serverTime: listed.serverTime ?? now)
+        if resolved.sessionID != nil && !resolved.fork { return resolved }
+        let clue = [previous.firstPrompt, previous.conversationTitle].contains {
+            !($0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        }
+        guard clue else { return resolved }
+        throw ReverseResumeUnconfirmed(message: "Could not identify this tab’s conversation on the server.")
+    }
 }
 
 #if os(macOS)
@@ -432,26 +473,14 @@ extension AppModel {
         let clientID = defaults.string(forKey: "crow.reverse-agent-client-id") ?? UUID().uuidString
         defaults.set(clientID, forKey: "crow.reverse-agent-client-id")
         let previous = request.replacingTerminalID.flatMap { id in owner.snapshot.agentTerminals.first { $0.id == id } }
-        var resumeID = request.sessionID
-        var resumeFork = request.fork
-        if let previous, previous.historySessionID == nil, previous.reverseServerDirectory != nil,
-           (previous.sessionID ?? request.sessionID) == nil || previous.forkSession == true {
+        let resume = try await reverseResume(previous: previous, request: request) { directory in
             progress("Restoring this tab’s conversation…")
-            do {
-                let listed = try await AgentHistoryService.list(in: source, workspacePath: previous.reverseServerDirectory)
-                try Task.checkCancellation()
-                let resolved = resolvedReverseResume(previous: previous, provider: request.provider,
-                    fallbackSessionID: request.sessionID, entries: listed.sessions,
-                    serverTime: listed.server_time ?? Date().timeIntervalSince1970)
-                resumeID = resolved.sessionID
-                resumeFork = resolved.fork
-            } catch is CancellationError { throw CancellationError() } catch {}
-        } else if let previous {
-            let resolved = resolvedReverseResume(previous: previous, provider: request.provider,
-                fallbackSessionID: request.sessionID, entries: [], serverTime: Date().timeIntervalSince1970)
-            resumeID = resolved.sessionID
-            resumeFork = resolved.fork
+            let listed = try await AgentHistoryService.list(in: source, workspacePath: directory)
+            try Task.checkCancellation()
+            return (listed.sessions, listed.server_time)
         }
+        let resumeID = resume.sessionID
+        let resumeFork = resume.fork
         var parameters: [String: Any] = ["action": "reverse-prepare", "workspace": source.snapshot.rootPath,
             "provider": request.provider.rawValue, "client_id": clientID, "client_root": root.path,
             "client_python": python, "client_runtime": runtime.path, "runtime_source": script, "connector": connector]

@@ -454,6 +454,7 @@ struct ReverseAgentSheet: View {
     @State private var provider: AgentProvider = .claude
     @State private var status: String?
     @State private var error: String?
+    @State private var resumeUnconfirmed = false
     @State private var launchTask: Task<Void, Never>?
     private var busy: Bool { launchTask != nil }
     private var providers: [AgentProvider] {
@@ -485,9 +486,18 @@ struct ReverseAgentSheet: View {
                 HStack(spacing: 8) { if busy { ProgressView().controlSize(.small) }; Text(status).font(.caption) }
             }
             if let error { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled) }
+            if resumeUnconfirmed {
+                Text("Open Agent tries again. Start New Conversation opens an empty conversation in this tab and forgets the previous one.")
+                    .font(.caption).foregroundStyle(CrowTheme.textDim)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { launchTask?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+                if resumeUnconfirmed {
+                    Button("Start New Conversation") { launch(startNew: true) }
+                        .disabled(busy || hostID == nil || !providers.contains(provider))
+                        .accessibilityIdentifier("crow.reverse-agent.start-new")
+                }
                 Button("Open Agent") { launch() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled(busy || hostID == nil || !providers.contains(provider))
             }
@@ -504,16 +514,19 @@ struct ReverseAgentSheet: View {
             .interactiveDismissDisabled(busy)
     }
 
-    private func launch() {
+    private func launch(startNew: Bool = false) {
         guard let host = model.hosts.first(where: { $0.id == hostID }) else { return }
-        var value = request; value.provider = provider
+        var value = request; value.provider = provider; value.startNewConversation = startNew
         error = nil
         launchTask = Task { @MainActor in
             defer { launchTask = nil }
             do {
                 try await model.launchReverseAgent(value, host: host) { status = $0 }
                 dismiss()
-            } catch is CancellationError {} catch { self.error = error.localizedDescription; status = nil }
+            } catch is CancellationError {} catch {
+                self.error = error.localizedDescription; status = nil
+                resumeUnconfirmed = error is ReverseResumeUnconfirmed
+            }
         }
     }
 }
