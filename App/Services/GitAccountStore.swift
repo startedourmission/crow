@@ -58,18 +58,48 @@ struct GitAccountCredential: Codable, Sendable {
 final class GitAccountStore {
     private(set) var account: GitHubAccount?
     private(set) var storageError: String?
+    /// A Keychain item saved before the login was kept in UserDefaults. Its login is
+    /// unknown until a feature or Load Saved Account reads the item.
+    private(set) var savedWithoutLogin = false
+    /// Saved credentials exist, whether or not the login is known yet.
+    var hasSavedCredential: Bool { account != nil || savedWithoutLogin }
     private let key: String
+    /// The login is not secret. Settings can show it without unlocking the Keychain.
+    private var loginKey: String { "crow.git-login." + key }
 
     init(key: String = "git-github-account-v1") { self.key = key }
 
     func credential() throws -> GitAccountCredential? {
-        guard let data = try SecureStore.data(for: key) else { return nil }
-        return try JSONDecoder().decode(GitAccountCredential.self, from: data)
+        guard let data = try SecureStore.data(for: key) else { remember(nil); return nil }
+        let credential = try JSONDecoder().decode(GitAccountCredential.self, from: data)
+        remember(credential.account.login)
+        return credential
     }
 
+    /// Display state only. Never reads the Keychain secret, so opening Settings cannot
+    /// prompt. Accounts saved by earlier versions have no stored login; for those only
+    /// the item's attributes are queried (`kSecReturnAttributes`), never its data.
     func reload() {
-        do { account = try credential()?.account; storageError = nil }
-        catch { account = nil; storageError = error.localizedDescription }
+        storageError = nil
+        savedWithoutLogin = false
+        if let login = UserDefaults.standard.string(forKey: loginKey), !login.isEmpty {
+            account = GitHubAccount(login: login, name: nil)
+            return
+        }
+        account = nil
+        do { savedWithoutLogin = try SecureStore.exists(for: key) }
+        catch { storageError = error.localizedDescription }
+    }
+
+    private func remember(_ login: String?) {
+        savedWithoutLogin = false
+        if let login, !login.isEmpty {
+            UserDefaults.standard.set(login, forKey: loginKey)
+            account = GitHubAccount(login: login, name: nil)
+        } else {
+            UserDefaults.standard.removeObject(forKey: loginKey)
+            account = nil
+        }
     }
 
     func save(accountID: String, token: String) throws {
@@ -85,11 +115,13 @@ final class GitAccountStore {
         }
         let credential = GitAccountCredential(account: GitHubAccount(login: login, name: nil), token: token)
         try SecureStore.set(JSONEncoder().encode(credential), for: key)
-        account = credential.account; storageError = nil
+        remember(login)
+        storageError = nil
     }
 
     func remove() throws {
         try SecureStore.remove(key)
-        account = nil; storageError = nil
+        remember(nil)
+        storageError = nil
     }
 }

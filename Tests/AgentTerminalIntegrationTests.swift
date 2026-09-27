@@ -213,6 +213,180 @@ final class AgentTerminalIntegrationTests: XCTestCase {
         XCTAssertTrue(model.aiUsageSource.state === state)
     }
 
+    @MainActor func testDisconnectedReverseAgentKeepsTheConversationAnchor() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-anchor-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let state = model.current
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        var local = AgentTerminal(provider: .codex, directory: root.path)
+        local.firstPrompt = "local prompt"
+        local.createdAt = created
+        state.snapshot.agentTerminals.append(local)
+        let localSession = model.terminal(local.id, in: state)
+        XCTAssertNil(localSession.startupUnavailableMessage)
+        let rebound = try XCTUnwrap(state.snapshot.agentTerminals.first { $0.id == local.id })
+        XCTAssertNil(rebound.firstPrompt)
+        XCTAssertNotEqual(rebound.createdAt, created)
+        var agent = AgentTerminal(provider: .claude, directory: "/client/workspace")
+        agent.reverseHostID = HostID(rawValue: UUID())
+        agent.reverseServerDirectory = "/server/crow/session"
+        agent.firstPrompt = "Keep this conversation"
+        agent.conversationTitle = "Cover"
+        agent.createdAt = created
+        state.snapshot.agentTerminals.append(agent)
+        let session = model.terminal(agent.id, in: state)
+        XCTAssertEqual(session.startupUnavailableMessage, "Reverse agent disconnected.")
+        let restored = try XCTUnwrap(state.snapshot.agentTerminals.first { $0.id == agent.id })
+        XCTAssertEqual(restored.firstPrompt, "Keep this conversation")
+        XCTAssertEqual(restored.conversationTitle, "Cover")
+        XCTAssertEqual(restored.createdAt, created)
+    }
+
+    @MainActor func testReverseReconnectResumesTheTabsOwnConversation() throws {
+        let directory = "/server/crow/session"
+        let serverNow = Date().timeIntervalSince1970 + 3600
+        let created = Date()
+        func entry(_ id: String, prompt: String, title: String? = nil, started: Double, modified: Double? = nil) -> AgentHistoryEntry {
+            .init(id: id, provider: .codex, path: "/history/" + id, title: title ?? prompt, modified: modified ?? started,
+                  size: 20, first: .init(role: "user", text: prompt), recent: [], tokens: nil, started: started, cwd: directory)
+        }
+        let fresh = entry("fresh", prompt: "Fix the cover", started: serverNow, modified: serverNow + 10)
+        let older = entry("older", prompt: "Older work", started: serverNow - 600, modified: serverNow + 50)
+        let samePrompt = entry("same", prompt: "Fix the cover", started: serverNow + 5)
+        let cover = entry("cover", prompt: "Layout", title: "Cover", started: serverNow - 30, modified: serverNow)
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory + "/", createdAt: created,
+            firstPrompt: "Fix the cover", conversationTitle: nil, entries: [older, fresh, samePrompt], serverTime: serverNow,
+            claimed: []), "Two matching prompts stay unresolved; the newest session is not guessed")
+        XCTAssertEqual(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
+            firstPrompt: "Fix the cover", conversationTitle: "Cover", entries: [older, fresh, cover], serverTime: serverNow,
+            claimed: ["fresh"]), "cover", "A stored title still identifies the tab when its prompt session is already claimed")
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
+            firstPrompt: nil, conversationTitle: nil, entries: [older, fresh], serverTime: serverNow,
+            claimed: []))
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: Date(timeIntervalSince1970: serverNow + 5_000),
+            firstPrompt: nil, conversationTitle: nil, entries: [older, fresh], serverTime: serverNow,
+            claimed: []), "A blank tab must not reopen the folder's newest session, which may be a closed tab's conversation")
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
+            firstPrompt: nil, conversationTitle: nil, entries: [entry("parent", prompt: "Parent", started: serverNow - 50), fresh],
+            serverTime: serverNow, claimed: [], excluding: "parent"), "A fork without a prompt or title match is not guessed either")
+        XCTAssertNil(ReverseSessionResume.sessionID(provider: .codex, directory: directory, createdAt: created,
+            firstPrompt: nil, conversationTitle: nil, entries: [entry("parent", prompt: "Parent", started: serverNow)],
+            serverTime: serverNow, claimed: [], excluding: "parent"))
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-resume-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let host = HostID(rawValue: UUID())
+        var agent = AgentTerminal(provider: .codex, directory: "/client/workspace")
+        agent.reverseHostID = host
+        agent.reverseServerDirectory = directory
+        agent.name = "Cover pass"
+        agent.isPinned = true
+        agent.conversationTitle = "Cover"
+        agent.firstPrompt = "Fix the cover"
+        agent.createdAt = created
+        var sibling = AgentTerminal(provider: .codex, directory: "/client/workspace")
+        sibling.reverseHostID = host
+        sibling.reverseServerDirectory = directory
+        sibling.historySessionID = "fresh"
+        let state = model.current
+        state.snapshot.agentTerminals.append(contentsOf: [agent, sibling])
+        state.snapshot.terminalIDs.append(contentsOf: [agent.id, sibling.id])
+        let claim = model.reverseSessionClaim(around: agent)
+        XCTAssertEqual(claim.claimed, Set(["fresh"]))
+        XCTAssertFalse(claim.unboundSibling)
+        let resumed = model.resolvedReverseResume(previous: agent, provider: .codex, fallbackSessionID: nil,
+            entries: [older, fresh, cover], serverTime: serverNow)
+        XCTAssertEqual(resumed.sessionID, "cover")
+        XCTAssertFalse(resumed.fork)
+        var known = agent
+        known.historySessionID = "kept"
+        XCTAssertEqual(model.resolvedReverseResume(previous: known, provider: .codex, fallbackSessionID: nil, entries: [fresh], serverTime: serverNow).sessionID, "kept")
+        var fork = agent
+        fork.sessionID = "parent"
+        fork.forkSession = true
+        let child = model.resolvedReverseResume(previous: fork, provider: .codex, fallbackSessionID: "parent",
+            entries: [entry("parent", prompt: "Parent", started: serverNow - 50), entry("child", prompt: "Fix the cover", title: "Child", started: serverNow)],
+            serverTime: serverNow)
+        XCTAssertEqual(child.sessionID, "child")
+        XCTAssertFalse(child.fork)
+        sibling.historySessionID = nil
+        sibling.sessionID = nil
+        state.snapshot.agentTerminals[1] = sibling
+        var blank = agent
+        blank.firstPrompt = nil
+        blank.conversationTitle = nil
+        XCTAssertNil(model.resolvedReverseResume(previous: blank, provider: .codex, fallbackSessionID: nil,
+            entries: [older, fresh], serverTime: serverNow).sessionID)
+        let kept = ReverseSessionResume.reconnectedAgent(agent, provider: .codex, directory: "/client/workspace",
+            hostID: host, serverDirectory: directory, sessionID: "older", fork: false)
+        XCTAssertEqual(kept.id, agent.id)
+        XCTAssertEqual(kept.name, "Cover pass")
+        XCTAssertTrue(kept.isPinned)
+        XCTAssertEqual(kept.conversationTitle, "Cover")
+        XCTAssertEqual(kept.firstPrompt, "Fix the cover")
+        XCTAssertEqual(kept.createdAt, created)
+        XCTAssertEqual(kept.historySessionID, "older")
+        XCTAssertEqual(kept.currentSessionID, "older")
+        let restarted = ReverseSessionResume.reconnectedAgent(agent, provider: .codex, directory: "/client/workspace",
+            hostID: host, serverDirectory: directory, sessionID: nil, fork: false)
+        XCTAssertEqual(restarted.id, agent.id)
+        XCTAssertEqual(restarted.name, "Cover pass")
+        XCTAssertTrue(restarted.isPinned)
+        XCTAssertNil(restarted.conversationTitle)
+        XCTAssertNil(restarted.firstPrompt)
+        XCTAssertNil(restarted.historySessionID)
+    }
+
+    @MainActor func testReverseReconnectReportsUnconfirmedResumeAndKeepsTheConversationAnchor() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-unconfirmed-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root)
+        defer { model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let created = Date(timeIntervalSince1970: 1_000)
+        var agent = AgentTerminal(provider: .codex, directory: "/client/workspace")
+        agent.reverseHostID = HostID(rawValue: UUID())
+        agent.reverseServerDirectory = "/server/crow/session"
+        agent.firstPrompt = "Fix the cover"
+        agent.conversationTitle = "Cover"
+        agent.createdAt = created
+        let state = model.current
+        state.snapshot.agentTerminals.append(agent)
+        state.snapshot.terminalIDs.append(agent.id)
+        let request = ReverseAgentRequest(workspaceID: state.id, paneID: UUID(), directory: "/client/workspace",
+            provider: .codex, hostID: agent.reverseHostID, replacingTerminalID: agent.id)
+        struct Offline: LocalizedError { var errorDescription: String? { "server offline" } }
+
+        do {
+            _ = try await model.reverseResume(previous: agent, request: request) { _ in throw Offline() }
+            XCTFail("A failed server listing must not silently start a new conversation")
+        } catch let error as ReverseResumeUnconfirmed {
+            XCTAssertTrue(error.message.contains("server offline"), error.message)
+        }
+        do {
+            _ = try await model.reverseResume(previous: agent, request: request) { _ in ([], nil) }
+            XCTFail("A tab whose conversation is not found must ask before starting a new one")
+        } catch is ReverseResumeUnconfirmed {}
+        let kept = try XCTUnwrap(state.snapshot.agentTerminals.first { $0.id == agent.id })
+        XCTAssertEqual(kept.firstPrompt, "Fix the cover")
+        XCTAssertEqual(kept.conversationTitle, "Cover")
+        XCTAssertEqual(kept.createdAt, created)
+
+        var startNew = request
+        startNew.startNewConversation = true
+        let fresh = try await model.reverseResume(previous: agent, request: startNew) { _ in
+            XCTFail("An explicit new conversation does not read the server list")
+            return ([], nil)
+        }
+        XCTAssertNil(fresh.sessionID)
+        XCTAssertFalse(fresh.fork)
+        var blank = agent
+        blank.firstPrompt = nil
+        blank.conversationTitle = nil
+        let blankResume = try await model.reverseResume(previous: blank, request: request) { _ in ([], nil) }
+        XCTAssertNil(blankResume.sessionID, "A tab that never had a conversation has nothing to resume")
+    }
+
     @MainActor func testReverseClientToolsOverRealSSH() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-reverse-tools-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

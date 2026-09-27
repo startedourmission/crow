@@ -118,6 +118,7 @@ final class GitAccountTests: XCTestCase {
         try restored.remove()
         XCTAssertNil(try restored.credential())
         XCTAssertNil(restored.account)
+        XCTAssertFalse(restored.hasSavedCredential)
     }
 
     @MainActor func testExistingCredentialFormatRemainsReadable() throws {
@@ -126,7 +127,30 @@ final class GitAccountTests: XCTestCase {
         try SecureStore.set(Data(#"{"account":{"login":"legacy","name":"Existing Account"},"token":"existing-token"}"#.utf8), for: key)
         let store = GitAccountStore(key: key)
         store.reload()
-        XCTAssertEqual(store.account?.login, "legacy")
+        // Saved before the login was kept outside the Keychain: the login is unknown
+        // without reading the secret, but the saved account must still count.
+        XCTAssertNil(store.account, "Opening the saved-account display must not read the Keychain data")
+        XCTAssertTrue(store.hasSavedCredential, "An existing Keychain item must keep the saved-credential clone option")
+        XCTAssertNil(store.storageError)
+        XCTAssertEqual(try store.credential()?.account.login, "legacy")
         XCTAssertEqual(try store.credential()?.token, "existing-token")
+        store.reload()
+        XCTAssertEqual(store.account?.login, "legacy")
+        XCTAssertTrue(store.hasSavedCredential)
+        try store.remove()
+        store.reload()
+        XCTAssertNil(store.account)
+        XCTAssertFalse(store.hasSavedCredential)
+    }
+
+    @MainActor func testNoSavedCredentialIsNotReportedAsSaved() throws {
+        let key = "test-git-account-" + UUID().uuidString
+        defer { try? SecureStore.remove(key) }
+        XCTAssertFalse(try SecureStore.exists(for: key))
+        let store = GitAccountStore(key: key)
+        store.reload()
+        XCTAssertNil(store.account)
+        XCTAssertFalse(store.hasSavedCredential)
+        XCTAssertNil(store.storageError)
     }
 }

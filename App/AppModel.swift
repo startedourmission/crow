@@ -53,6 +53,8 @@ final class AppModel {
     var crowmapPanel = CrowmapPanelSnapshot() { didSet { schedulePersist() } }
     var crowmapTabs: [CrowmapPanelTab] = []
     var crowmapPanelFocused = false
+    var crowmapFocusNodeID: String?
+    var crowmapSidebarNodeID: String?
     var crowmapEnabled: Bool {
         get { settings.effectiveCrowmapEnabled }
         set {
@@ -99,6 +101,12 @@ final class AppModel {
         selectTab(entry.tab, in: pane.id)
         if case .terminal = entry.tab { compactSurface = .terminal; terminalVisible = true } else { compactSurface = .editor }
         refreshFiles(); schedulePersist()
+    }
+    func focusCrowmapMilestone(_ url: URL, nodeID: String) {
+        openCrowmap(url)
+        crowmapFocusNodeID = nodeID
+        crowmapSidebarNodeID = nodeID
+        crowmapPanelFocused = true
     }
     func showCrowmap() {
         guard crowmapEnabled else { return }
@@ -1799,7 +1807,10 @@ final class AppModel {
             remote: state.remote, fontSize: settings.terminalFontSize, useSystemSSH: useSystemSSH)
         if let index = state.snapshot.agentTerminals.firstIndex(where: { $0.id == id }),
            state.snapshot.agentTerminals[index].sessionID == nil,
-           state.snapshot.agentTerminals[index].historySessionID == nil {
+           state.snapshot.agentTerminals[index].historySessionID == nil,
+           state.snapshot.agentTerminals[index].reverseHostID == nil {
+            // A local tab is about to launch a new CLI. A reverse tab is not:
+            // clearing its prompt would make Reconnect start a blank conversation.
             state.snapshot.agentTerminals[index].createdAt = Date()
             state.snapshot.agentTerminals[index].firstPrompt = nil
         }
@@ -1824,7 +1835,7 @@ final class AppModel {
             }
             if agent.reverseHostID != nil {
                 session.launchCommand = nil
-                session.startupUnavailableMessage = "Reverse agent disconnected. Use Restart Reverse Agent from the tab menu to reconnect to the client workspace."
+                session.startupUnavailableMessage = "Reverse agent disconnected."
             }
         }
         configureTerminalImagePaste(session, id: id, in: state)

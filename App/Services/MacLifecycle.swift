@@ -109,7 +109,7 @@ struct WindowCloseGuard: NSViewRepresentable {
             if window?.isKeyWindow == true { onActivate?() }
         }
         func applyFloatingMode() {
-            guard let window else { return }
+            guard let window, !window.inLiveResize else { return }
             guard !floatingController.waitingForFullscreenExit else { return }
             if floating && window.styleMask.contains(.fullScreen) {
                 floatingController.waitingForFullscreenExit = true
@@ -131,10 +131,26 @@ struct WindowCloseGuard: NSViewRepresentable {
             onActivate?()
             previous?.windowDidBecomeKey?(notification)
         }
+        func windowWillStartLiveResize(_ notification: Notification) {
+            previous?.windowWillStartLiveResize?(notification)
+        }
+        func windowDidResize(_ notification: Notification) {
+            previous?.windowDidResize?(notification)
+        }
+        func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+            previous?.windowWillResize?(sender, to: frameSize) ?? frameSize
+        }
+        func windowDidMove(_ notification: Notification) {
+            previous?.windowDidMove?(notification)
+        }
+        func windowDidChangeScreen(_ notification: Notification) {
+            previous?.windowDidChangeScreen?(notification)
+        }
         func windowDidEndLiveResize(_ notification: Notification) {
             if let window { floatingController.rememberSize(of: window) }
             previous?.windowDidEndLiveResize?(notification)
         }
+
         func windowWillClose(_ notification: Notification) {
             onClose?()
             previous?.windowWillClose?(notification)

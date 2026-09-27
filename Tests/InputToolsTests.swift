@@ -369,6 +369,29 @@ final class InputToolsTests: XCTestCase {
         XCTAssertEqual(window.level, .normal)
     }
 
+    @MainActor func testHoverResizeNotifiesGuardWithoutUnrecognizedSelector() throws {
+        final class ResizeSpy: NSObject, NSWindowDelegate {
+            var resized = false
+            func windowDidResize(_ notification: Notification) { resized = true }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("crow-hover-resize-" + UUID().uuidString)
+        let model = AppModel(vaultURL: root), controller = FloatingWindowController()
+        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 900, height: 600),
+            styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close(); model.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let spy = ResizeSpy()
+        window.delegate = spy
+        let guardView = WindowCloseGuard.GuardView(model: model, floatingController: controller)
+        window.contentView = guardView
+        guardView.floating = true
+        controller.apply(true, to: window)
+        window.setFrame(NSRect(x: 80, y: 80, width: 420, height: 320), display: true)
+        XCTAssertTrue(spy.resized)
+        guardView.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
+        XCTAssertTrue(spy.resized)
+    }
+
     @MainActor func testFloatingGreenButtonZoomsWithoutEnteringFullScreen() throws {
         let window = FloatingZoomTestWindow(contentRect: NSRect(x: 100, y: 100, width: 900, height: 600),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -415,6 +438,21 @@ final class InputToolsTests: XCTestCase {
             }
         }
         controller.apply(false, to: window)
+    }
+
+    @MainActor func testTerminalViewLeavesWindowResizeBorderToAppKit() {
+        let session = TerminalSession(id: UUID(), workspace: Workspace(name: "Resize", kind: .local, connection: .local), directory: "/tmp", remote: nil, fontSize: 14)
+        defer { session.stop() }
+        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 420, height: 300),
+            styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        session.view.frame = NSRect(origin: .zero, size: window.contentView!.bounds.size)
+        window.contentView = session.view
+        defer { window.close() }
+        XCTAssertEqual(session.view.intrinsicContentSize.width, NSView.noIntrinsicMetric)
+        XCTAssertNil(session.view.hitTest(NSPoint(x: 1, y: session.view.bounds.midY)))
+        XCTAssertNil(session.view.hitTest(NSPoint(x: session.view.bounds.maxX - 1, y: session.view.bounds.midY)))
+        XCTAssertNotNil(session.view.hitTest(NSPoint(x: session.view.bounds.midX, y: session.view.bounds.midY)))
     }
     #else
     @MainActor func testIPadSnippetTargetsFocusedSplitAndRestoresSelection() throws {

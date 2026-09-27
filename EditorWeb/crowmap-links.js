@@ -1,4 +1,4 @@
-import {readNote,validateMap,uid,day,flatNote,linkLeaves,normalizeTimeline,TIMELINE_COLORS} from './crowmap-model.js';
+import {readNote,validateMap,uid,day,flatNote,linkLeaves,normalizeTimeline,TIMELINE_COLORS,removeMilestone} from './crowmap-model.js';
 import {editFrontmatter,valueType} from './frontmatter-model.js';
 
 export const noteLink = node => '[[' + (/^[0-9a-f-]{32,36}\.md$/i.test(node.note)?node.title:node.note.replace(/\.md$/, '')) + ']]';
@@ -35,7 +35,7 @@ export function linkedTransaction(result,texts={}) {
     else values.project=noteLink(start);
     write(a.note,values,['crowmap',...(a.kind==='start'?['project']:[]),'rejoin','replaces','inactive_next',...(a.kind==='revision'?['milestones']:[])]);
   }
-  for(const n of doc.notes){if(n.device)continue;const values={};if(n.attach.kind==='edge'){const e=doc.edges.find(e=>e.id===n.attach.id);values.between=[noteLink(byID.get(e.from)),noteLink(byID.get(e.to))];}else values.milestone=noteLink(byID.get(n.attach.id));write(n.note,values,['crowmap','attach',...(n.attach.kind==='edge'?['milestone']:['between'])]);}
+  for(const n of doc.notes){if(n.device)continue;const values={date:n.date};if(n.attach.kind==='edge'){const e=doc.edges.find(e=>e.id===n.attach.id);values.between=[noteLink(byID.get(e.from)),noteLink(byID.get(e.to))];}else values.milestone=noteLink(byID.get(n.attach.id));write(n.note,values,['crowmap','attach',...(n.attach.kind==='edge'?['milestone']:['between'])]);}
   doc.noteLinks=true;const writes=[...output.values()];return {doc:resolveMap(validateMap(doc),{...texts,...Object.fromEntries(writes.map(w=>[w.name,w.text]))}),writes};
 }
 
@@ -127,6 +127,16 @@ export function graphLinks(doc,texts) {
 export function deleteWorkNote(source,id,texts) {
   return deleteWorkNotes(source,[id],texts);
 }
+export function deleteMilestone(source,id,texts) {
+ const node=source.anchors.find(a=>a.id===id);
+ const result=removeMilestone(source,id);
+ const linked=linkedTransaction(result,texts);
+ const merged={...texts,...Object.fromEntries(linked.writes.map(w=>[w.name,w.text]))};
+ const cleaned=removeNoteFiles(linked.doc,[node],merged);
+ const writes=new Map(linked.writes.map(w=>[w.name,w]));
+ for(const w of cleaned.writes)writes.set(w.name,{name:w.name,text:w.text,expected:texts[w.name]});
+ return {doc:cleaned.doc,writes:[...writes.values()],deletes:cleaned.deletes};
+}
 export function deleteWorkNotes(source,ids,texts) {
   const doc=structuredClone(source),selected=new Set(ids),nodes=doc.notes.filter(n=>selected.has(n.id));if(!nodes.length||nodes.length!==selected.size)throw Error('Work note not found.');
   doc.notes=doc.notes.filter(n=>!selected.has(n.id));
@@ -172,11 +182,9 @@ export function movedDate(doc,id,requested){
   const following=followingMilestoneIDs(doc,id),preceding=precedingMilestoneIDs(doc,id);
   if(![...preceding].some(fid=>day(anchors.get(fid).date)>value)){
    for(const edge of doc.edges){if(edge.to===id)min=Math.max(min,day(anchors.get(edge.from).date));}
-   for(const note of doc.notes){if(note.attach.kind!=='edge')continue;const edge=doc.edges.find(e=>e.id===note.attach.id);if(edge.to===id)min=Math.max(min,day(note.date));}
   }
   if(![...following].some(fid=>day(anchors.get(fid).date)<value)){
    for(const edge of doc.edges){if(edge.from===id)max=Math.min(max,day(anchors.get(edge.to).date));}
-   for(const note of doc.notes){if(note.attach.kind!=='edge')continue;const edge=doc.edges.find(e=>e.id===note.attach.id);if(edge.from===id)max=Math.min(max,day(note.date));}
   }
   value=Math.min(max,Math.max(min,value));
  }
@@ -188,15 +196,16 @@ function applyDateShift(doc,id,requested,preserveGaps=false){
  node.date=requested;
  const chain=delta>0?following:delta<0?preceding:new Set();
  const crosses=delta>0?[...following].some(fid=>day(doc.anchors.find(a=>a.id===fid).date)<to):delta<0?[...preceding].some(fid=>day(doc.anchors.find(a=>a.id===fid).date)>to):false;
- if(!crosses)return changed;
- if(preserveGaps){
-  for(const a of doc.anchors){if(!chain.has(a.id))continue;a.date=isoDay(day(a.date)+delta);changed.add(a.id);}
-  const shifted=new Set([id,...chain]);
-  for(const n of doc.notes){if(n.device)continue;const edge=n.attach.kind==='edge'?doc.edges.find(e=>e.id===n.attach.id):null,toward=delta>0?edge?.from:edge?.to;if(edge&&shifted.has(toward)||n.attach.kind==='anchor'&&chain.has(n.attach.id)){n.date=isoDay(day(n.date)+delta);changed.add(n.id);}}
- }else{
-  const gathered=new Set([id]);
-  for(const a of doc.anchors){if(!chain.has(a.id)||(delta>0?day(a.date)>=to:day(a.date)<=to))continue;a.date=requested;changed.add(a.id);gathered.add(a.id);}
-  for(const n of doc.notes){if(!n.device&&n.attach.kind==='anchor'&&gathered.has(n.attach.id)&&n.attach.id!==id){n.date=requested;changed.add(n.id);}}
+ if(crosses){
+  if(preserveGaps){
+   for(const a of doc.anchors){if(!chain.has(a.id))continue;a.date=isoDay(day(a.date)+delta);changed.add(a.id);}
+   const shifted=new Set([id,...chain]);
+   for(const n of doc.notes){if(n.device)continue;const edge=n.attach.kind==='edge'?doc.edges.find(e=>e.id===n.attach.id):null,toward=delta>0?edge?.from:edge?.to;if(edge&&shifted.has(toward)||n.attach.kind==='anchor'&&chain.has(n.attach.id)){n.date=isoDay(day(n.date)+delta);changed.add(n.id);}}
+  }else{
+   const gathered=new Set([id]);
+   for(const a of doc.anchors){if(!chain.has(a.id)||(delta>0?day(a.date)>=to:day(a.date)<=to))continue;a.date=requested;changed.add(a.id);gathered.add(a.id);}
+   for(const n of doc.notes){if(!n.device&&n.attach.kind==='anchor'&&gathered.has(n.attach.id)&&n.attach.id!==id){n.date=requested;changed.add(n.id);}}
+  }
  }
  const anchors=new Map(doc.anchors.map(a=>[a.id,a]));
  for(const n of doc.notes){
