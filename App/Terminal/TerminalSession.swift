@@ -712,7 +712,9 @@ class CrowIOSTerminalView: SwiftTerm.TerminalView, ImagePasteTerminal, SnippetIn
 #endif
 
 #if os(macOS)
-private enum TerminalWindowChrome {
+// Reads NSWindow/NSView state, which is main-actor isolated. Callers are NSView
+// hitTest overrides, so they already run on the main actor.
+@MainActor private enum TerminalWindowChrome {
     static let resizeInset: CGFloat = 5
     static func claimsPoint(_ point: NSPoint, in view: NSView) -> Bool {
         guard let window = view.window, window.styleMask.contains(.resizable), !window.styleMask.contains(.fullScreen),
