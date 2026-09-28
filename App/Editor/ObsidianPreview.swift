@@ -1,6 +1,7 @@
 import CrowCore
 import CryptoKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 @MainActor @Observable final class ObsidianPreviewStatus {
@@ -152,6 +153,71 @@ struct ObsidianDocumentView: View {
         guard path != root, path.hasPrefix(root == "/" ? "/" : root + "/") else { throw CommandError("The linked file is outside this workspace.") }
         return path
     }
+    /// The Obsidian vault that owns a document: the nearest folder with `.obsidian`,
+    /// or the workspace root. Paths inside Canvas and Bases are relative to it.
+    struct Vault: Sendable {
+        var prefix = ""
+        var types: [String: String] = [:]
+        var newFileLocation = "root"
+        var newFileFolder = ""
+    }
+    static func vault(for relative: String, in state: WorkspaceState) async -> Vault {
+        let root = state.snapshot.rootPath
+        var folders: [String] = []
+        var parts = relative.split(separator: "/").map(String.init).dropLast()
+        while true { folders.append(parts.joined(separator: "/")); if parts.isEmpty { break }; parts = parts.dropLast() }
+        func absolute(_ folder: String) -> String { folder.isEmpty ? root : (root as NSString).appendingPathComponent(folder) }
+        var found: String?
+        if state.snapshot.workspace.isRemote {
+            guard let remote = state.remote else { return Vault() }
+            for folder in folders {
+                if let entries = try? await remote.listing(absolute(folder)), entries.contains(where: { $0.entry.name == ".obsidian" && $0.entry.isDirectory }) { found = folder; break }
+            }
+        } else {
+            found = folders.first { folder in
+                var directory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: (absolute(folder) as NSString).appendingPathComponent(".obsidian"), isDirectory: &directory) && directory.boolValue
+            }
+        }
+        guard let prefix = found else { return Vault() }
+        var vault = Vault(prefix: prefix)
+        let config = (absolute(prefix) as NSString).appendingPathComponent(".obsidian")
+        func json(_ name: String) async -> [String: Any]? {
+            let path = (config as NSString).appendingPathComponent(name)
+            let data: Data?
+            if state.snapshot.workspace.isRemote { data = try? await state.remote?.readData(path, maximumSize: 1024 * 1024) }
+            else { data = try? await Task.detached(priority: .utility) { try Data(contentsOf: URL(fileURLWithPath: path)) }.value }
+            return data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
+        if let types = await json("types.json")?["types"] as? [String: String] { vault.types = types }
+        if let app = await json("app.json") {
+            vault.newFileLocation = app["newFileLocation"] as? String ?? "root"
+            vault.newFileFolder = app["newFileFolderPath"] as? String ?? ""
+        }
+        return vault
+    }
+    /// Create a note without overwriting, choosing "Untitled", "Untitled 1", …
+    static func createNote(in folder: String, content: String, state: WorkspaceState) async throws -> String {
+        guard !folder.contains("\0"), !folder.hasPrefix("/"), !folder.split(separator: "/").contains("..") else { throw CommandError("Choose a folder inside this workspace.") }
+        let root = state.snapshot.rootPath, directory = folder.isEmpty ? root : (root as NSString).appendingPathComponent(folder)
+        for index in 0..<500 {
+            let name = index == 0 ? "Untitled.md" : "Untitled \(index).md"
+            let path = (directory as NSString).appendingPathComponent(name)
+            do {
+                if state.snapshot.workspace.isRemote {
+                    guard let remote = state.remote else { throw FileFailure.disconnected }
+                    if (try? await remote.listing(directory))?.contains(where: { $0.entry.name == name }) == true { continue }
+                    try await remote.create(path, directory: false)
+                    if !content.isEmpty { try await remote.write(content, path: path, expected: "") }
+                } else {
+                    try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+                    try Data(content.utf8).write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
+                }
+                return (folder.isEmpty ? "" : folder + "/") + name
+            } catch let error as CocoaError where error.code == .fileWriteFileExists { continue }
+        }
+        throw CommandError("Could not choose a name for the new note.")
+    }
     static func bytes(_ path: String, in state: WorkspaceState, limit: Int) async throws -> Data {
         if state.snapshot.workspace.isRemote {
             guard let remote = state.remote else { throw FileFailure.disconnected }
@@ -171,7 +237,26 @@ struct ObsidianDocumentView: View {
         cache.countLimit = 600
         return cache
     }()
+    private static let remoteImageSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15; configuration.httpCookieStorage = nil
+        return URLSession(configuration: configuration)
+    }()
+    /// Cover images and link previews may point to the web, as in Obsidian.
+    static func remoteImage(_ value: String) async throws -> [String: String] {
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { throw CommandError("Unsupported image address.") }
+        let key = ("remote|" + value) as NSString
+        if let image = thumbnails.object(forKey: key) { return ["image": image as String] }
+        let (bytes, response) = try await remoteImageSession.bytes(from: url)
+        guard (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else { throw CommandError("The image could not be downloaded.") }
+        var data = Data()
+        for try await byte in bytes { data.append(byte); if data.count > 12 * 1024 * 1024 { throw FileFailure.tooLarge } }
+        let image = try await Task.detached(priority: .utility) { try ImagePreview.canvasThumbnail(data) }.value
+        thumbnails.setObject(image as NSString, forKey: key, cost: image.utf8.count)
+        return ["image": image]
+    }
     static func asset(_ relative: String, in state: WorkspaceState) async throws -> [String: String] {
+        if relative.hasPrefix("http://") || relative.hasPrefix("https://") { return try await remoteImage(relative) }
         let path = try await resolve(relative, in: state)
         let ext = (path as NSString).pathExtension.lowercased()
         if ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "tiff"].contains(ext) {
@@ -511,7 +596,12 @@ struct ObsidianDocumentView: View {
             let value = source, format = kind, path = state.snapshot.buffers[index].path
             task = Task { [weak self, weak view] in
                 guard let self, let view else { return }
-                var payload: [String: Any] = ["source": value, "kind": format, "selectedView": state.baseViews[bufferID] ?? 0, "path": String(path.dropFirst(state.snapshot.rootPath == "/" ? 1 : state.snapshot.rootPath.count + 1))]
+                let relative = String(path.dropFirst(state.snapshot.rootPath == "/" ? 1 : state.snapshot.rootPath.count + 1))
+                var payload: [String: Any] = ["source": value, "kind": format, "selectedView": state.baseViews[bufferID] ?? 0, "path": relative]
+                let vault = await ObsidianFiles.vault(for: relative, in: state)
+                guard !Task.isCancelled else { return }
+                payload["vault"] = vault.prefix; payload["types"] = vault.types
+                payload["newFileLocation"] = vault.newFileLocation; payload["newFileFolder"] = vault.newFileFolder
                 do {
                     if format == "base" {
                         let valid = try await view.callAsyncJavaScript("return window.crowObsidian.validateBase(payload)", arguments: ["payload": payload], in: nil, contentWorld: .defaultClient) as? Bool
@@ -573,23 +663,37 @@ struct ObsidianDocumentView: View {
                 return
             }
             if action == "save" {
+                let silent = body["silent"] == "true"
+                guard !silent || state.snapshot.buffers[index].isDirty else { return }
                 Task { [weak view = message.webView] in
                     let saved = await model.saveBuffer(bufferID)
-                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.saved(ok)", arguments: ["ok": saved], in: nil, contentWorld: .defaultClient)
+                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.saved(ok, silent)", arguments: ["ok": saved, "silent": silent], in: nil, contentWorld: .defaultClient)
                 }
                 return
             }
-            if action == "createNote", let name = body["name"], kind == "base" {
-                let relative = String(state.snapshot.buffers[index].path.dropFirst(state.snapshot.rootPath == "/" ? 1 : state.snapshot.rootPath.count + 1))
-                Task {
+            if action == "copy", let text = body["text"] {
+                #if os(macOS)
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+                #else
+                UIPasteboard.general.string = text
+                #endif
+                return
+            }
+            if action == "export", let name = body["name"], let text = body["text"] {
+                exportFile(name: name, text: text, state: state, documentPath: state.snapshot.buffers[index].path, view: message.webView)
+                return
+            }
+            if action == "createNote", let folder = body["folder"], let content = body["content"], kind == "base" {
+                Task { [weak view = message.webView] in
                     do {
-                        try TextFiles.validateName(name)
-                        guard ["md", "markdown"].contains((name as NSString).pathExtension.lowercased()) else {
-                            throw CommandError("Choose a Markdown note name.")
-                        }
-                        let base = try await ObsidianFiles.resolve(relative, in: state)
-                        guard model.current === state else { throw CommandError("Return to this workspace to create a note.") }
-                        await model.createEntry(name: name, directory: false, in: (base as NSString).deletingLastPathComponent).value
+                        let created = try await ObsidianFiles.createNote(in: folder, content: content, state: state)
+                        let path = (state.snapshot.rootPath as NSString).appendingPathComponent(created)
+                        ObsidianFiles.updateCachedNote(path, text: content, in: state)
+                        _ = try? await view?.callAsyncJavaScript("window.crowObsidian.updateFiles(files, [])", arguments: ["files": [["path": created, "text": content, "size": content.utf8.count, "modified": Date().timeIntervalSince1970, "created": Date().timeIntervalSince1970]]], in: nil, contentWorld: .defaultClient)
+                        guard model.states.contains(where: { $0 === state }) else { return }
+                        model.activateWorkspace(state.id, reconnect: false)
+                        model.openFile(FileEntry(name: (created as NSString).lastPathComponent, path: path, isDirectory: false))
+                        if state.id == model.selectedWorkspaceID { model.refreshFiles() }
                     } catch { model.report(error) }
                 }
                 return
@@ -631,6 +735,17 @@ struct ObsidianDocumentView: View {
                     self.assets.removeValue(forKey: id)
                 }
                 assets[id] = request; assetLanes[lane] = request
+            } else if action == "rename", let name = body["name"] {
+                Task { [weak view = message.webView] in
+                    do {
+                        try TextFiles.validateName(name)
+                        let resolved = try await ObsidianFiles.resolve(path, in: state)
+                        await model.rename(FileEntry(name: (resolved as NSString).lastPathComponent, path: resolved, isDirectory: false), to: name).value
+                        let parent = (path as NSString).deletingLastPathComponent
+                        let renamed = parent.isEmpty ? name : parent + "/" + name
+                        _ = try? await view?.callAsyncJavaScript("window.crowObsidian.renamed(from, to)", arguments: ["from": path, "to": renamed], in: nil, contentWorld: .defaultClient)
+                    } catch { model.report(error) }
+                }
             } else if action == "openWiki" {
                 model.openMarkdownLink(path, from: bufferID, allowWorkspaceLink: true)
             } else if action == "open" {
@@ -648,6 +763,31 @@ struct ObsidianDocumentView: View {
                     } catch { model.report(error) }
                 }
             }
+        }
+        func exportFile(name: String, text: String, state: WorkspaceState, documentPath: String, view: WKWebView?) {
+            let safe = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            #if os(macOS)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = safe; panel.allowedContentTypes = [.commaSeparatedText]; panel.canCreateDirectories = true
+            if !state.snapshot.workspace.isRemote { panel.directoryURL = URL(fileURLWithPath: (documentPath as NSString).deletingLastPathComponent) }
+            panel.begin { response in
+                guard response == .OK, let url = panel.url else { return }
+                do { try Data(text.utf8).write(to: url, options: .atomic); self.model.statusMessage = "Exported \(url.lastPathComponent)" }
+                catch { self.model.report(error) }
+            }
+            #else
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(safe)
+            do {
+                try Data(text.utf8).write(to: url, options: .atomic)
+                let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                if let view, let presenter = view.window?.rootViewController {
+                    var top = presenter; while let next = top.presentedViewController { top = next }
+                    controller.popoverPresentationController?.sourceView = view
+                    controller.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: 40, width: 1, height: 1)
+                    top.present(controller, animated: true)
+                }
+            } catch { model.report(error) }
+            #endif
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             decisionHandler(action.navigationType != .linkActivated && action.request.url?.scheme == "about" ? .allow : .cancel)

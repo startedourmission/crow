@@ -1,9 +1,33 @@
 import {base, updateNoteProperty, record as noteRecord, noteProperty} from './obsidian-model.js';
+import {Document as YAMLDocument} from 'yaml';
 import {canvasEditor} from './canvas-editor.js';
 import {baseEditor} from './base-editor.js';
 import {el, iconButton} from './obsidian-ui.js';
 
-const send = body => window.webkit.messageHandlers.obsidian.postMessage(body);
+const post = body => window.webkit.messageHandlers.obsidian.postMessage(body);
+// Canvas and Bases paths are relative to the Obsidian vault; the host works in
+// workspace paths. Translate at this single boundary.
+let vault = '';
+const toWorkspace = path => !vault || path == null || /^[a-z][a-z0-9+.-]*:/i.test(path) ? path : vault + '/' + String(path).replace(/^\/+/, '');
+const send = body => {
+  const out = {...body};
+  if (typeof out.path === 'string' && out.action !== 'openWiki') out.path = toWorkspace(out.path);
+  if (typeof out.folder === 'string') out.folder = out.folder ? toWorkspace(out.folder) : vault;
+  post(out);
+};
+const mapped = new WeakMap();
+function vaultFiles(files) {
+  if (!vault) return files;
+  const prefix = vault + '/', out = [];
+  for (const file of files) {
+    if (!file.path.startsWith(prefix)) continue;
+    let view = mapped.get(file);
+    if (!view) { view = {...file, path:file.path.slice(prefix.length)}; mapped.set(file, view); }
+    out.push(view);
+  }
+  return out;
+}
+const fromWorkspace = path => vault && path.startsWith(vault + '/') ? path.slice(vault.length + 1) : path;
 const main = document.querySelector('main');
 let data, controller, generation = 0, sequence = 0;
 let propertyQueue = Promise.resolve();
@@ -43,11 +67,20 @@ function record(before, after, path = null) {
   syncHistory();
 }
 function syncHistory() { main.querySelectorAll('[data-history]').forEach(b => b.disabled = pending.size > 0 || (b.dataset.history === 'undo' ? !undo.length : !redo.length)); }
+// Canvas and Base documents save automatically shortly after each edit, like Obsidian.
+let saveTimer = null;
+function scheduleSave(delay = 900) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveTimer = null; send({action:'save', silent:'true'}); }, delay);
+}
+function flushSave() { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; send({action:'save', silent:'true'}); } }
+addEventListener('blur', flushSave); document.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
 function change(source, options = {}) {
   if (source === data.source) return;
   const before = data.source; data.source = source;
   if (options.history !== false) record(before, source);
   send({action:'change', source, expected:before});
+  scheduleSave(options.history === false ? 1500 : 900);
   if (options.render !== false) render();
 }
 function writeProperty(path, source, options = {}) {
@@ -73,11 +106,11 @@ async function travel(backwards) {
   } catch (e) { notice(e.message, true); }
 }
 function tools(header) {
-  const spacer = el('span', null, 'toolbar-spacer');
+  const spacer = header.querySelector('.toolbar-spacer') ? el('span', null, 'toolbar-gap') : el('span', null, 'toolbar-spacer');
   const back = iconButton('undo', 'Undo', () => travel(true)), forward = iconButton('redo', 'Redo', () => travel(false));
   back.dataset.history = 'undo'; forward.dataset.history = 'redo';
   back.disabled = !undo.length || pending.size > 0; forward.disabled = !redo.length || pending.size > 0;
-  header.append(spacer, back, forward, iconButton('save', 'Save (⌘S)', () => send({action:'save'})));
+  header.append(spacer, back, forward);
 }
 function render() {
   syncHistory();
@@ -88,7 +121,15 @@ function render() {
   const context = {
     get data() { return data; }, main, open, openWiki: path=>send({action:"openWiki",path}), change, record, notice, tools, asset:renderAsset, render,
     selectView: index => send({action:'selectView', index:String(index)}),
-    createNote: name => send({action:'createNote', name}),
+    createNote: (folder, properties = {}) => {
+      const doc = new YAMLDocument(properties);
+      const content = Object.keys(properties).length ? '---\n' + doc.toString() + '---\n' : '';
+      send({action:'createNote', folder:folder ?? '', content});
+    },
+    renameFile: (path, name) => send({action:'rename', path, name}),
+    copy: text => send({action:'copy', text}),
+    exportFile: (name, text) => send({action:'export', name, text}),
+    files: () => data.files ?? [],
     property: (path, column, value) => {
       const documentPath=data.path;
       const request=propertyQueue.catch(()=>{}).then(()=>{
@@ -110,7 +151,10 @@ window.crowObsidian = {
     catch (e) { controller?.destroy?.(); controller=null; main.replaceChildren(el('p', e.message, 'error')); return false; }
   },
   receive(value) {
+    vault = value.vault ?? vault ?? '';
+    value.path = fromWorkspace(value.path);
     if (data?.path !== value.path || data?.source !== value.source) { undo = []; redo = []; }
+    if (data) data = {...data, files:data.rawFiles};
     if (data?.path === value.path && value.incremental) {
       const files = new Map((data.files ?? []).map(file => [file.path, file]));
       for (const path of value.removed ?? []) files.delete(path);
@@ -132,6 +176,7 @@ window.crowObsidian = {
         }
       } catch {}
     }
+    value.rawFiles = value.files; if (value.files) value.files = vaultFiles(value.files);
     data = value; render();
   },
   stopLoading(source, warning) {
@@ -145,11 +190,27 @@ window.crowObsidian = {
     data.source = source; undo = []; redo = []; render();
     notice('The document changed outside this view. Its latest content has been reloaded.', true);
   },
-  saved(ok) { notice(ok ? 'Saved' : 'Could not save. Check the file conflict or connection.', !ok); },
+  saved(ok, silent) { if (!ok) notice('Could not save. Check the file conflict or connection.', true); else if (!silent) notice('Saved'); },
+  // Files created, renamed or deleted from this view update the loaded inventory in place.
+  updateFiles(files, removed) {
+    if (!data || data.kind !== 'base') return;
+    const map = new Map((data.rawFiles ?? []).map(file => [file.path, file]));
+    for (const path of removed ?? []) map.delete(path);
+    for (const file of files ?? []) map.set(file.path, file);
+    const raw = [...map.values()];
+    data = {...data, rawFiles:raw, files:vaultFiles(raw)}; render();
+  },
+  renamed(from, to) {
+    if (!data?.rawFiles) return;
+    const file = data.rawFiles.find(f => f.path === from);
+    if (file) this.updateFiles([{...file, path:to}], [from]);
+  },
   propertyResult(id, result) {
     const item = pending.get(id); if (!item) return; pending.delete(id);
     if (!result.ok) { syncHistory(); item.reject(Error(result.error || 'Could not save property.')); return; }
-    data.files = data.files.map(file => file.path === item.path ? {...file, text:item.source, modified:Date.now() / 1000} : file);
+    const workspacePath = toWorkspace(item.path), now = Date.now() / 1000;
+    data.rawFiles = (data.rawFiles ?? []).map(file => file.path === workspacePath ? {...file, text:item.source, modified:now} : file);
+    data.files = vaultFiles(data.rawFiles);
     if (item.options.history !== false) record(item.before, item.source, item.path);
     item.resolve();
     if (item.options.render !== false) render();
@@ -173,10 +234,10 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   const typing = e.target.closest('input,textarea,[contenteditable=true]');
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-    e.preventDefault(); if (typing) typing.blur(); send({action:'save'}); return;
+    e.preventDefault(); if (typing) typing.blur(); clearTimeout(saveTimer); saveTimer = null; send({action:'save'}); return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !typing) {
     e.preventDefault(); travel(!e.shiftKey); return;
   }
-  if (!typing && !document.querySelector('dialog[open]')) controller?.key?.(e);
+  if (!document.querySelector('dialog[open]') && (!typing || (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f')) controller?.key?.(e);
 });

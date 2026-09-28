@@ -1578,7 +1578,7 @@ import WebKit
          "edges":[{"id":"edge","fromNode":"note","toNode":"next","label":"Next","fromSide":"right","toSide":"left"}]}
         """
         let base = "# Preserve view comment\nfilters: 'file.ext == \"md\"'\ncustom: kept\nviews:\n  - type: table\n    name: Notes\n    order: [file.name, status]\n"
-        for (name, source, selector) in [("Editable.canvas", canvas, ".node.text"), ("Editable.base", base, "td[data-column='status'][data-path='Project.md']")] {
+        for (name, source, selector) in [("Editable.canvas", canvas, ".node.text"), ("Editable.base", base, "tr[data-path='Project.md'] td[data-column='status']")] {
             let file = root.appendingPathComponent(name)
             try Data(source.utf8).write(to: file)
             model.openFile(.init(name: name, path: file.path, isDirectory: false))
@@ -1655,23 +1655,23 @@ import WebKit
             } else {
                 // Wait for the inventory's final payload before editing properties.
                 for _ in 0..<100 {
-                    if (try? await view.callAsyncJavaScript("return document.querySelector('.base-count').textContent.includes('Loading')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == false { break }
+                    if (try? await view.callAsyncJavaScript("return document.querySelector('.results-button').textContent.includes('Loading')", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool) == false { break }
                     try await Task.sleep(for: .milliseconds(50))
                 }
-                try await js("document.querySelector(\"td[data-column=status][data-path='Project.md']\").dispatchEvent(new MouseEvent('dblclick')); const input=document.querySelector('[data-property-editor=status]'); input.focus(); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));")
+                try await js("const td=document.querySelector(\"tr[data-path='Project.md'] td[data-column=status]\"); td.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0})); td.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));")
+                try await Task.sleep(for: .milliseconds(100))
+                try await js("const input=document.querySelector('.cell-editor'); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));")
                 for _ in 0..<80 where !(try String(contentsOf: note, encoding: .utf8)).contains("status: done") { try await Task.sleep(for: .milliseconds(50)) }
                 let saved = try String(contentsOf: note, encoding: .utf8)
                 XCTAssertTrue(saved.contains("status: done")); XCTAssertTrue(saved.contains("# Preserve comment")); XCTAssertTrue(saved.hasSuffix("# Project\nBody stays intact.\n"))
-                try await js("document.querySelector('button[aria-label=\"View options\"]').click(); document.querySelector('dialog input').value='Project notes'; Array.from(document.querySelectorAll('dialog button')).find(b=>b.textContent==='Apply').click();")
-                try await js("document.querySelector('button[aria-label=\"Save (⌘S)\"]').click()")
-                for _ in 0..<60 where !(try String(contentsOf: file, encoding: .utf8)).contains("Project notes") { try await Task.sleep(for: .milliseconds(25)) }
+                // View settings apply immediately and the Base saves itself.
+                try await js("document.querySelector('.view-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true})); const name=document.querySelector('.popover input'); name.value='Project notes'; name.dispatchEvent(new Event('change'));")
+                for _ in 0..<80 where !(try String(contentsOf: file, encoding: .utf8)).contains("Project notes") { try await Task.sleep(for: .milliseconds(50)) }
                 let definition = try String(contentsOf: file, encoding: .utf8)
                 XCTAssertTrue(definition.contains("Project notes")); XCTAssertTrue(definition.contains("custom: kept")); XCTAssertTrue(definition.contains("# Preserve view comment"))
-                try await js("document.querySelector('button[aria-label=\"Add view\"]').click(); document.querySelector('dialog input').value='Cards'; document.querySelector('dialog select').value='cards'; Array.from(document.querySelectorAll('dialog button')).find(b=>b.textContent==='Create view').click();")
+                try await js("document.querySelector('.view-button').click(); Array.from(document.querySelectorAll('.popover button')).find(b=>b.textContent.includes('Add view')).click();")
                 try await Task.sleep(for: .milliseconds(100))
-                let count = try await view.callAsyncJavaScript("return document.querySelectorAll('.view-select option').length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int
-                XCTAssertEqual(count, 2)
-                XCTAssertTrue(try XCTUnwrap(model.selectedBuffer).text.contains("type: cards"))
+                XCTAssertEqual(try XCTUnwrap(model.selectedBuffer).text.components(separatedBy: "type: table").count - 1, 2)
                 try await js("document.querySelector('[data-history=undo]').click()")
             }
             try await Task.sleep(for: .milliseconds(250))
@@ -1679,10 +1679,11 @@ import WebKit
             let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: name.hasSuffix("canvas") ? "/tmp/crow-canvas-editor.png" : "/tmp/crow-base-editor.png"))
             if name.hasSuffix("base") {
-                try await js("document.querySelector('button[aria-label=\"New note\"]').click(); document.querySelector('dialog input').value='Created from Base'; document.querySelector('dialog form').dispatchEvent(new Event('submit',{cancelable:true}));")
-                let created = root.appendingPathComponent("Created from Base.md")
+                // New notes match simple view filters, like Obsidian.
+                try await js("document.querySelector('button[aria-label=\"New note\"]').click()")
+                let created = root.appendingPathComponent("Untitled.md")
                 for _ in 0..<60 where !FileManager.default.fileExists(atPath: created.path) { try await Task.sleep(for: .milliseconds(25)) }
-                XCTAssertTrue(FileManager.default.fileExists(atPath: created.path), "New must create a note beside the Base")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: created.path), "New must create a note in the vault")
             }
         }
     }

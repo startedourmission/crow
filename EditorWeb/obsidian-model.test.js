@@ -7,16 +7,18 @@ test('Canvas preserves all node types, layout and labeled edges',()=>{
  const nodes=['group','text','file','link'].map((type,i)=>({id:String(i),type,x:i*100-200,y:-100,width:300,height:200}));
  const result=canvas(JSON.stringify({nodes,edges:[{id:'e',fromNode:'1',toNode:'2',label:'link',fromEnd:'arrow'}]}));
  assert.equal(result.nodes[0].x,-200);assert.equal(result.edges[0].fromEnd,'arrow');
- assert.throws(()=>canvas(JSON.stringify({nodes:[nodes[0],nodes[0]]})),/duplicate/);
- assert.throws(()=>canvas(JSON.stringify({nodes,edges:[{fromNode:'missing',toNode:'2'}]})),/missing/);
+ // Obsidian keeps opening canvases with stray entries; they are reported and preserved.
+ assert.match(canvas(JSON.stringify({nodes:[nodes[0],nodes[0]]})).issues[0],/Duplicate/);
+ const stray=canvas(JSON.stringify({nodes,edges:[{id:'x',fromNode:'missing',toNode:'2'}]}));
+ assert.match(stray.issues[0],/missing/); assert.equal(stray.edges.length,1);
 });
 test('Bases global and view filters, formulas, custom columns and sort',()=>{
  const source=`filters: 'file.ext == "md"'\nformulas:\n  ppu: price / age\nproperties:\n  formula.ppu:\n    displayName: Unit price\nviews:\n  - type: table\n    name: Books\n    filters: 'status != "done" && file.inFolder("Books") && file.hasTag("shelf")'\n    order: [file.name, status, formula.ppu]\n    sort: [{property: price, direction: DESC}]`;
- const result=base(source,files,'Index.base');assert.equal(result.rows.length,1);assert.deepEqual(result.rows[0].cells,['Alpha','reading',4]);
+ const result=base(source,files,'Index.base');assert.equal(result.rows.length,1);assert.deepEqual(result.rows[0].cells,['Alpha.md','reading',4]);
 });
 test('Nested boolean filters and this context; cards, list, grouping and limit',()=>{
  const source=`filters:\n  not:\n    - 'file.ext == "png"'\nviews:\n  - type: cards\n    name: Shelf\n    filters: 'file.folder == this.file.folder'\n    groupBy: {property: status, direction: DESC}\n    order: [file.name]\n    limit: 1\n  - type: list\n    name: All`;
- const result=base(source,files,'Books/Index.base');assert.equal(result.rows.length,1);assert.equal(result.total,2);assert.equal(result.rows[0].cells[0],'Alpha');
+ const result=base(source,files,'Books/Index.base');assert.equal(result.rows.length,1);assert.equal(result.total,2);assert.equal(result.rows[0].cells[0],'Alpha.md');
  assert.equal(base(source,files,'Books/Index.base',1).rows.length,2);
 });
 test('Formula interpreter has no JavaScript execution and detects cycles',()=>{
@@ -24,10 +26,10 @@ test('Formula interpreter has no JavaScript execution and detects cycles',()=>{
  assert.equal(evaluate(expression('if(price > 10, (price / age).toFixed(2), "none")'),ctx),'4.00');
  assert.equal(evaluate(expression('tags.contains("book")'),ctx),true);
  assert.throws(()=>evaluate(expression('formula.a'),ctx),/Circular/);
- assert.throws(()=>evaluate(expression('file.constructor("return globalThis")()'),ctx),/Unsupported/);
+ assert.throws(()=>evaluate(expression('file.constructor("return globalThis")()'),ctx),/Unsupported|not a function/);
  assert.throws(()=>expression('globalThis.x = 1'),/Unsupported/);
- assert.throws(()=>base('views: [{type: map}]',files,'a.base'),/Unsupported Base view/);
- assert.throws(()=>evaluate(expression('tags.filter(value)'),ctx),/Unsupported Base function/);
+ assert.match(base('views: [{type: map}]',files,'a.base').warnings.join(' '),/plugin/);
+ assert.throws(()=>evaluate(expression('tags.nope()'),ctx),/Unknown function/);
 });
 test('Invalid YAML is rejected and unreadable note properties are reported',()=>{
  assert.throws(()=>yaml('views: [not closed'));
@@ -68,7 +70,7 @@ test('Base view changes preserve comments, global filters and unknown settings',
  assert.equal(yaml(edited).views[0].custom,42); assert.deepEqual(yaml(edited).plugin,{keep:true});
  assert.equal(yaml(edited).filters,'file.ext == "md"');
  assert.equal(yaml(updateBaseView(edited,1,{name:'Cards',type:'cards'})).views.length,2);
- assert.throws(()=>updateBaseView(source,0,{type:'invalid'}),/Unsupported/);
+ assert.throws(()=>updateBaseView(source,0,{bogus:1}),/Unsupported/);
 });
 
 test('Note metadata cache is reused and invalidated after an edit', () => {
@@ -76,7 +78,7 @@ test('Note metadata cache is reused and invalidated after an edit', () => {
  const first=record(file); assert.strictEqual(record(file),first);
  file.text='---\nstatus: done\n---\n#new';
  const changed=record(file); assert.notStrictEqual(changed,first); assert.equal(changed.note.status,'done');
- file.modified=2; assert.equal(record(file).file.mtime.getTime(),2000);
+ file.modified=2; assert.equal(record(file).file.fields.mtime.getTime(),2000);
 });
 
 test('Filter scopes, nested conditions and formulas preserve unrelated Base settings', async () => {
