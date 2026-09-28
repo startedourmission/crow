@@ -66,7 +66,7 @@ export function imageSource(value, from, B) {
   if (value == null) return null;
   if (value instanceof Link) {
     if (value.external) return {url:value.path};
-    const path = B.resolve(value.path, from); return path ? {path} : null;
+    const path = B.resolve(value.path, from) ?? (/\.\w+$/.test(value.path) ? value.path : null); return path ? {path} : null;
   }
   if (isFile(value)) return {path:value.path};
   const s = String(value).trim();
@@ -201,7 +201,7 @@ export function openEditor(holder, {type, raw, initial = null, commit, finish, l
   field.oninput = () => field.setCustomValidity('');
   field.onblur = () => { if (!committing) submit(); };
   holder.append(field);
-  requestAnimationFrame(() => { field.focus(); if (initial == null && field.select && field.type !== 'date' && field.type !== 'datetime-local') field.setSelectionRange?.(field.value.length, field.value.length); });
+  field.focus(); if (field.type !== 'date' && field.type !== 'datetime-local') field.setSelectionRange?.(field.value.length, field.value.length);
   return {field};
 }
 function chipEditor(holder, {type, raw, initial, save, close, label}) {
@@ -243,7 +243,7 @@ function chipEditor(holder, {type, raw, initial, save, close, label}) {
   wrap.onpointerdown = e => { if (e.target === wrap) { e.preventDefault(); entry.focus(); } };
   wrap.append(entry); holder.append(wrap);
   const fit = autosize(entry, 30, 10);
-  draw(); requestAnimationFrame(() => entry.focus());
+  draw(); entry.focus();
   return {field:entry};
 }
 export function rawValue(row, column) {

@@ -1,5 +1,6 @@
 import CrowCore
 import CryptoKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -283,10 +284,63 @@ struct ObsidianDocumentView: View {
             if let cacheKey { thumbnails.setObject(image as NSString, forKey: cacheKey, cost: image.utf8.count) }
             return ["image": image]
         }
-        guard ["md", "markdown", "txt"].contains(ext) else { return ["error": "Open this attachment to view it."] }
+        if ext == "pdf" {
+            let data = try await bytes(path, in: state, limit: 40 * 1024 * 1024)
+            return ["image": try await Task.detached(priority: .utility) { try pdfThumbnail(data) }.value, "kind": "pdf"]
+        }
+        guard ["md", "markdown", "txt"].contains(ext) else { return ["kind": ext] }
         let data = try await bytes(path, in: state, limit: 1024 * 1024)
-        let html = try await Task.detached(priority: .utility) { MarkdownPreview.body(try TextFiles.decode(data)) }.value
-        return ["html": html]
+        return ["text": try await Task.detached(priority: .utility) { try TextFiles.decode(data) }.value]
+    }
+    /// First page of a PDF, rendered like Obsidian's embedded PDF cards.
+    nonisolated static func pdfThumbnail(_ data: Data) throws -> String {
+        guard let provider = CGDataProvider(data: data as CFData), let document = CGPDFDocument(provider), let page = document.page(at: 1) else {
+            throw CommandError("This PDF could not be previewed.")
+        }
+        let box = page.getBoxRect(.cropBox), scale = min(2, 900 / max(box.width, box.height, 1))
+        let width = Int(box.width * scale), height = Int(box.height * scale)
+        guard width > 0, height > 0, let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw CommandError("This PDF could not be previewed.") }
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: scale, y: scale); context.translateBy(x: -box.minX, y: -box.minY); context.drawPDFPage(page)
+        guard let image = context.makeImage() else { throw CommandError("This PDF could not be previewed.") }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { throw CommandError("This PDF could not be previewed.") }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw CommandError("This PDF could not be previewed.") }
+        return "data:image/jpeg;base64," + (output as Data).base64EncodedString()
+    }
+    /// Title, description and image for a web page card.
+    static func linkPreview(_ value: String) async throws -> [String: String] {
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { throw CommandError("Unsupported address.") }
+        var request = URLRequest(url: url); request.setValue("text/html", forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        let (bytes, response) = try await remoteImageSession.bytes(for: request)
+        var data = Data()
+        for try await byte in bytes { data.append(byte); if data.count > 768 * 1024 { break } }
+        let html = String(decoding: data, as: UTF8.self)
+        func meta(_ names: [String]) -> String? {
+            for name in names {
+                let pattern = "<meta[^>]+(?:property|name)=[\"']" + NSRegularExpression.escapedPattern(for: name) + "[\"'][^>]*content=[\"']([^\"']*)[\"']|<meta[^>]+content=[\"']([^\"']*)[\"'][^>]*(?:property|name)=[\"']" + NSRegularExpression.escapedPattern(for: name) + "[\"']"
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                   let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)) {
+                    for index in 1...2 { if let range = Range(match.range(at: index), in: html), !html[range].isEmpty { return String(html[range]) } }
+                }
+            }
+            return nil
+        }
+        func decode(_ text: String) -> String {
+            text.replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&#39;", with: "'")
+                .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var result: [String: String] = ["url": (response.url ?? url).absoluteString]
+        let title = meta(["og:title", "twitter:title"]) ?? html.range(of: "<title[^>]*>([^<]*)</title>", options: [.regularExpression, .caseInsensitive]).map {
+            String(html[$0]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) }
+        if let title { result["title"] = decode(title) }
+        if let description = meta(["og:description", "description", "twitter:description"]) { result["description"] = decode(description) }
+        if let site = meta(["og:site_name"]) { result["site"] = decode(site) }
+        if let image = meta(["og:image", "og:image:url", "twitter:image"]), let absolute = URL(string: decode(image), relativeTo: response.url ?? url) { result["image"] = absolute.absoluteString }
+        return result
     }
     private struct LocalInventoryItem: Sendable, Codable {
         var path: String
@@ -617,15 +671,6 @@ struct ObsidianDocumentView: View {
                         }
                         payload.merge(updates.payload(files)) { _, next in next }
                         payload["warning"] = warning
-                    } else {
-                        let html = await Task.detached(priority: .utility) {
-                            var result: [String: String] = [:]
-                            if let doc = try? JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any], let nodes = doc["nodes"] as? [[String: Any]], nodes.count <= 2000 {
-                                for node in nodes { if let id = node["id"] as? String, let text = node["text"] as? String { result[id] = MarkdownPreview.body(text) } }
-                            }
-                            return result
-                        }.value
-                        if value == self.source { payload["html"] = html }
                     }
                     try Task.checkCancellation()
                     payload["source"] = self.source
@@ -695,6 +740,23 @@ struct ObsidianDocumentView: View {
                         model.openFile(FileEntry(name: (created as NSString).lastPathComponent, path: path, isDirectory: false))
                         if state.id == model.selectedWorkspaceID { model.refreshFiles() }
                     } catch { model.report(error) }
+                }
+                return
+            }
+            if action == "files" {
+                Task { [weak view = message.webView] in
+                    let files = ((try? await ObsidianFiles.inventory(in: state, preferCached: true).0) ?? []).compactMap { item -> [String: Any]? in
+                        guard let path = item["path"] as? String else { return nil }
+                        return ["path": path, "size": item["size"] ?? 0, "modified": item["modified"] ?? 0]
+                    }
+                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.setFiles(files)", arguments: ["files": files], in: nil, contentWorld: .defaultClient)
+                }
+                return
+            }
+            if action == "linkPreview", let url = body["url"], let id = body["id"] {
+                Task { [weak view = message.webView] in
+                    let result = (try? await ObsidianFiles.linkPreview(url)) ?? ["error": "Preview unavailable"]
+                    _ = try? await view?.callAsyncJavaScript("window.crowObsidian.asset(id, value)", arguments: ["id": id, "value": result], in: nil, contentWorld: .defaultClient)
                 }
                 return
             }

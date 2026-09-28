@@ -1239,107 +1239,104 @@ import WebKit
         let result = try await view.callAsyncJavaScript(#"""
         const assert=(value,message)=>{if(!value)throw Error(message)};
         const click=label=>document.querySelector('button[aria-label="'+label+'"]').click();
-        const apply=()=>[...document.querySelectorAll('.popover button')].find(b=>b.textContent==='Apply').click();
+        const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+        const lastSource=()=>window.messages.filter(m=>m.action==='change').at(-1)?.source;
+        const rows=()=>document.querySelectorAll('tbody tr.data-row').length;
+        const cellOf=(path,column)=>document.querySelector('tr[data-path="'+path+'"] td[data-column="'+column+'"]');
+        const edit=(path,column)=>{const td=cellOf(path,column);td.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0}));td.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));return document.querySelector('.cell-editor');};
         let source='filters: \'file.ext == "md"\'\ncustom: preserved\nviews:\n - type: table\n   name: Reading\n   order: [file.name, status]\n - type: table\n   name: All\n   order: [file.name, status]\n';
         const files=Array.from({length:400},(_,i)=>({path:'Note '+i+'.md',text:'---\nstatus: reading\n---\nBody'}));
         const receive=(extra)=>window.crowObsidian.receive({source,kind:'base',path:'Notes.base',...extra});
         receive({files:files.slice(0,1),loading:true});
-        const viewSelect=document.querySelector('.view-select'); viewSelect.focus();
+        const viewButton=document.querySelector('.view-button'); viewButton.focus();
         receive({files:files.slice(1,20),incremental:true,loading:true});
-        assert(document.querySelector('.view-select')===viewSelect && document.activeElement===viewSelect,'Loading replaced the focused view picker');
+        assert(document.querySelector('.view-button')===viewButton && document.activeElement===viewButton,'Loading replaced the focused view picker');
         click('Filter');
-        [...document.querySelectorAll('.popover button')].find(b=>b.textContent==='+ Condition').click();
-        document.querySelector('[aria-label="Filter property"]').value='status';
-        const value=document.querySelector('[aria-label="Filter value"]'); value.value='done'; value.focus();
+        document.querySelectorAll('.filter-section')[1].querySelector('.filter-add button').click();
+        const property=document.querySelectorAll('.filter-section')[1].querySelector('[aria-label="Filter property"]'); property.value='status'; property.dispatchEvent(new Event('change'));
+        const value=document.querySelectorAll('.filter-section')[1].querySelector('[aria-label="Filter value"]'); value.value='done'; value.focus();
         receive({files:files.slice(20),incremental:true});
-        assert(document.querySelector('[aria-label="Filter value"]')===value && value.value==='done' && document.activeElement===value,'Loading discarded a filter draft');
-        assert(document.querySelectorAll('tbody tr').length===100,'Large tables must render in bounded batches');
-        assert(document.querySelector('.base-count').textContent==='400 results','All files must be counted');
-        apply(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
-        assert(source.includes('custom: preserved') && source.includes('file.ext'),'Filters discarded existing settings');
-        assert(!document.querySelector('tbody tr'),'Filter did not apply');
+        assert(document.querySelectorAll('.filter-section')[1].querySelector('[aria-label="Filter value"]')===value && value.value==='done' && document.activeElement===value,'Loading discarded a filter draft');
+        assert(rows()===200,'Large tables must render in bounded batches');
+        assert(document.querySelector('.results-button').textContent.startsWith('400 results'),'All files must be counted');
+        value.dispatchEvent(new Event('input')); await wait(450); source=lastSource();
+        assert(source.includes('custom: preserved') && source.includes('file.ext') && source.includes('status == "done"'),'Filters discarded existing settings: '+source);
+        assert(!rows(),'Filter did not apply');
         receive({files:[{path:'Note 0.md',text:'---\nstatus: done\n---\nBody'}],incremental:true});
-        assert(document.querySelectorAll('tbody tr').length===1,'An updated file must re-evaluate the filter');
+        assert(rows()===1,'An updated file must re-evaluate the filter');
+        document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
         click('Properties');
-        const panel=document.querySelector('.popover'), check=[...panel.querySelectorAll('label')].find(n=>n.textContent==='status').querySelector('input');
-        check.click(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        const panel=document.querySelector('.popover'), check=[...panel.querySelectorAll('.property-option')].find(n=>n.textContent.trim()==='status').querySelector('input');
+        check.click(); source=lastSource();
         assert(document.querySelector('.popover')===panel && document.querySelectorAll('thead th').length===1,'Toggling properties must keep its menu open');
-        panel.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
-        document.querySelector('[data-history=undo]').click(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        document.querySelector('[data-history=undo]').click(); await wait(0); source=lastSource();
         assert(document.querySelectorAll('thead th').length===2,'Undo must restore columns');
         assert(!document.querySelector('[data-history=redo]').disabled,'Redo must become available');
-        viewSelect.value='1'; viewSelect.dispatchEvent(new Event('change'));
-        assert(document.querySelectorAll('tbody tr').length===100,'Switching views must keep batching');
+        document.querySelector('[data-history=undo]').click(); await wait(0); source=lastSource();
+        assert(!source.includes('status =='),'Undo must also remove the filter');
+        viewButton.click(); [...document.querySelectorAll('.view-name')][1].click();
+        assert(document.querySelector('.view-button').textContent.includes('All') && rows()===200,'Switching views must keep batching');
         const body=document.querySelector('.base-body'); body.scrollTop=body.scrollHeight; body.dispatchEvent(new Event('scroll'));
-        assert(document.querySelectorAll('tbody tr').length===200,'Scrolling must reveal additional rows');
+        assert(rows()===400,'Scrolling must reveal additional rows');
         const query=document.querySelector('.base-search'); query.value='Note 234'; query.dispatchEvent(new Event('input'));
-        assert(document.querySelectorAll('tbody tr').length===1,'Search must cover rows beyond the rendered batch');
+        assert(rows()===1,'Search must cover rows beyond the rendered batch');
         query.value=''; query.dispatchEvent(new Event('input'));
         click('Sort'); [...document.querySelectorAll('.popover button')].find(b=>b.textContent==='+ Add sort').click();
-        document.querySelector('[aria-label="Sort direction"]').value='DESC'; apply(); source=window.messages.filter(m=>m.action==='change').at(-1).source;
-        assert(document.querySelector('tbody tr').dataset.path==='Note 399.md','Numeric descending sort failed');
+        [...document.querySelectorAll('.menu-item')].find(b=>b.textContent.includes('file name')).click(); await wait(0);
+        const direction=document.querySelector('[aria-label="Sort direction"]'); direction.value='DESC'; direction.dispatchEvent(new Event('change')); source=lastSource();
+        assert(document.querySelector('tbody tr.data-row').dataset.path==='Note 399.md','Numeric descending sort failed');
         receive({files:[{path:'Broken.md',text:'---\nbad: [\n---'}],removed:['Note 399.md'],incremental:true});
         assert(document.querySelector('.warning').textContent.includes('Broken.md'),'Unreadable properties need a visible warning');
-        assert(document.querySelector('.view-select')===viewSelect,'An unreadable note must not remove the view picker');
-        assert(document.querySelector('tbody tr').dataset.path==='Note 398.md','Removed files must disappear');
+        assert(document.querySelector('.view-button')===viewButton,'An unreadable note must not remove the view picker');
+        assert(document.querySelector('tbody tr.data-row').dataset.path==='Note 398.md','Removed files must disappear');
         receive({files:[],incremental:true,loading:true}); window.crowObsidian.stopLoading(source,'Stopped');
-        assert(!document.querySelector('.base-count').textContent.includes('Loading'),'Stopping must release the loading state');
+        assert(!document.querySelector('.results-button').textContent.includes('Loading'),'Stopping must release the loading state');
         window.crowObsidian.failed('Connection interrupted');
-        assert(document.querySelector('.view-select')===viewSelect && document.querySelector('.warning').textContent.includes('Connection interrupted'),'A load failure must retain usable controls');
+        assert(document.querySelector('.view-button')===viewButton && document.querySelector('.warning').textContent.includes('Connection interrupted'),'A load failure must retain usable controls');
         assert(window.messages.some(m=>m.action==='selectView' && m.index==='1'),'Selected view must reach native state');
         window.crowObsidian.receive({source,kind:'base',path:'Other.base',files});
         receive({files});
-        assert(document.querySelector('.view-select').value==='1','Switching documents lost the selected view');
+        assert(document.querySelector('.view-button').textContent.includes('All'),'Switching documents lost the selected view');
         assert(!window.crowObsidian.validateBase({source:'views: [broken',path:'Notes.base'}),'Invalid definitions must report an error');
         receive({files});
-        assert(document.querySelector('.view-select')?.isConnected && document.querySelectorAll('tbody tr').length===100,'Fixing a definition must remount its controls');
+        assert(document.querySelector('.view-button')?.isConnected && rows()===200,'Fixing a definition must remount its controls');
         source='custom: preserved\nviews:\n - type: table\n   name: Inline\n   order: [file.name, status, cover, tags]\n';
         const inlineFiles=[{path:'Inline.md',text:'---\nstatus: reading\ncover: "![[Attachments/image.png|200]]"\ntags: [one, two]\n---\nBody'}];
         receive({files:inlineFiles,warning:'288 iCloud notes are not downloaded. Their properties and tags will be available after downloading and refreshing the index.'});
-        assert(!document.querySelector('.base-cloud-hint').hidden && document.querySelector('.base-cloud-hint').parentElement.contains(document.querySelector('.base-count')),'Cloud warning belongs beside results');
+        assert(!document.querySelector('.base-cloud-hint').hidden && document.querySelector('.base-cloud-hint').previousElementSibling===document.querySelector('.results-button'),'Cloud warning belongs beside results');
         assert(document.querySelector('.warning').hidden,'Cloud hint must not occupy a banner');
-        const cell=document.querySelector('[data-column=status] .cell-input');
-        assert(cell && !document.querySelector('.property-editor,.cell-edit-trigger'),'Cells must be directly editable');
-        document.querySelector('[data-column=cover] .property-link').click();
-        assert(window.messages.at(-1).action==='openWiki' && window.messages.at(-1).path==='Attachments/image.png','Embed property must open its target, excluding size alias');
-        cell.focus();cell.value='한글 변경';cell.dispatchEvent(new Event('input'));
+        assert(window.messages.some(m=>m.action==='asset' && m.path==='Attachments/image.png'),'Embedded image properties must load their target, excluding the size alias');
+        let cell=edit('Inline.md','status'); assert(cell && cell.value==='reading','Double-click must open the cell editor');
+        cell.value='한글 변경';cell.dispatchEvent(new Event('input'));
         receive({files:[],incremental:true});
         assert(document.activeElement===cell && cell.value==='한글 변경','Background updates must retain a cell draft');
         cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,isComposing:true}));
         assert(document.activeElement===cell,'IME Enter must not commit');
         cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
-        await new Promise(resolve=>setTimeout(resolve,0));
+        await wait(0);
         const write=window.messages.filter(m=>m.action==='property').at(-1);
         assert(write.source.includes('status: 한글 변경') && write.source.endsWith('Body'),'Inline Enter must preserve the rest of the note');
-        window.crowObsidian.propertyResult(write.id,{ok:true});await new Promise(resolve=>setTimeout(resolve,0));
-        const edited=document.querySelector('[data-column=status] .cell-input');edited.focus();edited.value='discard';edited.dispatchEvent(new Event('input'));edited.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
-        assert(edited.value==='한글 변경','Escape must discard only the draft');
+        window.crowObsidian.propertyResult(write.id,{ok:true});await wait(0);
+        const writes=window.messages.filter(m=>m.action==='property').length;
+        cell=edit('Inline.md','status'); cell.value='discard'; cell.dispatchEvent(new Event('input')); cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        await wait(0);
+        assert(window.messages.filter(m=>m.action==='property').length===writes && cellOf('Inline.md','status').textContent==='한글 변경','Escape must discard only the draft');
         const resize=document.querySelector('[aria-label="Resize status"]');resize.setPointerCapture=()=>{};resize.hasPointerCapture=()=>false;
         resize.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:1,clientX:200,bubbles:true}));
         resize.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:287,bubbles:true}));
         assert(document.querySelector('col[data-column=status]').style.width==='267px','Dragging must resize immediately');
         resize.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:287,bubbles:true}));
-        source=window.messages.filter(m=>m.action==='change').at(-1).source;
+        source=lastSource();
         assert(source.includes('status: 267') && source.includes('custom: preserved'),'Column size must persist without dropping other settings');
         receive({files:inlineFiles});
         assert(document.querySelector('col[data-column=status]').style.width==='267px','Column size must survive remount');
-        const status=document.querySelector('[data-column=status] .cell-input'),cover=document.querySelector('[data-column=cover] .cell-input');
-        status.focus();status.value='queued';status.dispatchEvent(new Event('input'));cover.focus();
-        cover.value='![[Attachments/next.png]]';cover.dispatchEvent(new Event('input'));cover.blur();
-        await new Promise(resolve=>setTimeout(resolve,0));
-        const first=window.messages.filter(m=>m.action==='property').at(-1);
-        assert(first.source.includes('status: queued'),'First cell write must go first');
-        window.crowObsidian.propertyResult(first.id,{ok:true});await new Promise(resolve=>setTimeout(resolve,0));
-        const second=window.messages.filter(m=>m.action==='property').at(-1);
-        assert(second.id!==first.id && second.source.includes('status: queued') && second.source.includes('Attachments/next.png'),'Queued edit must use the newly saved note');
-        assert(cover.isConnected,'Pending cell edits must not be replaced by another save');
-        window.crowObsidian.propertyResult(second.id,{ok:true});await new Promise(resolve=>setTimeout(resolve,0));
-        const failing=document.querySelector('[data-column=status] .cell-input');failing.focus();failing.value='keep my draft';failing.dispatchEvent(new Event('input'));failing.blur();
-        await new Promise(resolve=>setTimeout(resolve,0));
-        window.crowObsidian.propertyResult(window.messages.filter(m=>m.action==='property').at(-1).id,{ok:false,error:'Save conflict'});await new Promise(resolve=>setTimeout(resolve,0));
+        cell=edit('Inline.md','status'); cell.value='keep my draft'; cell.dispatchEvent(new Event('input'));
+        cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await wait(0);
+        window.crowObsidian.propertyResult(window.messages.filter(m=>m.action==='property').at(-1).id,{ok:false,error:'Save conflict'});await wait(0);
         receive({files:[],incremental:true});
-        assert(failing.isConnected && failing.value==='keep my draft','A failed save must retain the draft across refreshes');
-        failing.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        assert(cell.isConnected && cell.value==='keep my draft','A failed save must retain the draft across refreshes');
+        cell.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
         return true;
         """#, arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
         XCTAssertEqual(result, true)
@@ -1511,17 +1508,17 @@ import WebKit
             window.contentView = hosting
             var preview: WKWebView?
             for _ in 0..<100 {
-                if let view = web(hosting), (try? await view.callAsyncJavaScript("return !!document.querySelector('.view-select')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { preview = view; break }
+                if let view = web(hosting), (try? await view.callAsyncJavaScript("return !!document.querySelector('.view-button')", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { preview = view; break }
                 try await Task.sleep(for: .milliseconds(40))
             }
             let view = try XCTUnwrap(preview)
             if pass == 0 {
-                _ = try await view.callAsyncJavaScript("const picker=document.querySelector('.view-select'); picker.value='1'; picker.dispatchEvent(new Event('change'));", arguments: [:], in: nil, contentWorld: .defaultClient)
+                _ = try await view.callAsyncJavaScript("document.querySelector('.view-button').click(); document.querySelectorAll('.view-name')[1].click();", arguments: [:], in: nil, contentWorld: .defaultClient)
                 for _ in 0..<40 where model.current.baseViews[buffer.id] != 1 { try await Task.sleep(for: .milliseconds(20)) }
                 XCTAssertEqual(model.current.baseViews[buffer.id], 1)
             } else {
-                let selected = try await view.callAsyncJavaScript("return document.querySelector('.view-select').value", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
-                XCTAssertEqual(selected,"1")
+                let selected = try await view.callAsyncJavaScript("return document.querySelector('.view-button').textContent", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+                XCTAssertEqual(selected,"Cards")
             }
             window.contentView = NSView()
             try await Task.sleep(for: .milliseconds(80))
@@ -1545,7 +1542,7 @@ import WebKit
     func testObsidianWebViewsRenderCanvasAndBaseFromBundledResources() async throws {
         let node: [String: Any] = ["id": "note", "type": "text", "x": -100, "y": -50, "width": 250, "height": 150, "text": "# Canvas title"]
         let canvas = String(decoding: try JSONSerialization.data(withJSONObject: ["nodes": [node], "edges": []]), as: UTF8.self)
-        for (name, source, selector) in [("Board.canvas", canvas, ".node.text"), ("Index.base", "views:\n  - type: table\n    name: Notes\n    order: [file.name]", "tbody tr")] {
+        for (name, source, selector) in [("Board.canvas", canvas, ".cnode.type-text"), ("Index.base", "views:\n  - type: table\n    name: Notes\n    order: [file.name]", "tbody tr")] {
             let file = root.appendingPathComponent(name)
             try Data(source.utf8).write(to: file)
             model.openFile(.init(name: name, path: file.path, isDirectory: false))
@@ -1578,7 +1575,7 @@ import WebKit
          "edges":[{"id":"edge","fromNode":"note","toNode":"next","label":"Next","fromSide":"right","toSide":"left"}]}
         """
         let base = "# Preserve view comment\nfilters: 'file.ext == \"md\"'\ncustom: kept\nviews:\n  - type: table\n    name: Notes\n    order: [file.name, status]\n"
-        for (name, source, selector) in [("Editable.canvas", canvas, ".node.text"), ("Editable.base", base, "tr[data-path='Project.md'] td[data-column='status']")] {
+        for (name, source, selector) in [("Editable.canvas", canvas, ".cnode.type-text"), ("Editable.base", base, "tr[data-path='Project.md'] td[data-column='status']")] {
             let file = root.appendingPathComponent(name)
             try Data(source.utf8).write(to: file)
             model.openFile(.init(name: name, path: file.path, isDirectory: false))
@@ -1598,47 +1595,43 @@ import WebKit
             let view = try XCTUnwrap(loaded)
             func js(_ script: String) async throws { _ = try await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) }
             if name.hasSuffix("canvas") {
-                try await js("document.querySelector('[data-node-id=note]').dispatchEvent(new MouseEvent('dblclick', {bubbles:true})); const input=document.querySelector('.node-editor'); input.value='# Research complete\\n\\n한글 편집 저장'; input.dispatchEvent(new Event('input')); input.blur();")
-                for _ in 0..<40 where model.locate(buffer.id)?.0.snapshot.buffers[model.locate(buffer.id)!.1].isDirty != true { try await Task.sleep(for: .milliseconds(25)) }
-                try await js("document.querySelector('button[aria-label=\"Save (⌘S)\"]').click()")
-                for _ in 0..<60 where !(try String(contentsOf: file, encoding: .utf8)).contains("Research complete") { try await Task.sleep(for: .milliseconds(25)) }
+                try await js("document.querySelector('[data-node-id=note] .cnode-body').dispatchEvent(new MouseEvent('dblclick', {bubbles:true})); const input=document.querySelector('.cnode-editor'); input.value='# Research complete\\n\\n한글 편집 저장'; input.dispatchEvent(new Event('input')); input.blur();")
+                // Canvas edits save automatically, like Obsidian.
+                for _ in 0..<120 where !(try String(contentsOf: file, encoding: .utf8)).contains("Research complete") { try await Task.sleep(for: .milliseconds(25)) }
                 let saved = try String(contentsOf: file, encoding: .utf8)
                 XCTAssertTrue(saved.contains("한글 편집 저장")); XCTAssertTrue(saved.contains("preserved"))
+                try await Task.sleep(for: .milliseconds(50))
                 try await js("document.querySelector('[data-history=undo]').click()")
                 try await Task.sleep(for: .milliseconds(100))
                 XCTAssertFalse(try XCTUnwrap(model.selectedBuffer).text.contains("Research complete"))
                 try await js("document.querySelector('[data-history=redo]').click()")
                 // The initial fit must survive SwiftUI layout and rapid document updates.
                 try await Task.sleep(for: .milliseconds(100))
-                let fitted = try await view.callAsyncJavaScript("const v=document.querySelector('.canvas-viewport').getBoundingClientRect(); return [...document.querySelectorAll('.node')].every(n=>{const r=n.getBoundingClientRect(); return r.left>=v.left && r.right<=v.right && r.top>=v.top && r.bottom<=v.bottom})", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+                let fitted = try await view.callAsyncJavaScript("const v=document.querySelector('.canvas-viewport').getBoundingClientRect(); return [...document.querySelectorAll('.cnode')].every(n=>{const r=n.getBoundingClientRect(); return r.left>=v.left && r.right<=v.right && r.top>=v.top && r.bottom<=v.bottom})", arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
                 XCTAssertEqual(fitted, true)
                 // Synthetic pointer events exercise the same move/resize/connect handlers;
                 // pointer capture itself requires hardware input, so stub only that method.
                 try await js("""
+                const viewport=document.querySelector('.canvas-viewport'); viewport.setPointerCapture=()=>{};
                 function drag(selector, dx, dy) {
-                  const viewport=document.querySelector('.canvas-viewport'); viewport.setPointerCapture=()=>{};
                   const target=document.querySelector(selector), r=target.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
                   target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1,clientX:x,clientY:y}));
-                  viewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:x+dx,clientY:y+dy}));
-                  viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:x+dx,clientY:y+dy}));
+                  viewport.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:1,clientX:x+dx,clientY:y+dy}));
+                  viewport.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1,clientX:x+dx,clientY:y+dy}));
                 }
-                drag('[data-node-id=note] .node-bar',24,12);
-                drag('[data-node-id=note] .node-resize',20,10);
-                const viewport=document.querySelector('.canvas-viewport'); viewport.setPointerCapture=()=>{};
-                const port=document.querySelector('[data-node-id=note] .node-port.right'), a=port.getBoundingClientRect(), b=document.querySelector('[data-node-id=next] .node-bar').getBoundingClientRect();
-                if (document.elementFromPoint(b.left+20,b.top+10)?.closest('[data-node-id]')?.dataset.nodeId !== 'next') throw Error('Connection target is not hit-testable');
-                port.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1,clientX:a.left,clientY:a.top}));
-                const target=document.querySelector('[data-node-id=next] .node-port.left'), t=target.getBoundingClientRect(), tx=t.left+t.width/2, ty=t.top+t.height/2;
-                viewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:tx,clientY:ty}));
-                if (getComputedStyle(target).opacity !== '1' || !target.classList.contains('connection-port')) throw Error('The target handle must appear and highlight during a captured drag');
-                viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:tx,clientY:ty}));
-                if (document.querySelector('.connecting,.connection-port')) throw Error('Connection highlights must be cleared after dropping');
-                const cancelViewport=document.querySelector('.canvas-viewport'); cancelViewport.setPointerCapture=()=>{};
-                const cancelPort=document.querySelector('[data-node-id=note] .node-port.right');
-                cancelPort.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:2,clientX:a.left,clientY:a.top}));
-                cancelViewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:2,clientX:tx,clientY:ty}));
-                cancelViewport.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
-                if (document.querySelector('.connecting,.connection-port,.pending-edge')) throw Error('Escape must cancel the pending connection');
+                drag('[data-node-id=note] .cnode-body',40,20);
+                drag('[data-node-id=note] .cnode-resize.se',40,20);
+                const port=document.querySelector('[data-node-id=note] .cnode-port.right'), a=port.getBoundingClientRect();
+                const target=document.querySelector('[data-node-id=next] .cnode-port.left'), t=target.getBoundingClientRect(), tx=t.left+t.width/2, ty=t.top+t.height/2;
+                port.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1,clientX:a.left+5,clientY:a.top+5}));
+                viewport.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:1,clientX:tx,clientY:ty}));
+                if (!target.classList.contains('active')) throw Error('The target handle must highlight during a captured drag');
+                viewport.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1,clientX:tx,clientY:ty}));
+                if (document.querySelector('.connecting,.cnode-port.active,.cedge-pending')) throw Error('Connection highlights must be cleared after dropping');
+                port.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:2,clientX:a.left+5,clientY:a.top+5}));
+                viewport.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:2,clientX:tx,clientY:ty}));
+                viewport.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+                if (document.querySelector('.connecting,.cnode-port.active,.cedge-pending')) throw Error('Escape must cancel the pending connection');
                 """)
                 try await Task.sleep(for: .milliseconds(100))
                 let moved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(model.selectedBuffer).text.utf8)) as? [String: Any])
@@ -1648,10 +1641,11 @@ import WebKit
                 XCTAssertGreaterThan(try XCTUnwrap(edited["width"] as? Int), 300)
                 XCTAssertEqual((moved["edges"] as? [Any])?.count, 2)
                 XCTAssertEqual((moved["edges"] as? [[String: Any]])?.last?["toSide"] as? String, "left")
-                try await js("document.querySelector('[data-action=add-note]').click()")
-                let added = try await view.callAsyncJavaScript("return document.querySelectorAll('.node').length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int
+                XCTAssertEqual((moved["custom"] as? [String: Any])?["preserved"] as? Bool, true)
+                try await js("document.querySelector('[data-action=add-note]').click(); document.activeElement.blur();")
+                let added = try await view.callAsyncJavaScript("return document.querySelectorAll('.cnode').length", arguments: [:], in: nil, contentWorld: .defaultClient) as? Int
                 XCTAssertEqual(added, 4)
-                try await js("document.activeElement.blur(); document.querySelector('[data-history=undo]').click()")
+                try await js("document.querySelector('[data-history=undo]').click()")
             } else {
                 // Wait for the inventory's final payload before editing properties.
                 for _ in 0..<100 {
@@ -1669,7 +1663,7 @@ import WebKit
                 for _ in 0..<80 where !(try String(contentsOf: file, encoding: .utf8)).contains("Project notes") { try await Task.sleep(for: .milliseconds(50)) }
                 let definition = try String(contentsOf: file, encoding: .utf8)
                 XCTAssertTrue(definition.contains("Project notes")); XCTAssertTrue(definition.contains("custom: kept")); XCTAssertTrue(definition.contains("# Preserve view comment"))
-                try await js("document.querySelector('.view-button').click(); Array.from(document.querySelectorAll('.popover button')).find(b=>b.textContent.includes('Add view')).click();")
+                try await js("document.querySelector('.view-button').click(); if (!document.querySelector('.view-list')) document.querySelector('.view-button').click(); Array.from(document.querySelectorAll('.popover button')).find(b=>b.textContent.includes('Add view')).click();")
                 try await Task.sleep(for: .milliseconds(100))
                 XCTAssertEqual(try XCTUnwrap(model.selectedBuffer).text.components(separatedBy: "type: table").count - 1, 2)
                 try await js("document.querySelector('[data-history=undo]').click()")

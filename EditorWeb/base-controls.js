@@ -59,8 +59,16 @@ export function simpleRule(rule) {
   } catch {}
 }
 function quote(value) { return JSON.stringify(String(value)); }
+// Write references the way Obsidian does: `status`, `file.name`, `formula.price`.
+const identifier = /^[\p{L}_$][\p{L}\p{N}_$]*$/u;
+const reserved = new Set(['file', 'note', 'formula', 'this', 'true', 'false', 'null', 'values']);
+function reference(column) {
+  const m = /^(file|formula|note)\.(.*)$/s.exec(column), prefix = m?.[1] ?? 'note', name = m ? m[2] : column;
+  if (!identifier.test(name)) return propertyExpression(column);
+  return prefix === 'note' ? (reserved.has(name) ? 'note.' + name : name) : prefix + '.' + name;
+}
 function build(column, op, value, kind) {
-  const ref = propertyExpression(column), neg = op.startsWith('!'), bare = op.replace('!', '');
+  const ref = reference(column), neg = op.startsWith('!'), bare = op.replace('!', '');
   const list = String(value ?? '').split(',').map(v => v.trim()).filter(Boolean);
   if (bare === 'isEmpty') return (neg ? '!' : '') + ref + '.isEmpty()';
   // An unfinished condition does not filter anything yet.

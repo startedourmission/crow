@@ -48,6 +48,18 @@ function renderAsset(path, target, background = false, style = 'cover', markdown
   const id = generation + ':' + sequence++; assets.set(id, item);
   send({...request,id});
 }
+// Promise-based host requests (file contents, link previews) share the asset channel.
+const loads = new Map();
+function load(request) {
+  const key = JSON.stringify(request);
+  if (cache.has(key)) return Promise.resolve(cache.get(key));
+  if (loads.has(key)) return loads.get(key).promise;
+  let resolve; const promise = new Promise(r => { resolve = r; });
+  const id = generation + ':' + sequence++;
+  loads.set(key, {promise}); assets.set(id, {load:true, key, request, retries:0, resolve});
+  send({...request, id}); return promise;
+}
+let filesCallbacks = new Set(), filesRequested = false;
 function applyAsset({target, background, style}, value) {
   if (target.dataset.editing === 'true') return;
   if (value.image) {
@@ -115,7 +127,7 @@ function tools(header) {
 function render() {
   syncHistory();
   if (controller?.update?.()) return;
-  controller?.destroy?.(); generation++; assets.clear(); main.replaceChildren();
+  controller?.destroy?.(); generation++; assets.clear(); loads.clear(); filesCallbacks = new Set(); main.replaceChildren();
   controller = null;
   if (!data) return;
   const context = {
@@ -130,6 +142,9 @@ function render() {
     copy: text => send({action:'copy', text}),
     exportFile: (name, text) => send({action:'export', name, text}),
     files: () => data.files ?? [],
+    load,
+    requestFiles: () => { if (data.kind === 'canvas' && !filesRequested) { filesRequested = true; send({action:'files'}); } },
+    onFiles: callback => { filesCallbacks.add(callback); },
     property: (path, column, value) => {
       const documentPath=data.path;
       const request=propertyQueue.catch(()=>{}).then(()=>{
@@ -168,14 +183,8 @@ window.crowObsidian = {
         return old && old.text === file.text && old.size === file.size && old.modified === file.modified && old.created === file.created ? old : file;
       });
     }
-    cache.clear();
-    if (value.kind === 'canvas' && value.html) {
-      try {
-        for (const node of JSON.parse(value.source).nodes ?? []) {
-          if (node.type === 'text' && value.html[node.id] != null) cache.set('markdown:' + node.text, {html:value.html[node.id]});
-        }
-      } catch {}
-    }
+    cache.clear(); if (data?.path !== value.path) filesRequested = false;
+    if (value.kind === 'canvas' && !value.files && data?.path === value.path && data.rawFiles) { value.files = data.rawFiles; }
     value.rawFiles = value.files; if (value.files) value.files = vaultFiles(value.files);
     data = value; render();
   },
@@ -215,8 +224,19 @@ window.crowObsidian = {
     item.resolve();
     if (item.options.render !== false) render();
   },
+  setFiles(files) {
+    if (!data) return;
+    data.rawFiles = files; data.files = vaultFiles(files);
+    filesCallbacks.forEach(callback => callback());
+  },
   asset(id, value) {
     const item = assets.get(id); if (!item) return;
+    if (item.load) {
+      if (value.pending === 'true' && item.retries++ < 45) { setTimeout(() => { if (assets.get(id) === item) send({...item.request, id}); }, Math.min(4000, 700 + item.retries * 200)); return; }
+      assets.delete(id); loads.delete(item.key);
+      if (!value.error) { cache.set(item.key, value); if (cache.size > 200) cache.delete(cache.keys().next().value); }
+      item.resolve(value); return;
+    }
     if(value.pending==='true' && item.retries++ < 45){
       applyAsset(item,value);
       setTimeout(()=>{if(assets.get(id)===item)send({...item.request,id});},Math.min(4000,700+item.retries*200));
@@ -232,7 +252,7 @@ document.addEventListener('click', e => {
   const link = e.target.closest('a'); if (link) { e.preventDefault(); open(link.getAttribute('href')); }
 });
 document.addEventListener('keydown', e => {
-  const typing = e.target.closest('input,textarea,[contenteditable=true]');
+  const typing = e.target.closest?.('input,textarea,[contenteditable=true]');
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
     e.preventDefault(); if (typing) typing.blur(); clearTimeout(saveTimer); saveTimer = null; send({action:'save'}); return;
   }
