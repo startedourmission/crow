@@ -103,8 +103,9 @@ struct ObsidianDocumentView: View {
     static func cachedInventory(in state: WorkspaceState) -> [[String: Any]]? {
         inventories.object(forKey: inventoryKey(state))?.files
     }
-    static func writeNote(_ relative: String, expected: String, replacement: String, in state: WorkspaceState, model: AppModel) async throws {
-        guard ["md", "markdown"].contains((relative as NSString).pathExtension.lowercased()),
+    static func writeNote(_ relative: String, expected: String, replacement: String, in state: WorkspaceState, model: AppModel,
+                          extensions: Set<String> = ["md", "markdown"]) async throws {
+        guard extensions.contains((relative as NSString).pathExtension.lowercased()),
               replacement.utf8.count <= TextFiles.sizeLimit else { throw CommandError("Only Markdown note properties can be edited here.") }
         let path = try await resolve(relative, in: state)
         func matches(_ buffer: OpenBuffer) -> Bool {
@@ -576,6 +577,66 @@ struct ObsidianDocumentView: View {
 
 }
 
+/// Serves Bases and Canvas embedded in Markdown notes (```base blocks and
+/// ![[File.base]] / ![[File.canvas]]) with the same data the full previews use.
+@MainActor final class ObsidianEmbedHost {
+    weak var model: AppModel?
+    let bufferID: BufferID
+    let reply: String
+    init(model: AppModel, bufferID: BufferID, reply: String = "window.crowMarkdown.embedReply") { self.model = model; self.bufferID = bufferID; self.reply = reply }
+    func handle(_ body: [String: Any], view: WKWebView) {
+        guard let id = body["id"] as? String, let request = body["request"] as? String, let model,
+              let (state, index) = model.locate(bufferID) else { return }
+        let root = state.snapshot.rootPath, notePath = state.snapshot.buffers[index].path
+        let relativeNote = String(notePath.dropFirst(root == "/" ? 1 : root.count + 1))
+        let bufferID = self.bufferID, replyFunction = reply
+        Task { [weak view, weak model] in
+            guard let model else { return }
+            let vault = await ObsidianFiles.vault(for: relativeNote, in: state)
+            let prefix = vault.prefix.isEmpty ? "" : vault.prefix + "/"
+            let workspacePath = { (path: String) in path.hasPrefix("http://") || path.hasPrefix("https://") ? path : prefix + path }
+            var reply: [String: Any] = [:]
+            do {
+                switch request {
+                case "files":
+                    let files = try await ObsidianFiles.inventory(in: state, preferCached: true).0
+                    reply["files"] = files.compactMap { item -> [String: Any]? in
+                        guard let path = item["path"] as? String, prefix.isEmpty || path.hasPrefix(prefix) else { return nil }
+                        var copy = item; copy["path"] = String(path.dropFirst(prefix.count)); return copy
+                    }
+                    reply["types"] = vault.types; reply["thisPath"] = String(relativeNote.dropFirst(prefix.count))
+                case "readFile":
+                    guard let path = body["path"] as? String else { throw CommandError("Missing file.") }
+                    let resolved = try await ObsidianFiles.resolve(workspacePath(path), in: state)
+                    let data = try await ObsidianFiles.bytes(resolved, in: state, limit: 4 * 1024 * 1024)
+                    reply["text"] = try TextFiles.decode(data)
+                case "writeFile", "property":
+                    guard let path = body["path"] as? String, let expected = body["expected"] as? String, let source = body["source"] as? String else { throw CommandError("Missing file.") }
+                    try await ObsidianFiles.writeNote(workspacePath(path), expected: expected, replacement: source, in: state, model: model,
+                        extensions: request == "property" ? ["md", "markdown"] : ["base", "canvas"])
+                    reply["ok"] = true
+                case "asset":
+                    guard let path = body["path"] as? String else { throw CommandError("Missing file.") }
+                    reply = try await ObsidianFiles.asset(workspacePath(path), in: state)
+                case "linkPreview":
+                    guard let url = body["url"] as? String else { throw CommandError("Missing address.") }
+                    reply = try await ObsidianFiles.linkPreview(url)
+                case "open":
+                    guard let path = body["path"] as? String else { return }
+                    if path.contains("://") || path.hasPrefix("mailto:") { model.openMarkdownLink(path, from: bufferID); return }
+                    let clean = String(path.split(separator: "#", maxSplits: 1).first ?? "")
+                    model.openMarkdownWorkspaceFile(workspacePath((clean as NSString).pathExtension.isEmpty ? clean + ".md" : clean), from: bufferID); return
+                case "openWiki":
+                    guard let target = body["path"] as? String else { return }
+                    model.openMarkdownLink(target, from: bufferID, allowWorkspaceLink: true); return
+                default: return
+                }
+            } catch { reply = ["error": error.localizedDescription, "ok": false] }
+            _ = try? await view?.callAsyncJavaScript(replyFunction + "(id, value)", arguments: ["id": id, "value": reply], in: nil, contentWorld: .defaultClient)
+        }
+    }
+}
+
 @MainActor private struct ObsidianWebView {
     let model: AppModel
     let bufferID: BufferID
@@ -617,6 +678,7 @@ struct ObsidianDocumentView: View {
         var nextAssetLane = 0
         var assetBytes = 0
         weak var preview: WKWebView?
+        lazy var embedHost = ObsidianEmbedHost(model: model, bufferID: bufferID, reply: "window.crowObsidian.embedReply")
         init(model: AppModel, bufferID: BufferID, status: ObsidianPreviewStatus) { self.model = model; self.bufferID = bufferID; self.status = status }
         func begin() {
             watchdog?.cancel(); lastProgress = Date()
@@ -687,6 +749,7 @@ struct ObsidianDocumentView: View {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: String], let action = body["action"],
                   let (state, index) = model.locate(bufferID) else { return }
+            if action == "embed", let view = message.webView { embedHost.handle(body, view: view); return }
             if action == "selectView", let raw = body["index"], let selected = Int(raw), selected >= 0 {
                 state.baseViews[bufferID] = selected
                 return

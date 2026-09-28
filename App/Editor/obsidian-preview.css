@@ -355,3 +355,7 @@ a.card-title{color:var(--ink);text-decoration:none}a.card-title:hover{text-decor
 .callout[data-callout=example]{--callout:#7c4dff}.callout[data-callout=quote],.callout[data-callout=cite]{--callout:#9e9e9e}
 .callout-title{font-weight:600;color:var(--callout)}
 .callout-content>:first-child{margin-top:.3em}
+.cnode-embed{height:100%;display:flex;flex-direction:column}
+.cnode-embed .obsidian-embed{flex:1;max-height:none;min-height:0}
+.cnode-embed .obsidian-embed .embed-header{display:none}
+.cnode:not(.selected) .cnode-embed .embed-main{pointer-events:none}

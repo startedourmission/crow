@@ -1564,6 +1564,34 @@ import WebKit
         }
     }
 
+    func testMarkdownNotesRenderEmbeddedBasesAndCanvases() async throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Papers"), withIntermediateDirectories: true)
+        let paper = root.appendingPathComponent("Papers/A.md")
+        try Data("---\nstatus: reading\n---\nBody\n".utf8).write(to: paper)
+        try Data("{\"nodes\":[{\"id\":\"a\",\"type\":\"text\",\"x\":0,\"y\":0,\"width\":260,\"height\":80,\"text\":\"Embedded card\"}],\"edges\":[]}".utf8).write(to: root.appendingPathComponent("Board.canvas"))
+        let note = root.appendingPathComponent("Daily.md")
+        try Data("# Daily\n\n```base\nviews:\n  - type: table\n    name: Papers\n    filters: file.inFolder(\"Papers\")\n    order: [file.name, status]\n```\n\n![[Board.canvas]]\n".utf8).write(to: note)
+        model.openFile(.init(name: "Daily.md", path: note.path, isDirectory: false))
+        let id = try XCTUnwrap(model.selectedBuffer).id
+        let hosting = NSHostingView(rootView: MarkdownTitleFixture(id: id).environment(model))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 900, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderBack(nil); defer { window.close() }
+        func web(_ view: NSView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web($0) }.first }
+        var loaded: WKWebView?
+        for _ in 0..<150 {
+            if let view = web(hosting), (try? await view.callAsyncJavaScript("return document.querySelectorAll('.note-embed tr.data-row').length === 1 && document.querySelectorAll('.note-embed .cnode').length === 1", arguments: [:], in: nil, contentWorld: .defaultClient)) as? Bool == true { loaded = view; break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let view = try XCTUnwrap(loaded, "The note must render its Base block and Canvas embed")
+        let hidden = try await view.callAsyncJavaScript("return getComputedStyle(document.querySelector('pre')).display", arguments: [:], in: nil, contentWorld: .defaultClient) as? String
+        XCTAssertEqual(hidden, "none", "The base source is hidden while the cursor is elsewhere")
+        // Editing a property inside the embed writes the linked note, not the Daily note.
+        _ = try await view.callAsyncJavaScript("const td=document.querySelector('.note-embed td[data-column=status]'); td.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0})); td.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); const input=td.querySelector('.cell-editor'); input.value='done'; input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));", arguments: [:], in: nil, contentWorld: .defaultClient)
+        for _ in 0..<80 where !(try String(contentsOf: paper, encoding: .utf8)).contains("status: done") { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(try String(contentsOf: paper, encoding: .utf8).contains("status: done"))
+        XCTAssertTrue(try XCTUnwrap(model.locate(id)).0.snapshot.buffers[try XCTUnwrap(model.locate(id)).1].text.contains("```base"))
+    }
+
     func testObsidianRenderedEditingSavesCanvasAndBaseProperties() async throws {
         let note = root.appendingPathComponent("Project.md")
         try Data("---\n# Preserve comment\nstatus: reading\n---\n# Project\nBody stays intact.\n".utf8).write(to: note)

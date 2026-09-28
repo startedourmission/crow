@@ -13,6 +13,7 @@ struct MarkdownPreviewView: View {
     var filename: String = ""
     var crowmapNote = false
     var onRename: ((String, String?) async throws -> String)?
+    var embedHost: ObsidianEmbedHost?
     @State private var failure: String?
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +22,7 @@ struct MarkdownPreviewView: View {
                 NativeEditor(text: $text, fontSize: fontSize, indentWidth: 4, lineNumbers: false,
                     findRequest: 0, onSave: onSave, locationRequest: locationRequest)
             } else {
-                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled, noteCatalog: noteCatalog, filename: filename, crowmapNote: crowmapNote, onRename: onRename)
+                MarkdownWebView(text: $text, fontSize: fontSize, onSave: onSave, failure: $failure, locationRequest: locationRequest, onOpenLink: onOpenLink, noteLinksEnabled: noteLinksEnabled, noteCatalog: noteCatalog, filename: filename, crowmapNote: crowmapNote, onRename: onRename, embedHost: embedHost)
             }
         }
     }
@@ -35,6 +36,7 @@ struct MarkdownPreviewView: View {
     var filename: String = ""
     var crowmapNote = false
     var onRename: ((String, String?) async throws -> String)?
+    var embedHost: ObsidianEmbedHost?
     var fontSize: Double?
     var text: Binding<String> = .constant("")
     var onSave: () -> Void = {}
@@ -141,6 +143,7 @@ struct MarkdownPreviewView: View {
                 _ = try? await view.callAsyncJavaScript("window.crowMarkdown.renamed(result)", arguments: ["result": result], in: nil, contentWorld: .defaultClient)
             }
         case "save": onSave()
+        case "embed": embedHost?.handle(body, view: view)
         #if os(iOS)
         case "keyboardModifiersConsumed": (view as? CrowMarkdownWebView)?.keyboardAccessory.resetModifiers()
         case "keyboardClipboard":
@@ -194,6 +197,7 @@ struct MarkdownPreviewView: View {
     var filename: String = ""
     var crowmapNote = false
     var onRename: ((String, String?) async throws -> String)?
+    var embedHost: ObsidianEmbedHost?
     func makeCoordinator() -> MarkdownNavigation { MarkdownNavigation() }
     func makeView(_ coordinator: MarkdownNavigation) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -214,6 +218,7 @@ struct MarkdownPreviewView: View {
         coordinator.locationRequest = locationRequest
         coordinator.onOpenLink = onOpenLink
         coordinator.filename = filename; coordinator.crowmapNote = crowmapNote; coordinator.onRename = onRename
+        coordinator.embedHost = embedHost
         coordinator.publishTitle(view)
         coordinator.noteCatalog = noteCatalog
         coordinator.publishCatalog(view)
@@ -226,6 +231,7 @@ struct MarkdownPreviewView: View {
         coordinator.locationRequest = locationRequest
         coordinator.onOpenLink = onOpenLink
         coordinator.filename = filename; coordinator.crowmapNote = crowmapNote; coordinator.onRename = onRename
+        coordinator.embedHost = embedHost
         coordinator.publishTitle(view)
         let linksChanged = coordinator.noteLinksEnabled != noteLinksEnabled
         coordinator.noteCatalog = noteCatalog
@@ -325,7 +331,8 @@ struct WorkspaceMarkdownView: View {
                 onSave: { Task { await model.saveBuffer(buffer.id) } }, locationRequest: locationRequest,
                 onOpenLink: { model.openMarkdownLink($0, from: buffer.id) }, noteLinksEnabled: linksEnabled, noteCatalog: owner?.noteCatalog ?? .init(),
                 filename: buffer.title, crowmapNote: !buffer.isRemote && buffer.path.hasPrefix(model.crowmap.root.path + "/"),
-                onRename: { try await model.renameMarkdown(buffer.id, title: $0, source: $1) })
+                onRename: { try await model.renameMarkdown(buffer.id, title: $0, source: $1) },
+                embedHost: ObsidianEmbedHost(model: model, bufferID: buffer.id))
             if let status = owner?.noteIndexStatus, owner?.snapshot.isNoteVault == true {
                 Text(status).font(.caption).foregroundStyle(CrowTheme.textDim).padding(.horizontal, 10)
             }

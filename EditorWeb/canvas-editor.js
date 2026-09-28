@@ -2,6 +2,7 @@
 import {canvas, serializeCanvas, drawableNodes, knownNodeType} from './obsidian-model.js';
 import {el, button, icon, iconButton, field, input, dialog, actions, color, presetColors, presetNames, menu, closeMenus, popover, closePopover} from './obsidian-ui.js';
 import {renderMarkdown, hydrate, stripFrontmatter, subpathText, toggleTask} from './markdown-render.js';
+import {mountEmbed} from './obsidian-embed.js';
 
 const GRID = 20, MIN_W = 50, MIN_H = 30;
 const states = new Map();
@@ -78,11 +79,12 @@ export function canvasEditor(ctx) {
   }
   function frame(list, maxZoom = 1) {
     const w = viewport.clientWidth, h = viewport.clientHeight; if (!w || !h) return false;
-    if (!list.length) { camera = {x:w / 2, y:h / 2, zoom:1}; applyCamera(); return true; }
+    // An empty canvas is centered but not remembered, so content that loads later is fitted.
+    if (!list.length) { camera = {x:w / 2, y:h / 2, zoom:1}; applyCamera(); state.camera = null; return false; }
     const b = bounds(list), zoom = Math.max(0.05, Math.min(maxZoom, (w - 120) / Math.max(b.w, 1), (h - 160) / Math.max(b.h, 1)));
     camera = {zoom, x:(w - b.w * zoom) / 2 - b.x * zoom, y:(h - b.h * zoom) / 2 - b.y * zoom - 10}; applyCamera(); return true;
   }
-  const fit = () => { frame(nodes); state.fitted = true; };
+  const fit = () => { if (frame(nodes)) state.fitted = true; };
   const zoomToSelection = () => frame(selectionNodes().length ? selectionNodes() : nodes, 1.5);
   function bounds(list) {
     const x = Math.min(...list.map(n => n.x)), y = Math.min(...list.map(n => n.y));
@@ -94,7 +96,7 @@ export function canvasEditor(ctx) {
   const beforeEdit = () => ctx.data.source;
 
   // ---------------------------------------------------------------- nodes
-  const elements = new Map();
+  const elements = new Map(), embeds = new Map();
   let observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) { const id = entry.target.dataset.nodeId; observer.unobserve(entry.target); fill(byId.get(id)); }
   }, {root:viewport, rootMargin:'400px'});
@@ -139,6 +141,13 @@ export function canvasEditor(ctx) {
       const file = node.file ?? '';
       if (!file) { body.append(el('div', 'No file', 'cnode-missing')); return; }
       body.classList.add('file-' + fileIcon(file));
+      // Bases render live inside their card, as in Obsidian.
+      if (/\.base$/i.test(file) && !ctx.embedded) {
+        const holder = el('div', null, 'cnode-embed'); body.append(holder);
+        embeds.get(node.id)?.destroy();
+        embeds.set(node.id, mountEmbed(holder, {kind:'base', file, view:node.subpath ? node.subpath.replace(/^#/, '') : null, key:path + '#' + node.id}));
+        return;
+      }
       ctx.load({action:'asset', path:file}).then(value => {
         if (!element.isConnected || editing?.id === node.id) return;
         body.replaceChildren();
@@ -180,7 +189,7 @@ export function canvasEditor(ctx) {
   function linkHandlers() {
     return {open:url => ctx.open(url), openWiki:target => ctx.openWiki(target), asset:(src, holder) => ctx.asset(src, holder)};
   }
-  function rebuildNode(node) { elements.get(node.id)?.remove(); elements.delete(node.id); build(node); fill(node); }
+  function rebuildNode(node) { embeds.get(node.id)?.destroy(); embeds.delete(node.id); elements.get(node.id)?.remove(); elements.delete(node.id); build(node); fill(node); }
 
   // ---------------------------------------------------------------- edges
   const edgeElements = new Map();
@@ -647,6 +656,8 @@ export function canvasEditor(ctx) {
     if (editing && (!node || node.id !== editing.id)) finishEditing();
     if (node) {
       if (e.target.closest('a,input,.link-preview button')) return;
+      // A selected Base card is interactive; unselected ones still drag.
+      if (selected.has(node.id) && e.target.closest('.cnode-embed .embed-main')) return;
       const handle = e.target.closest('.cnode-resize'), port = e.target.closest('.cnode-port');
       if (port) { startConnect(e, node, port.dataset.side); return; }
       if (handle && selected.has(node.id)) { startResize(e, node, handle.dataset.handle); return; }
@@ -831,6 +842,7 @@ export function canvasEditor(ctx) {
     else canvasMenu({x:e.clientX, y:e.clientY}, toWorld(e.clientX, e.clientY));
   });
   viewport.addEventListener('wheel', e => {
+    if (e.target.closest('.cnode.selected .cnode-embed .base-body') && !(e.ctrlKey || e.metaKey)) return;
     if (e.target.closest('.cnode-body.markdown,.cnode-editor') && !(e.ctrlKey || e.metaKey) && e.target.closest('.cnode')?.classList.contains('selected')) {
       const body = e.target.closest('.cnode-body,.cnode-editor'); if (body.scrollHeight > body.clientHeight) return;
     }
@@ -856,7 +868,7 @@ export function canvasEditor(ctx) {
   choose([...selected]);
   const resize = new ResizeObserver(() => { if (!state.fitted && !state.camera) fit(); else placeToolbar(); });
   resize.observe(viewport);
-  if (state.camera) applyCamera(); else if (!frame(nodes)) applyCamera(); else state.fitted = true;
+  if (state.camera && nodes.length) applyCamera(); else if (frame(nodes)) state.fitted = true;
   requestAnimationFrame(() => { if (!destroyed && !state.fitted && !state.camera) fit(); });
   ctx.onFiles?.(() => filesListeners.forEach(f => f()));
 
@@ -882,7 +894,7 @@ export function canvasEditor(ctx) {
       }
     },
     destroy() {
-      destroyed = true; finishEditing(); resize.disconnect(); observer.disconnect(); closeMenus(); closePopover(); closeSuggest();
+      destroyed = true; finishEditing(); resize.disconnect(); observer.disconnect(); embeds.forEach(embed => embed.destroy()); closeMenus(); closePopover(); closeSuggest();
       document.removeEventListener('copy', onCopy); document.removeEventListener('cut', onCut); document.removeEventListener('paste', onPaste);
       removeEventListener('keyup', keyup); state.selection = [...selected];
     }

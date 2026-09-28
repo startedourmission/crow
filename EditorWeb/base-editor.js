@@ -516,7 +516,7 @@ export function baseEditor(ctx) {
     if (!Array.isArray(doc.views) || !doc.views.length) { body.replaceChildren(el('div', 'This Base has no views. Add one to start.', 'empty')); return; }
     state.viewIndex = Math.max(0, Math.min(state.viewIndex, doc.views.length - 1));
     try {
-      result = base(ctx.data.source, ctx.data.files ?? [], path, state.viewIndex, {types:ctx.data.types ?? null});
+      result = base(ctx.data.source, ctx.data.files ?? [], path, state.viewIndex, {types:ctx.data.types ?? null, thisPath:ctx.data.thisPath ?? undefined});
       types = propertyTypes(result.context.records, ctx.data.types ?? null);
       cloudHint.hidden = true;
       const inventoryWarning = (ctx.data.warning ?? '').replace(/(\d+) iCloud notes are not downloaded\.(?: Their properties and tags will be available after downloading and refreshing the index\.)?/, (message, count) => {

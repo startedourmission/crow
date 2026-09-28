@@ -3,6 +3,8 @@ import {WikiLink,wikiNodes} from './note-wikilinks.js';
 import {markdownEditorCSS} from './editor-styles.js';
 import {NoteCompletions, setCatalog} from './note-completions.js';
 import {frontmatterView} from './frontmatter-editor.js';
+import {NoteEmbeds} from './note-embeds.js';
+import {setEmbedHost, refreshEmbedFiles} from './obsidian-embed.js';
 import { Editor, Extension, Node, createNodeFromContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
@@ -20,6 +22,12 @@ let noteLinksEnabled = false;
 let source = '', records = [], loading = false, initialized = false, pending = null;
 let modifiers = {control: false, shift: false};
 const send = body => window.webkit.messageHandlers.markdown.postMessage(body);
+// Embedded Bases and Canvas ask the app for vault data through one channel.
+const embedReplies = new Map(); let embedSequence = 0;
+setEmbedHost({
+  request(request, payload) { const id = 'e' + (++embedSequence); return new Promise(resolve => { embedReplies.set(id, resolve); send({...payload, action: 'embed', id, request}); }); },
+  post(request, payload) { send({...payload, action: 'embed', id: 'p' + (++embedSequence), request}); }
+});
 let renamePending=null, crowmapNote=false;
 const filenameTitle=fileTitle(title=>new Promise((resolve,reject)=>{
   if(renamePending){reject(Error('A rename is already in progress.'));return;}
@@ -41,7 +49,7 @@ const Frontmatter = Node.create({
   addNodeView() { return frontmatterView; },
   renderMarkdown(node) { return node.attrs.source; }
 });
-const extensions = [Frontmatter, WikiLink, NoteCompletions, StarterKit.configure({ link: { openOnClick: false }, trailingNode: false }),
+const extensions = [Frontmatter, WikiLink, NoteCompletions, NoteEmbeds, StarterKit.configure({ link: { openOnClick: false }, trailingNode: false }),
   Markdown, TableKit.configure({ table: { resizable: false } }), TaskList, TaskItem.configure({ nested: true }), shortcuts];
 const signature = nodes => JSON.stringify(nodes);
 const shape = nodes => JSON.stringify(nodes, (key, value) => key === 'text' ? '' : value);
@@ -232,5 +240,6 @@ function keyboardKey(key) {
     insertText(key.shift ? name.toUpperCase() : name);
   }
 }
-window.crowMarkdown = { setFilename(name,isCrowmap){crowmapNote=isCrowmap;filenameTitle.set(name);}, renamed(result){const pending=renamePending;renamePending=null;if(!pending)return;result.error?pending.reject(Error(result.error)):pending.resolve(result.name);}, setCatalog, receive, jumpHeading, setFontSize, insertText, key: keyboardKey,
+window.crowMarkdown = { notePath: 'Note.md', setFilename(name,isCrowmap){crowmapNote=isCrowmap;filenameTitle.set(name);this.notePath=name;},
+  embedReply(id, value) { const resolve = embedReplies.get(id); embedReplies.delete(id); resolve?.(value); }, refreshEmbeds: refreshEmbedFiles, renamed(result){const pending=renamePending;renamePending=null;if(!pending)return;result.error?pending.reject(Error(result.error)):pending.resolve(result.name);}, setCatalog, receive, jumpHeading, setFontSize, insertText, key: keyboardKey,
   setModifiers(control, shift) { modifiers = {control, shift}; } };

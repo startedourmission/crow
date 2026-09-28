@@ -3,6 +3,7 @@ import {Document as YAMLDocument} from 'yaml';
 import {canvasEditor} from './canvas-editor.js';
 import {baseEditor} from './base-editor.js';
 import {el, iconButton} from './obsidian-ui.js';
+import {setEmbedHost} from './obsidian-embed.js';
 
 const post = body => window.webkit.messageHandlers.obsidian.postMessage(body);
 // Canvas and Bases paths are relative to the Obsidian vault; the host works in
@@ -60,6 +61,12 @@ function load(request) {
   send({...request, id}); return promise;
 }
 let filesCallbacks = new Set(), filesRequested = false;
+// Bases shown inside canvas cards use the same embed channel as notes.
+const embedReplies = new Map(); let embedSequence = 0;
+setEmbedHost({
+  request(request, payload) { const id = 'e' + (++embedSequence); return new Promise(resolve => { embedReplies.set(id, resolve); post({...payload, action:'embed', id, request}); }); },
+  post(request, payload) { post({...payload, action:'embed', id:'p' + (++embedSequence), request}); }
+});
 function applyAsset({target, background, style}, value) {
   if (target.dataset.editing === 'true') return;
   if (value.image) {
@@ -224,6 +231,7 @@ window.crowObsidian = {
     item.resolve();
     if (item.options.render !== false) render();
   },
+  embedReply(id, value) { const resolve = embedReplies.get(id); embedReplies.delete(id); resolve?.(value); },
   setFiles(files) {
     if (!data) return;
     data.rawFiles = files; data.files = vaultFiles(files);
