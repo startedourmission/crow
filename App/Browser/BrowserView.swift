@@ -57,6 +57,9 @@ enum BrowserAddress {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // WKWebView's default UA lacks the Safari token, so sites like Google serve their legacy HTML.
+        let safari = Bundle(path: "/Applications/Safari.app")?.infoDictionary?["CFBundleShortVersionString"] as? String
+        config.applicationNameForUserAgent = "Version/\(safari ?? "26.0") Safari/605.1.15"
         try Task.checkCancellation()
         guard !closed else { throw CancellationError() }
         let view = WKWebView(frame: .zero, configuration: config)
