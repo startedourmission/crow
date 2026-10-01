@@ -297,3 +297,163 @@ struct FileMovePicker: View {
         }
     }
 }
+
+struct FileSendPicker: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let entry: ExplorerFileDrag
+    @State private var host: SSHHost?
+    @State private var connection: RemoteConnection?
+    @State private var connecting = false
+    @State private var slowConnect = false
+    @State private var path = ""
+    @State private var folders: [FileEntry] = []
+    @State private var loading = false
+    @State private var sending: String?
+    @State private var error: String?
+    @State private var request: Task<Void, Never>?
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                if let host { folderBrowser(host) } else { hostList }
+                if let error { Text(error).font(.caption).foregroundStyle(CrowTheme.danger).textSelection(.enabled) }
+            }.padding(16)
+            .navigationTitle("Send \(entry.name)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { if sending != nil { request?.cancel() } else { dismiss() } }
+                }
+            }
+        }
+        .interactiveDismissDisabled(sending != nil)
+        .onDisappear { request?.cancel() }
+        #if os(macOS)
+        .frame(minWidth: 420, idealWidth: 520, minHeight: 400, idealHeight: 480)
+        #endif
+    }
+
+    private var hostList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Choose a saved SSH host. The \(entry.isDirectory ? "folder" : "file") is copied; the original stays here.")
+                .font(.caption).foregroundStyle(CrowTheme.textDim)
+            List(model.hosts) { host in
+                Button { choose(host) } label: {
+                    HStack {
+                        Image(systemName: model.connectionState(for: host) == .connected ? "checkmark.circle.fill" : "server.rack")
+                            .foregroundStyle(model.connectionState(for: host) == .connected ? CrowTheme.ok : CrowTheme.textDim)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(host.name)
+                            Text(host.userAtHost).font(.caption).foregroundStyle(CrowTheme.textDim)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(CrowButtonStyle())
+                .accessibilityIdentifier("crow.file-send-host")
+            }
+            .overlay { if model.hosts.isEmpty { Text("No saved SSH hosts").foregroundStyle(.secondary) } }
+        }
+    }
+
+    private func folderBrowser(_ host: SSHHost) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                Button { back() } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Hosts")
+                Button { browse("~") } label: { Image(systemName: "house") }.accessibilityLabel("Home Folder")
+                Button { browse((path as NSString).deletingLastPathComponent) } label: { Image(systemName: "arrow.up") }
+                    .disabled(path == "/" || path.isEmpty).accessibilityLabel("Parent Folder")
+                Text(host.name).font(.caption).foregroundStyle(CrowTheme.textDim)
+                Spacer(minLength: 0)
+            }.disabled(loading || sending != nil)
+            TextField("Destination folder", text: $path)
+                .font(.system(size: 12, design: .monospaced)).textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .onSubmit { browse(path) }.disabled(sending != nil)
+                .accessibilityIdentifier("crow.file-send-path")
+            List(folders) { folder in
+                Button { browse(folder.path) } label: {
+                    HStack {
+                        Label(folder.name, systemImage: "folder")
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(CrowButtonStyle()).disabled(sending != nil)
+            }
+            .overlay {
+                if connecting {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Connecting to \(host.name)…").font(.caption)
+                        if slowConnect {
+                            Text("If SSH asks for a password or key confirmation, finish it in the \(host.name) terminal.")
+                                .font(.caption).foregroundStyle(CrowTheme.textDim).multilineTextAlignment(.center)
+                        }
+                    }.padding()
+                }
+                else if loading { ProgressView() }
+                else if folders.isEmpty && error == nil && connection != nil { Text("No subfolders").foregroundStyle(.secondary) }
+            }
+            HStack {
+                if let sending {
+                    ProgressView().controlSize(.small)
+                    Text(sending).font(.caption).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer()
+                Button("Send Here") { send() }
+                    .disabled(loading || sending != nil || connection == nil || path.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("crow.file-send-confirm")
+            }
+        }
+    }
+
+    private func choose(_ host: SSHHost) {
+        self.host = host; folders = []; path = host.remotePath
+        request?.cancel(); loading = true; connecting = true; slowConnect = false; error = nil
+        request = Task { @MainActor in
+            let hint = Task { try await Task.sleep(for: .seconds(5)); slowConnect = true }
+            defer { hint.cancel(); if !Task.isCancelled { connecting = false } }
+            do {
+                let opened = try await model.hostFileConnection(host)
+                guard !Task.isCancelled, self.host?.id == host.id else { return }
+                connection = opened; connecting = false
+                browse(path.isEmpty ? "~" : path)
+            } catch { loading = false; if !Task.isCancelled { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func back() {
+        request?.cancel()
+        host = nil; connection = nil; folders = []; error = nil; loading = false; connecting = false
+    }
+
+    private func browse(_ destination: String) {
+        guard let remote = connection else { return }
+        request?.cancel(); loading = true; error = nil
+        request = Task { @MainActor in
+            defer { if !Task.isCancelled { loading = false } }
+            do {
+                let result = try await model.hostFolders(remote, at: destination)
+                try Task.checkCancellation()
+                path = result.path; folders = result.folders
+            } catch is CancellationError {} catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func send() {
+        guard let remote = connection else { return }
+        let folder = path
+        request?.cancel(); sending = "Preparing…"; error = nil
+        request = Task { @MainActor in
+            do {
+                let resolved = try await remote.realPath(folder)
+                try await model.sendFile(entry, to: remote, folder: resolved) { sending = $0 }
+                sending = nil; dismiss()
+            } catch { sending = nil; self.error = error.localizedDescription }
+        }
+    }
+}

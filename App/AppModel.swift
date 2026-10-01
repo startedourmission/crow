@@ -1258,6 +1258,83 @@ final class AppModel {
         return (resolved, canonicalRoot, folders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
     }
 
+    /// A file connection to a saved host for sending files. Connects the host in the
+    /// background the same way the Hosts list does, then waits for its file channel.
+    func hostFileConnection(_ host: SSHHost) async throws -> RemoteConnection {
+        func connected() -> RemoteConnection? {
+            states.lazy.filter { $0.snapshot.workspace.hostID == host.id && $0.snapshot.workspace.connection == .connected }
+                .compactMap { try? self.fileConnection(in: $0) }.first
+        }
+        if let remote = connected() { return remote }
+        connect(host, select: false)
+        let started = Date()
+        var sawConnecting = false
+        while true {
+            try await Task.sleep(for: .milliseconds(250))
+            if let remote = connected() { return remote }
+            let workspaces = states.filter { $0.snapshot.workspace.hostID == host.id }
+            if workspaces.contains(where: { $0.snapshot.workspace.connection == .connecting }) { sawConnecting = true; continue }
+            // An imported ssh command prepares asynchronously before it reports connecting.
+            guard sawConnecting || Date().timeIntervalSince(started) > 3 else { continue }
+            if hostKeyChallenge?.host.id == host.id { throw CommandError("Verify the host key for \(host.name), then choose it again.") }
+            if case .failed(let message) = workspaces.first?.snapshot.workspace.connection { throw CommandError(message) }
+            throw CommandError("Could not connect to \(host.name).")
+        }
+    }
+
+    func hostFolders(_ connection: RemoteConnection, at path: String) async throws -> (path: String, folders: [FileEntry]) {
+        let resolved = try await connection.realPath(path)
+        let folders = try await connection.list(resolved).filter { $0.isDirectory && $0.name != "." && $0.name != ".." }
+        return (resolved, folders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+    }
+
+    /// Copy a workspace file or folder into `folder` on another host. Never overwrites.
+    func sendFile(_ drag: ExplorerFileDrag, to target: RemoteConnection, folder: String, progress: (String) -> Void) async throws {
+        guard let state = states.first(where: { $0.id == drag.workspaceID }) else { throw CommandError("This workspace was removed.") }
+        let source = state.snapshot.workspace.isRemote ? try fileConnection(in: state) : nil
+        guard try await !target.list(folder).contains(where: { $0.name == drag.name }) else { throw CocoaError(.fileWriteFileExists) }
+        var sent = 0
+        func children(_ path: String) async throws -> [(entry: FileEntry, permissions: UInt32?)] {
+            if let source {
+                // Skip symbolic links rather than following them out of the tree.
+                return try await source.listing(path).filter { ($0.permissions ?? 0) & 0o170000 != 0o120000 }
+                    .map { ($0.entry, $0.permissions.map { $0 & 0o7777 }) }
+            }
+            let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
+            return try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path), includingPropertiesForKeys: keys)
+                .compactMap { url in
+                    let values = try url.resourceValues(forKeys: Set(keys))
+                    if values.isSymbolicLink == true { return nil }
+                    let mode = (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.uint32Value
+                    return (FileEntry(name: url.lastPathComponent, path: url.path, isDirectory: values.isDirectory == true), mode)
+                }
+        }
+        func copy(_ entry: FileEntry, permissions: UInt32?, to destination: String) async throws {
+            try Task.checkCancellation()
+            if entry.isDirectory {
+                try await target.create(destination, directory: true)
+                for child in try await children(entry.path) {
+                    try await copy(child.entry, permissions: child.permissions, to: (destination as NSString).appendingPathComponent(child.entry.name))
+                }
+                return
+            }
+            progress(state.explorer.relativePath(entry.path))
+            try await target.createFile(destination, permissions: permissions) { write in
+                if let source { try await source.readFile(entry.path) { try await write($0) }; return }
+                let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: entry.path))
+                defer { try? handle.close() }
+                while let data = try handle.read(upToCount: 262_144), !data.isEmpty { try await write(data) }
+            }
+            sent += 1
+        }
+        let mode: UInt32?
+        if let source { mode = try await source.listing((drag.path as NSString).deletingLastPathComponent).first { $0.entry.name == drag.name }?.permissions.map { $0 & 0o7777 } }
+        else { mode = (try? FileManager.default.attributesOfItem(atPath: drag.path)[.posixPermissions] as? NSNumber)?.uint32Value }
+        do { try await copy(drag.entry, permissions: mode, to: (folder as NSString).appendingPathComponent(drag.name)) }
+        catch is CancellationError { throw CommandError("Sending stopped. \(sent) file(s) already copied remain in \(folder).") }
+        statusMessage = "Sent \(drag.name) (\(sent) file\(sent == 1 ? "" : "s")) to \(folder)"
+    }
+
     /// Export the original bytes, or the current draft when a text file has unsaved edits.
     func downloadOpenFile(_ id: BufferID) async throws -> Data {
         guard let (state, index) = locate(id) else { throw CommandError("This file is no longer open.") }

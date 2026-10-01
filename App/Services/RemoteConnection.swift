@@ -407,6 +407,67 @@ final class RemoteConnection {
         else { try await sftp.withFile(filePath: path, flags: [.write, .create, .forceCreate]) { _ in } }
     }
 
+    /// Stream a file in bounded chunks; transfers never hold a whole file in memory.
+    func readFile(_ path: String, _ body: @MainActor (Data) async throws -> Void) async throws {
+        #if os(macOS)
+        if let system {
+            let handle = try await system.openFile(path, creating: false)
+            do {
+                var offset: UInt64 = 0
+                while true {
+                    try Task.checkCancellation()
+                    let chunk = try await system.readChunk(handle, at: offset)
+                    if chunk.isEmpty { break }
+                    try await body(chunk); offset += UInt64(chunk.count)
+                }
+            } catch { try? await system.closeFile(handle); throw error }
+            try await system.closeFile(handle); return
+        }
+        #endif
+        let file = try await files().openFile(filePath: path, flags: .read)
+        do {
+            var offset: UInt64 = 0
+            while true {
+                try Task.checkCancellation()
+                let chunk = try await file.read(from: offset, length: 262_144)
+                if chunk.readableBytes == 0 { break }
+                try await body(Data(chunk.readableBytesView)); offset += UInt64(chunk.readableBytes)
+            }
+        } catch { try? await file.close(); throw error }
+        try await file.close()
+    }
+
+    /// Create a new file (never overwriting) and fill it from `body`'s writes.
+    func createFile(_ path: String, permissions: UInt32?, _ body: @MainActor (_ write: @MainActor (Data) async throws -> Void) async throws -> Void) async throws {
+        #if os(macOS)
+        if let system {
+            let handle = try await system.openFile(path, creating: true, permissions: permissions)
+            do {
+                var offset: UInt64 = 0
+                try await body { data in
+                    try Task.checkCancellation()
+                    try await system.writeChunk(handle, data, at: offset); offset += UInt64(data.count)
+                }
+            } catch { try? await system.closeFile(handle); throw error }
+            try await system.closeFile(handle); return
+        }
+        #endif
+        var attributes = SFTPFileAttributes(); attributes.permissions = permissions
+        let file = try await files().openFile(filePath: path, flags: [.write, .create, .forceCreate], attributes: attributes)
+        do {
+            var offset: UInt64 = 0
+            try await body { data in
+                let bytes = [UInt8](data)
+                for start in stride(from: 0, to: bytes.count, by: 32_768) {
+                    try Task.checkCancellation()
+                    try await file.write(ByteBuffer(bytes: bytes[start..<min(start + 32_768, bytes.count)]), at: offset + UInt64(start))
+                }
+                offset += UInt64(bytes.count)
+            }
+        } catch { try? await file.close(); throw error }
+        try await file.close()
+    }
+
     func rename(_ source: String, to destination: String) async throws {
         #if os(macOS)
         if let system { try await system.rename(source, to: destination); return }

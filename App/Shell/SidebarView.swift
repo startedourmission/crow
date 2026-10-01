@@ -71,6 +71,7 @@ struct SidebarView: View {
     @State private var entryName = ""
     @State private var renameEntry: FileEntry?
     @State private var moveEntry: ExplorerFileDrag?
+    @State private var sendEntry: ExplorerFileDrag?
     @State private var createDirectory = false
     @State private var creationPath: String?
     @State private var dropFolder: String?
@@ -120,6 +121,9 @@ struct SidebarView: View {
         }
         .sheet(isPresented: Binding(get: { moveEntry != nil }, set: { if !$0 { moveEntry = nil } })) {
             if let entry = moveEntry { FileMovePicker(entry: entry).environment(model) }
+        }
+        .sheet(isPresented: Binding(get: { sendEntry != nil }, set: { if !$0 { sendEntry = nil } })) {
+            if let entry = sendEntry { FileSendPicker(entry: entry).environment(model) }
         }
         .alert(renameEntry == nil ? (createDirectory ? "New Folder" : "New File") : "Rename", isPresented: $naming) {
             TextField("Name", text: $entryName)
@@ -281,6 +285,9 @@ struct SidebarView: View {
                 Button("Rename…") { renameEntry = entry; entryName = entry.name; naming = true }
                 Button("Move…", systemImage: "folder") {
                     moveEntry = ExplorerFileDrag(workspaceID: model.selectedWorkspaceID, path: entry.path, isDirectory: entry.isDirectory)
+                }
+                Button("Send to Host…", systemImage: "paperplane") {
+                    sendEntry = ExplorerFileDrag(workspaceID: model.selectedWorkspaceID, path: entry.path, isDirectory: entry.isDirectory)
                 }
                 Button("Copy Path", systemImage: "doc.on.doc") {
                     #if os(macOS)

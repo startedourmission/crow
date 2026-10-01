@@ -157,6 +157,34 @@ final class SystemSFTP: @unchecked Sendable {
     }
     func rename(_ source: String, to destination: String) async throws { try await run { try $0.rename(source, destination) } }
 
+    /// Chunked handle access keeps each request under the per-call timeout for large transfers.
+    func openFile(_ path: String, creating: Bool, permissions: UInt32? = nil) async throws -> Data {
+        // Creation is exclusive (READ=1, WRITE=2, CREAT=8, EXCL=32): never truncate an existing file.
+        try await run { try $0.open(path, flags: creating ? 2 | 8 | 32 : 1, permissions: permissions) }
+    }
+    func readChunk(_ handle: Data, at offset: UInt64) async throws -> Data {
+        try await run { wire in
+            var data = Data()
+            while data.count < 262_144 {
+                var response = try wire.request(5, .bytes(handle) + .u64(offset + UInt64(data.count)) + .u32(32_768), expecting: 103, allowEOF: true)
+                if response.eof { break }
+                let chunk = try response.bytes()
+                guard !chunk.isEmpty else { break }
+                data.append(chunk)
+            }
+            return data
+        }
+    }
+    func writeChunk(_ handle: Data, _ data: Data, at offset: UInt64) async throws {
+        try await run { wire in
+            let bytes = [UInt8](data)
+            for start in stride(from: 0, to: bytes.count, by: 32_768) {
+                _ = try wire.request(6, .bytes(handle) + .u64(offset + UInt64(start)) + .bytes(Data(bytes[start..<min(start + 32_768, bytes.count)])))
+            }
+        }
+    }
+    func closeFile(_ handle: Data) async throws { try await run { try $0.close(handle) } }
+
     func ensurePrivateDirectory(_ path: String) async throws {
         try await run { wire in
             // MKDIR is exclusive; an existing directory is acceptable only after
