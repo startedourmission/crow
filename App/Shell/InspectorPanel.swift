@@ -8,7 +8,7 @@ struct InspectorPanel: View {
     @State private var outlineBufferID: BufferID?
     @State private var outlineSource = ""
     private var buffer: OpenBuffer? { model.inspectedBuffer }
-    private let tabs = ["Agents", "Skills", "Summary"]
+    private let tabs = ["Agents", "Skills", "Git", "Summary"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,9 +23,14 @@ struct InspectorPanel: View {
                 HStack(spacing: spacing) {
                     ForEach(tabs, id: \.self) { item in
                         Button { model.inspectorTab = item } label: {
-                            Image(systemName: item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
-                                .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
-                                .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
+                            Group {
+                                if item == "Git" { GitBranchIcon(selected: tab == item, size: 13) }
+                                else {
+                                    Image(systemName: item == "Skills" ? "sparkles" : item == "Summary" ? "list.bullet.indent" : "bubble.left.and.bubble.right")
+                                        .font(.system(size: 11, weight: tab == item ? .semibold : .regular))
+                                        .crowForeground(tab == item ? CrowTheme.accent : CrowTheme.textDim)
+                                }
+                            }
                                 .frame(width: 28, height: 28)
                                 .contentShape(Rectangle())
                         }.windowDragExcluded()
@@ -46,6 +51,7 @@ struct InspectorPanel: View {
             CrowDivider()
             if tab == "Agents" { AgentHistoryPanel() }
             else if tab == "Skills" { AgentSkillsPanel() }
+            else if tab == "Git" { GitSidebarPanel() }
             else { summary }
         }
         .background(CrowTheme.bg1)
@@ -411,9 +417,9 @@ private struct GitRepositoryAccountFooter: View {
                     HStack(spacing: 6) {
                         Image(systemName: "person.crop.circle")
                         if let account = model.gitAccounts.account {
-                            Text("Saved GitHub · @" + account.login)
+                            Text((account.name.map { $0 + " · " } ?? "") + "@" + account.login)
                         } else if model.gitAccounts.hasSavedCredential {
-                            Text("Saved GitHub Account")
+                            Text("GitHub Connected")
                         } else {
                             Text(model.gitAccounts.storageError == nil ? "Set Up GitHub Account" : "Git Account Unavailable")
                         }
